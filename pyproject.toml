@@ -1,0 +1,30 @@
+[project]
+name = "audio2text"
+version = "0.1.0"
+description = "Real-time audio transcription prototype with FastAPI, WebSocket and Qwen3-ASR"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0,<1.0.0",
+    "httpx>=0.27.0,<1.0.0",
+    "python-multipart>=0.0.9,<1.0.0",
+    "pydantic-settings>=2.6.0,<3.0.0",
+    "uvicorn[standard]>=0.32.0,<1.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0,<9.0.0",
+    "pytest-asyncio>=0.24.0,<1.0.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["."]

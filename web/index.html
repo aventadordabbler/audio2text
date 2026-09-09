@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Audio2Text 实时转写</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">AUDIO2TEXT / PROTOTYPE</p>
+          <h1>实时音频转写</h1>
+        </div>
+        <div id="connection-status" class="status-chip offline"><span></span>未连接</div>
+      </header>
+      <section class="workspace">
+        <div class="record-panel">
+          <div class="panel-heading"><div><p class="eyebrow">LIVE CAPTURE</p><h2>录音工作区</h2></div><div id="recording-time" class="timer">00:00</div></div>
+          <div class="visualizer" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="controls"><button id="start-button" class="primary-button"><span class="record-dot"></span>开始录音</button><button id="stop-button" class="secondary-button" disabled><span class="stop-square"></span>停止并归档</button></div>
+          <div class="options"><label>归档标题<input id="title-input" type="text" value="未命名录音" maxlength="80" /></label><label>识别语言<select id="language-input"><option value="">自动检测</option><option value="Chinese">中文</option><option value="English">English</option><option value="Japanese">日本語</option></select></label></div>
+          <p id="error-message" class="error-message" role="alert"></p>
+        </div>
+        <div class="transcript-panel">
+          <div class="panel-heading"><div><p class="eyebrow">TRANSCRIPT</p><h2>实时文本</h2></div><span id="transcript-state" class="muted">等待录音</span></div>
+          <article id="transcript" class="transcript empty">按下“开始录音”，识别内容会显示在这里。</article>
+          <div class="transcript-footer"><span id="byte-count">0 KB 音频</span><span>WebSocket 增量识别</span></div>
+        </div>
+      </section>
+      <section class="archive-section"><div class="section-heading"><div><p class="eyebrow">ARCHIVE</p><h2>历史归档</h2></div><button id="refresh-button" class="icon-button" title="刷新归档" aria-label="刷新归档">↻</button></div><div id="archive-list" class="archive-list"><p class="muted">暂无归档记录</p></div></section>
+    </main>
+    <script src="/app.js" defer></script>
+  </body>
+</html>
