@@ -4,10 +4,6 @@ services:
     profiles: [app]
     container_name: audio2text-server
     environment:
-      ASR_MODE: ${ASR_MODE:-api}
-      VLLM_BASE_URL: ${VLLM_BASE_URL:-http://vllm:8001/v1}
-      VLLM_API_KEY: ${VLLM_API_KEY:-EMPTY}
-      VLLM_MODEL: ${VLLM_MODEL:-qwen3-asr-1.7b}
       DATA_DIR: /app/data/archives
     ports:
       - "8000:8000"

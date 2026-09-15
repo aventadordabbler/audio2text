@@ -79,7 +79,7 @@ export function CreateMeetingDialog({
         className="create-dialog gap-0 overflow-hidden p-0 sm:max-w-[460px]"
       >
         <form id="create-form" onSubmit={submit}>
-          <div className="px-7 pb-7 pt-8">
+          <div className="create-dialog-body px-7 pb-7 pt-8">
             <div className="mb-5 flex size-12 items-center justify-center rounded-2xl border border-neutral-100 bg-neutral-50 text-neutral-600">
               <AudioLines className="size-6" />
             </div>
@@ -138,7 +138,7 @@ export function CreateMeetingDialog({
               <p>创建后进入会议，点击「开始录音」才会开启麦克风。</p>
             </div>
           </div>
-          <DialogFooter className="border-t bg-muted/30 px-7 py-5 sm:justify-between">
+          <DialogFooter className="m-0 border-t bg-muted/30 px-7 py-5 sm:justify-between">
             <Button
               id="cancel-create"
               type="button"

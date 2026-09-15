@@ -29,11 +29,29 @@ export const languageLabels: Record<string, string> = {
   Japanese: "日本語",
 }
 
+export class ApiError extends Error {
+  readonly status: number
+
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = "ApiError"
+    this.status = status
+  }
+}
+
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, options)
   if (!response.ok) {
     const result = await response.json().catch(() => null)
-    throw new Error(typeof result?.detail === "string" ? result.detail : "请求未成功，请稍后重试。")
+    const detail = result?.detail
+    throw new ApiError(
+      typeof detail === "string"
+        ? detail
+        : Array.isArray(detail) && detail[0]?.msg
+          ? detail[0].msg
+          : "请求未成功，请稍后重试。",
+      response.status,
+    )
   }
   return response.json()
 }

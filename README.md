@@ -1,6 +1,6 @@
 ## 会议助手（Audio2Text）
 
-一个基于 FastAPI、WebSocket、浏览器 MediaRecorder 和 Qwen3-ASR-1.7B/vLLM 的会议转写应用。SQLite 保存会议元数据和文件路径，转写正文保存在磁盘文本文件中。
+一个基于 FastAPI、WebSocket、浏览器 MediaRecorder 和 Qwen3-ASR-1.7B/vLLM 的会议助手。支持实时转写与会议结束后的纪要总结。SQLite 保存会议元数据、任务状态、文件路径和模型配置，转写正文与纪要保存在磁盘文件中。
 
 ### 本地启动（宿主机 uv + vLLM 容器）
 
@@ -12,7 +12,7 @@
     npm run build --prefix web
     uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
-打开 http://localhost:8000，首页按创建时间倒序显示会议记录。点击“创建会议”，填写会议名称与识别语言，进入会议后点击“开始录音”并允许麦克风权限。应用通过 `.env` 中的 `VLLM_BASE_URL` 调用本机 8001 端口上的 vLLM 服务。模型目录 `./models/qwen3-asr-1.7b` 会以只读方式挂载到 vLLM 容器内的 `/models/qwen3-asr-1.7b`。
+打开 http://localhost:8000，首页按创建时间倒序显示会议记录。点击侧栏“模型配置”，分别设置 ASR 模型和大语言模型。点击“创建会议”，填写会议名称与识别语言，进入会议后点击“开始录音”并允许麦克风权限。首次启动会用 `.env` 中的 `VLLM_*` 初始化 ASR 配置，此后以数据库中保存的配置为准。模型目录 `./models/qwen3-asr-1.7b` 会以只读方式挂载到 vLLM 容器内的 `/models/qwen3-asr-1.7b`。
 
 ### 前端开发与构建
 
@@ -27,19 +27,41 @@
 
 Dockerfile 会在 Node.js 构建阶段自动编译前端，将静态文件复制到 Python 运行镜像；运行镜像保留 FFmpeg，容器启动方式与数据卷保持不变。
 
+如果使用 `uv run main.py` 启动，后端不会自动重载；新增接口后需要重启该进程。开发时可使用上面的 `uvicorn --reload` 命令。Docker 部署更新应用代码时，执行 `docker compose --profile app up -d --build app` 重建并启动应用。仅重建前端会使新页面访问旧后端不存在的接口，例如 `/minutes` 返回 `404 Not Found`。
+
 ### GPU + vLLM
 
 需要已安装 NVIDIA Container Toolkit 的 Docker 主机：
 
     docker compose --profile gpu up -d vllm
 
-使用 GPU profile 时，官方 Qwen3-ASR 镜像通过 `qwen-asr-serve` 从本地目录加载模型，不需要再次下载权重。默认显存利用率设为 `0.8`，上下文长度设为 `32768`，适合 12 GiB 显卡并为 KV cache 和其他进程留出余量；可分别通过 `VLLM_GPU_MEMORY_UTILIZATION` 和 `VLLM_MAX_MODEL_LEN` 调整。模型服务监听容器内 8001，应用使用 OpenAI Python SDK 的 `AsyncOpenAI` 调用兼容的 [`/v1/audio/transcriptions` 接口](https://developers.openai.com/api/reference/python/resources/audio/subresources/transcriptions/methods/create)，通过 `VLLM_BASE_URL`、`VLLM_API_KEY` 和 `ASR_TIMEOUT_SECONDS` 配置服务地址、密钥和超时。`VLLM_MODEL` 必须与 vLLM `/v1/models` 返回的模型 ID 完全一致，默认值为 `qwen3-asr-1.7b`。
+使用 GPU profile 时，官方 Qwen3-ASR 镜像通过 `qwen-asr-serve` 从本地目录加载模型，不需要再次下载权重。默认显存利用率设为 `0.8`，上下文长度设为 `32768`，适合 12 GiB 显卡并为 KV cache 和其他进程留出余量；可分别通过 `VLLM_GPU_MEMORY_UTILIZATION` 和 `VLLM_MAX_MODEL_LEN` 调整。模型服务监听容器内 8001，应用使用 OpenAI Python SDK 的 `AsyncOpenAI` 调用兼容的 [`/v1/audio/transcriptions` 接口](https://developers.openai.com/api/reference/python/resources/audio/subresources/transcriptions/methods/create)。页面“模型配置 → ASR 模型”中的模型名称必须与 vLLM `/v1/models` 返回的模型 ID 完全一致，默认值为 `qwen3-asr-1.7b`。
+
+### 模型配置
+
+侧栏“模型配置”提供 **ASR 模型 / 大语言模型** 两个页签，每类保存一份配置：API 基础地址、模型名称、API Key 和请求超时。API 地址通常以 `/v1` 结尾，使用的是后端能访问的地址；应用在 Docker 中运行时，`localhost` 指向应用容器自身。同一 Compose 中的 vLLM 服务地址填写 `http://vllm:8001/v1`。Compose 的 `app` 服务不再传入模型环境变量，模型配置通过页面保存到数据库。
+
+- **ASR 模型**：需要支持 OpenAI 兼容的 `/audio/transcriptions` 接口，用于实时语音转写。
+- **大语言模型**：需要支持 OpenAI 兼容的 `/chat/completions` 接口，用于会议纪要；需单独提供文本生成模型。
+- 配置保存至同一个 SQLite 数据库的 `model_configs` 表，刷新页面和重启服务后保留。后续录音连接和纪要任务从数据库读取配置，无需重启；正在进行的任务沿用启动时的配置。
+- API Key 只提交给后端保存，读取配置时不返回原值。编辑时留空保留已有密钥，勾选“清除已保存的密钥”可移除。无鉴权的本地服务可留空。
+- `VLLM_BASE_URL`、`VLLM_MODEL`、`VLLM_API_KEY`、`ASR_TIMEOUT_SECONDS` 仅初始化尚不存在的 ASR 配置；可选的 `LLM_BASE_URL`、`LLM_MODEL`、`LLM_API_KEY`、`LLM_TIMEOUT_SECONDS` 同样只用于初始化大语言模型配置。已保存配置不会被环境变量覆盖。
+
+### 会议纪要
+
+会议结束且存在转写正文、已配置大语言模型时，后端自动启动纪要任务。结束操作无需等待总结完成；离开或刷新页面后仍在后台生成。详情页通过“实时转写 / 会议纪要”切换，保留各自的滚动区域。
+
+纪要包含会议主题、核心结论、决策事项、待办事项（任务、责任人、预计完成时间）、风险与阻塞、下一步安排。提示词要求以原文为依据，对未明确的信息标注“未明确”。页面通过 [react-markdown](https://github.com/remarkjs/react-markdown) 和 [remark-gfm](https://github.com/remarkjs/remark-gfm) 展示标题、列表与表格，支持复制 Markdown 和下载 `.md` 文件。
+
+历史会议可以手动“生成纪要”，生成后可“重新生成”。同一会议同时只运行一个任务，不同会议相互独立。失败后可重试，重新生成失败时保留上一版纪要和原始转写。无语音的会议不会调用总结模型；服务重启时，中断的任务标记为失败，可重新生成。
+
+长会议按 `LLM_CHUNK_CHARS`（默认 12000 个字符）提取分段要点，再合并整理；每次模型输出上限由 `LLM_MAX_TOKENS`（默认 3000）控制。字符限制并非精确的 token 限制，应根据文本模型的上下文容量调整。输出为空、被截断或仅含思考过程时不会当作成功纪要保存。
 
 ### 会议操作
 
 - **创建会议**：先创建再录音；进入会议页面不会自动打开麦克风。
 - **开始 / 暂停 / 继续**：暂停会停止采集，累计时长只计算录音时间；继续后保留已有正文。在同一页面暂停后继续会复用录音流，重新进入会议则追加新的录音段落。
-- **结束会议**：等待剩余音频识别完成后保存，之后只能查看和下载。没有检测到语音时，保留用户创建的会议，正文为空。
+- **结束会议**：等待剩余音频识别完成后保存，录音不可继续；已配置大语言模型时自动生成纪要。没有检测到语音时，保留用户创建的会议，正文为空，不生成纪要。
 - **查找会议**：按状态筛选，或搜索会议名称与正文；按 `/` 快速聚焦搜索框。
 - **自动滚动**：实时转写默认跟随最新内容；取消勾选可停留在之前的位置阅读。
 - **返回列表 / 连接中断**：返回列表会先暂停并保存；连接断开后会议自动暂停，已经识别的内容保留，可重新进入继续。尚未成功上传或识别的音频不会持久化。
@@ -51,12 +73,13 @@ Dockerfile 会在 Node.js 构建阶段自动编译前端，将静态文件复制
 默认目录：
 
     data/archives/
-      meetings.sqlite3            # 名称、语言、状态、时间、累计时长和正文文件路径
+      meetings.sqlite3            # 会议元数据、文件路径、纪要任务状态、模型配置
       transcripts/<会议 ID>.txt   # UTF-8 转写正文，识别后实时更新
+      minutes/<会议 ID>.md        # UTF-8 Markdown 会议纪要
 
-SQLite 不存储转写正文。页面查看、恢复会议和下载文本时，后端通过数据库中的 `text_path` 读取文件。写入采用同目录临时文件替换，避免读取到半写入的内容。
+SQLite 不存储转写正文或纪要正文。页面查看、恢复会议和下载时，后端通过数据库中的 `text_path` 或 `meeting_minutes.file_path` 读取文件。写入采用同目录临时文件替换，避免读取到半写入的内容。模型 API Key 保存在数据库中，配置读取接口不回显密钥；数据库备份同时包含这些配置。
 
-`DATA_DIR` 默认为 `data/archives`；可通过 `DATABASE_PATH` 指定数据库位置，`transcripts` 目录位于数据库同级，数据库中的文件路径相对于该目录保存。备份、迁移时应一起保留数据库和 `transcripts` 目录；运行中的数据库请使用 SQLite 的备份工具，或停止应用后复制整个目录。Docker Compose 已挂载 `./data:/app/data`，数据库和文本文件都会持久保存，SQLite 使用 Python 标准库，无需新增数据库容器。
+`DATA_DIR` 默认为 `data/archives`；可通过 `DATABASE_PATH` 指定数据库位置，`transcripts` 和 `minutes` 目录位于数据库同级，数据库中的文件路径相对于该目录保存。备份、迁移时应一起保留数据库和两个文件目录；运行中的数据库请使用 SQLite 的备份工具，或停止应用后复制整个目录。Docker Compose 已挂载 `./data:/app/data`，数据库和文件都会持久保存，SQLite 使用 Python 标准库，无需新增数据库容器。
 
 启动时会将 `DATA_DIR` 内旧版 JSON 归档导入为已结束的会议，保留原 JSON/TXT 文件，重复启动不会重复导入。应用重启后，未结束的录音恢复为暂停，录音时长保留至最后一次保存；当前按单个应用进程运行。
 
@@ -71,6 +94,13 @@ HTTP 接口：
 | `GET /api/meetings/{id}` | 读取会议状态及文件中的正文 |
 | `POST /api/meetings/{id}/end` | 结束未占用录音连接的会议 |
 | `GET /api/meetings/{id}/download` | 下载 UTF-8 文本 |
+| `GET /api/meetings/{id}/minutes` | 读取纪要任务状态、可用性及文件中的纪要正文 |
+| `POST /api/meetings/{id}/minutes` | 生成或重新生成纪要，返回 `202` 和任务状态；仅用于已结束且有正文的会议 |
+| `GET /api/meetings/{id}/minutes/download` | 下载 Markdown 纪要 |
+| `GET /api/model-configs` | 读取 ASR 和大语言模型配置；不返回 API Key |
+| `PUT /api/model-configs/{asr\|llm}` | 保存对应模型配置 |
+
+纪要状态为 `not_started → generating → ready / failed`；可通过重复读取纪要接口获取任务结果。生成失败时 `error` 包含可展示的错误提示，有上一版纪要时 `text` 仍可读取。模型保存正文包含 `base_url`、`model`、可选 `api_key` 和 `timeout_seconds`；省略 `api_key` 表示保留，空字符串表示清除。
 
 先通过 `POST /api/meetings` 创建会议，使用返回的 `id` 连接实时转写 WebSocket `/ws/meetings/{meeting_id}`。这是唯一的实时转写接口，必须指定已有会议，不能省略会议 ID。
 
@@ -86,7 +116,7 @@ HTTP 接口：
 
 服务端回推 `ready`、`state`、`transcript`、`no_speech`、`error` 和 `pong` 事件，每条事件都携带当前连接的 `meeting_id`。客户端命令无需重复传会议 ID；如果传入其他会议 ID，服务端会拒绝该命令，不能通过消息切换会议。`transcript.text` 是会议完整正文，页面收到后替换显示并自动滚动。状态依次为 `created → recording ⇄ paused → ended`，未录音的会议也可直接结束。旧版 `/api/archives` 已由会议 HTTP 接口替代。
 
-录音期间浏览器约每 2.5 秒发送一段音频，服务端识别完成就推送文字并保存正文，无需等待暂停或结束。例如：
+录音期间浏览器约每 1 秒发送一段音频，服务端识别完成就推送文字并保存正文，无需等待暂停或结束。例如：
 
 ```json
 {"type":"transcript","meeting_id":"会议 ID","text":"当前会议的完整转写正文","bytes":16384}

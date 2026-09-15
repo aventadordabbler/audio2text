@@ -288,39 +288,43 @@ export function MeetingList({
                 </TableCell>
               </TableRow>
             ))}
+            {!loading && filtered.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={5} className="whitespace-normal">
+                  <div className="empty-state">
+                    <div className="empty-illustration">
+                      <span />
+                      <span />
+                      <div>{filteredEmpty ? <Search /> : <FileText />}</div>
+                    </div>
+                    <h3>{filteredEmpty ? "没有找到符合条件的会议" : "从第一场会议开始"}</h3>
+                    <p>
+                      {filteredEmpty
+                        ? "换个关键词，或查看全部会议记录。"
+                        : "创建一场会议，专注交流，让想法自然被记录。"}
+                    </p>
+                    {filteredEmpty ? (
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          onFilter("all")
+                          onQuery("")
+                        }}
+                      >
+                        查看全部会议
+                      </Button>
+                    ) : (
+                      <Button onClick={onCreate}>
+                        <Plus />
+                        创建第一场会议
+                      </Button>
+                    )}
+                  </div>
+                </TableCell>
+              </TableRow>
+            )}
           </TableBody>
         </Table>
-        {!loading && filtered.length === 0 && (
-          <div className="empty-state">
-            <div className="empty-illustration">
-              <span />
-              <span />
-              <div>{filteredEmpty ? <Search /> : <FileText />}</div>
-            </div>
-            <h3>{filteredEmpty ? "没有找到符合条件的会议" : "从第一场会议开始"}</h3>
-            <p>
-              {filteredEmpty
-                ? "换个关键词，或查看全部会议记录。"
-                : "创建一场会议，专注交流，让想法自然被记录。"}
-            </p>
-            {filteredEmpty ? (
-              <Button
-                variant="outline"
-                onClick={() => {
-                  onFilter("all")
-                  onQuery("")
-                }}
-              >
-                查看全部会议
-              </Button>
-            ) : (
-              <Button onClick={onCreate}>
-                <Plus />
-                创建第一场会议
-              </Button>
-            )}
-          </div>
-        )}
         <div className="table-footer">
           <span>
             {query ? `找到 ${filtered.length} 场相关会议` : `共 ${filtered.length} 场会议`}

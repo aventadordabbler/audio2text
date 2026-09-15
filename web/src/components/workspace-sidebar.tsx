@@ -1,4 +1,4 @@
-import { AudioLines, CheckCheck, Clock3, FileText, FolderClosed, Plus } from "lucide-react"
+import { AudioLines, CheckCheck, Clock3, FileText, FolderClosed, Settings2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { cn } from "@/lib/utils"
@@ -11,7 +11,7 @@ interface Props {
   inMeeting: boolean
   busy: boolean
   onFilter: (filter: MeetingFilter) => void
-  onCreate: () => void
+  onConfigure: () => void
   onNavigate?: () => void
 }
 
@@ -21,7 +21,7 @@ export function WorkspaceSidebar({
   inMeeting,
   busy,
   onFilter,
-  onCreate,
+  onConfigure,
   onNavigate,
 }: Props) {
   const active = meetings.filter((meeting) => meeting.status !== "ended").length
@@ -97,13 +97,12 @@ export function WorkspaceSidebar({
       </div>
       <div className="sidebar-bottom">
         <Button
-          variant="outline"
-          onClick={onCreate}
-          disabled={busy}
-          className="h-9 w-full gap-2 bg-white shadow-none"
+          variant="ghost"
+          onClick={onConfigure}
+          className="h-9 w-full justify-start gap-2 text-muted-foreground"
         >
-          <Plus className="size-3.5" />
-          创建新会议
+          <Settings2 className="size-3.5" />
+          模型配置
         </Button>
       </div>
     </div>

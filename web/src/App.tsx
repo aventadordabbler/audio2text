@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { CreateMeetingDialog } from "@/components/create-meeting-dialog"
 import { MeetingDetail } from "@/components/meeting-detail"
+import { ModelConfigDialog } from "@/components/model-config-dialog"
 import { MeetingList, type MeetingFilter } from "@/components/meeting-list"
 import { WorkspaceSidebar } from "@/components/workspace-sidebar"
 import { api, errorMessage, type Meeting } from "@/lib/meetings"
@@ -29,6 +30,8 @@ export default function App() {
   const [error, setError] = useState("")
   const [createOpen, setCreateOpen] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [modelsOpen, setModelsOpen] = useState(false)
+  const [modelsVersion, setModelsVersion] = useState(0)
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -118,16 +121,17 @@ export default function App() {
     setMeetings((meetings) => [meeting, ...meetings])
     location.hash = `meeting/${meeting.id}`
   }
+  const configureModels = useCallback(() => {
+    setMobileOpen(false)
+    setModelsOpen(true)
+  }, [])
   const sidebarProps = {
     meetings,
     filter,
     inMeeting: !!state.meeting,
     busy: state.busy,
+    onConfigure: configureModels,
     onFilter: selectFilter,
-    onCreate: () => {
-      setMobileOpen(false)
-      setCreateOpen(true)
-    },
   }
   const visibleError = error || state.error
 
@@ -204,13 +208,19 @@ export default function App() {
             </div>
           )}
           {routing ? (
-            <div className="page-content">
+            <div className="page-content loading-page">
               <Skeleton className="mb-4 h-8 w-44" />
               <Skeleton className="mb-9 h-4 w-72 max-w-full" />
               <Skeleton className="h-80 w-full rounded-xl" />
             </div>
           ) : state.meeting ? (
-            <MeetingDetail key={state.meeting.id} session={session} onError={setError} />
+            <MeetingDetail
+              key={state.meeting.id}
+              session={session}
+              onError={setError}
+              modelsVersion={modelsVersion}
+              onConfigure={configureModels}
+            />
           ) : (
             <MeetingList
               meetings={meetings}
@@ -229,6 +239,11 @@ export default function App() {
         </main>
       </div>
       <CreateMeetingDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={created} />
+      <ModelConfigDialog
+        open={modelsOpen}
+        onOpenChange={setModelsOpen}
+        onSaved={() => setModelsVersion((value) => value + 1)}
+      />
     </TooltipProvider>
   )
 }

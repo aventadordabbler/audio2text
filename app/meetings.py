@@ -33,6 +33,7 @@ class MeetingStore:
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
         (path.parent / "transcripts").mkdir(exist_ok=True)
+        (path.parent / "minutes").mkdir(exist_ok=True)
         with self._connection() as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("""
@@ -46,6 +47,13 @@ class MeetingStore:
                 )
             """)
             db.execute("CREATE INDEX IF NOT EXISTS meetings_created ON meetings(created_at DESC, id DESC)")
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS meeting_minutes (
+                    meeting_id TEXT PRIMARY KEY REFERENCES meetings(id),
+                    status TEXT NOT NULL CHECK(status IN ('generating', 'ready', 'failed')),
+                    file_path TEXT, updated_at TEXT NOT NULL, error TEXT NOT NULL DEFAULT ''
+                )
+            """)
         if legacy_directory is not None:
             self._import_archives(legacy_directory)
 
@@ -178,6 +186,58 @@ class MeetingStore:
             db.execute("""UPDATE meetings SET owner = NULL, recording_since = NULL,
                 status = CASE WHEN status = 'recording' THEN 'paused' ELSE status END
                 WHERE owner IS NOT NULL OR status = 'recording'""")
+            db.execute("""UPDATE meeting_minutes SET status = 'failed', error = ?, updated_at = ?
+                WHERE status = 'generating'""", ("服务重启导致生成中断，请重新生成纪要。", _timestamp()))
+
+    def get_minutes(self, meeting_id: str) -> dict[str, Any]:
+        with self._connection() as db:
+            if not db.execute("SELECT 1 FROM meetings WHERE id = ?", (meeting_id,)).fetchone():
+                raise MeetingError("会议不存在", 404)
+            row = db.execute("SELECT * FROM meeting_minutes WHERE meeting_id = ?", (meeting_id,)).fetchone()
+        result = dict(row) if row else {
+            "meeting_id": meeting_id, "status": "not_started", "file_path": None,
+            "updated_at": None, "error": "",
+        }
+        result["text"] = ""
+        if result["file_path"]:
+            try:
+                result["text"] = (self.path.parent / result["file_path"]).read_text(encoding="utf-8")
+            except OSError as exc:
+                raise MeetingError("无法读取会议纪要文件，请检查数据目录", 500) from exc
+        return result
+
+    def begin_minutes(self, meeting_id: str) -> None:
+        with self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT status FROM meetings WHERE id = ?", (meeting_id,)).fetchone()
+            if row is None:
+                raise MeetingError("会议不存在", 404)
+            if row["status"] != "ended":
+                raise MeetingError("请先结束会议，再生成完整会议纪要")
+            current = db.execute("SELECT status FROM meeting_minutes WHERE meeting_id = ?", (meeting_id,)).fetchone()
+            if current and current["status"] == "generating":
+                raise MeetingError("会议纪要正在生成中")
+            db.execute("""INSERT INTO meeting_minutes (meeting_id, status, updated_at)
+                VALUES (?, 'generating', ?) ON CONFLICT(meeting_id) DO UPDATE
+                SET status = 'generating', updated_at = excluded.updated_at, error = ''""",
+                (meeting_id, _timestamp()))
+
+    def save_minutes(self, meeting_id: str, text: str) -> None:
+        # Keep the previous file during regeneration; replace it only after success.
+        with self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT status FROM meeting_minutes WHERE meeting_id = ?", (meeting_id,)).fetchone()
+            if row is None or row["status"] != "generating":
+                raise MeetingError("没有正在进行的纪要任务")
+            file_path = f"minutes/{meeting_id}.md"
+            self._write_text(file_path, text)
+            db.execute("""UPDATE meeting_minutes SET status = 'ready', file_path = ?,
+                updated_at = ?, error = '' WHERE meeting_id = ?""", (file_path, _timestamp(), meeting_id))
+
+    def fail_minutes(self, meeting_id: str, error: str) -> None:
+        with self._connection() as db:
+            db.execute("""UPDATE meeting_minutes SET status = 'failed', error = ?, updated_at = ?
+                WHERE meeting_id = ? AND status = 'generating'""", (error, _timestamp(), meeting_id))
 
     def _import_archives(self, directory: Path) -> None:
         with self._connection() as db:

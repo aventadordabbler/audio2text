@@ -25,6 +25,8 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { Switch } from "@/components/ui/switch"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { MeetingMinutes } from "./meeting-minutes"
 import { MeetingStatusBadge } from "./meeting-status"
 import { errorMessage, formatDate, formatDuration, languageLabels } from "@/lib/meetings"
 import { RecordingSession } from "@/lib/recording-session"
@@ -32,23 +34,35 @@ import { RecordingSession } from "@/lib/recording-session"
 export function MeetingDetail({
   session,
   onError,
+  modelsVersion,
+  onConfigure,
 }: {
   session: RecordingSession
   onError: (error: string) => void
+  modelsVersion: number
+  onConfigure: () => void
 }) {
   const state = useSyncExternalStore(session.subscribe, session.getSnapshot)
   const meeting = state.meeting!
   const [autoScroll, setAutoScroll] = useState(true)
   const [copied, setCopied] = useState(false)
   const [now, setNow] = useState(Date.now())
+  const [activeTab, setActiveTab] = useState(meeting.status === "ended" ? "minutes" : "transcript")
+  const previousStatus = useRef(meeting.status)
   const scrollRoot = useRef<HTMLDivElement>(null)
   const copyTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
   const { status } = meeting
   const recording = status === "recording" && state.localRecording && !state.finishing
+  const followLiveText = autoScroll && state.liveVersion > 0
   const textLength = Array.from(meeting.text).length
   const seconds =
     meeting.duration_seconds +
     (status === "recording" ? Math.max(0, now - state.durationUpdatedAt) / 1000 : 0)
+
+  useEffect(() => {
+    if (status === "ended" && previousStatus.current !== "ended") setActiveTab("minutes")
+    previousStatus.current = status
+  }, [status])
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 250)
@@ -68,6 +82,14 @@ export function MeetingDetail({
     const frame = requestAnimationFrame(scrollToBottom)
     return () => cancelAnimationFrame(frame)
   }, [meeting.text, state.liveVersion, autoScroll])
+
+  useEffect(() => {
+    const viewport = scrollRoot.current?.querySelector("[data-slot='scroll-area-viewport']")
+    if (!viewport || !followLiveText) return
+    const observer = new ResizeObserver(scrollToBottom)
+    observer.observe(viewport)
+    return () => observer.disconnect()
+  }, [followLiveText])
 
   async function copyText() {
     try {
@@ -111,10 +133,12 @@ export function MeetingDetail({
       </Button>
       <div className="detail-heading">
         <div className="min-w-0">
-          <div className="mb-3">
+          <div className="detail-status mb-3">
             <MeetingStatusBadge id="meeting-status" status={status} />
           </div>
-          <h1 id="meeting-title">{meeting.title}</h1>
+          <h1 id="meeting-title" title={meeting.title}>
+            {meeting.title}
+          </h1>
           <div id="meeting-meta" className="meeting-meta">
             <span>
               <CalendarDays />
@@ -138,102 +162,120 @@ export function MeetingDetail({
       </div>
 
       <div className="meeting-workspace">
-        <Card className="transcript-card gap-0 overflow-hidden rounded-xl py-0 shadow-none">
-          <div className="transcript-heading">
-            <div>
-              <FileText className="size-4.5 text-muted-foreground" />
-              <h2>转写记录</h2>
-              {recording && (
-                <span className="live-label">
-                  <span />
-                  实时
-                </span>
-              )}
-            </div>
-            <div className="scroll-toggle">
-              <Label htmlFor="auto-scroll" className="text-xs font-normal text-muted-foreground">
-                自动滚动
-              </Label>
-              <Switch
-                id="auto-scroll"
-                checked={autoScroll}
-                onCheckedChange={(checked) => {
-                  setAutoScroll(checked)
-                  if (checked) requestAnimationFrame(scrollToBottom)
-                }}
-                size="sm"
-              />
-            </div>
-          </div>
-          <ScrollArea ref={scrollRoot} className="transcript-scroll">
-            <article
-              id="transcript"
-              className={meeting.text ? "transcript-text" : "transcript-empty"}
-              aria-label="会议转写文本"
-              tabIndex={0}
-            >
-              {meeting.text ? (
-                meeting.text
-              ) : (
-                <div className="document-empty">
-                  <div className="document-empty-icon">
-                    <AudioLines className="size-7" />
-                  </div>
-                  <h3>
-                    {status === "ended"
-                      ? "这场会议暂无转写内容"
-                      : recording
-                        ? "正在聆听你的声音"
-                        : status === "paused"
-                          ? "稍作停留，随时继续"
-                          : "让讨论自然发生"}
-                  </h3>
-                  <p>
-                    {status === "ended"
-                      ? "录音期间未检测到语音内容。"
-                      : recording
-                        ? "说点什么，文字会在这里慢慢展开。"
-                        : "开启录音后，每一个想法都会在这里留下痕迹。"}
-                  </p>
-                  <div className="empty-document-lines" aria-hidden="true">
-                    <i />
-                    <i />
-                    <i />
-                  </div>
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="meeting-content">
+          <TabsList className="meeting-tabs">
+            <TabsTrigger value="transcript">实时转写</TabsTrigger>
+            <TabsTrigger value="minutes">会议纪要</TabsTrigger>
+          </TabsList>
+          <TabsContent value="transcript" forceMount className="meeting-panel">
+            <Card className="transcript-card gap-0 overflow-hidden rounded-xl py-0 shadow-none">
+              <div className="transcript-heading">
+                <div>
+                  <FileText className="size-4.5 text-muted-foreground" />
+                  <h2>转写记录</h2>
+                  {recording && (
+                    <span className="live-label">
+                      <span />
+                      实时
+                    </span>
+                  )}
                 </div>
-              )}
-            </article>
-          </ScrollArea>
-          <div className="transcript-footer">
-            <span id="transcript-state">
-              <span className={recording ? "saving-dot" : "saved-check"}>
-                {recording ? <span /> : <CheckCheck className="size-3.5" />}
-              </span>
-              {state.notice}
-            </span>
-            <div>
-              <span id="text-count">{textLength.toLocaleString()} 字</span>
-              {meeting.text && (
-                <>
-                  <Separator orientation="vertical" className="h-3!" />
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={copyText}
-                        aria-label={copied ? "已复制" : "复制全部文本"}
-                      >
-                        {copied ? <Check className="text-neutral-600" /> : <Copy />}
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>{copied ? "已复制" : "复制全部文本"}</TooltipContent>
-                  </Tooltip>
-                </>
-              )}
-            </div>
-          </div>
-        </Card>
+                <div className="scroll-toggle">
+                  <Label
+                    htmlFor="auto-scroll"
+                    className="text-xs font-normal text-muted-foreground"
+                  >
+                    自动滚动
+                  </Label>
+                  <Switch
+                    id="auto-scroll"
+                    checked={autoScroll}
+                    onCheckedChange={(checked) => {
+                      setAutoScroll(checked)
+                      if (checked) requestAnimationFrame(scrollToBottom)
+                    }}
+                    size="sm"
+                  />
+                </div>
+              </div>
+              <ScrollArea ref={scrollRoot} className="transcript-scroll">
+                <article
+                  id="transcript"
+                  className={meeting.text ? "transcript-text" : "transcript-empty"}
+                  aria-label="会议转写文本"
+                  tabIndex={0}
+                >
+                  {meeting.text ? (
+                    meeting.text
+                  ) : (
+                    <div className="document-empty">
+                      <div className="document-empty-icon">
+                        <AudioLines className="size-7" />
+                      </div>
+                      <h3>
+                        {status === "ended"
+                          ? "这场会议暂无转写内容"
+                          : recording
+                            ? "正在聆听你的声音"
+                            : status === "paused"
+                              ? "稍作停留，随时继续"
+                              : "让讨论自然发生"}
+                      </h3>
+                      <p>
+                        {status === "ended"
+                          ? "录音期间未检测到语音内容。"
+                          : recording
+                            ? "说点什么，文字会在这里慢慢展开。"
+                            : "开启录音后，每一个想法都会在这里留下痕迹。"}
+                      </p>
+                      <div className="empty-document-lines" aria-hidden="true">
+                        <i />
+                        <i />
+                        <i />
+                      </div>
+                    </div>
+                  )}
+                </article>
+              </ScrollArea>
+              <div className="transcript-footer">
+                <span id="transcript-state">
+                  <span className={recording ? "saving-dot" : "saved-check"}>
+                    {recording ? <span /> : <CheckCheck className="size-3.5" />}
+                  </span>
+                  {state.notice}
+                </span>
+                <div>
+                  <span id="text-count">{textLength.toLocaleString()} 字</span>
+                  {meeting.text && (
+                    <>
+                      <Separator orientation="vertical" className="h-3!" />
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            onClick={copyText}
+                            aria-label={copied ? "已复制" : "复制全部文本"}
+                          >
+                            {copied ? <Check className="text-neutral-600" /> : <Copy />}
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>{copied ? "已复制" : "复制全部文本"}</TooltipContent>
+                      </Tooltip>
+                    </>
+                  )}
+                </div>
+              </div>
+            </Card>
+          </TabsContent>
+          <TabsContent value="minutes" forceMount className="meeting-panel">
+            <MeetingMinutes
+              meeting={meeting}
+              modelsVersion={modelsVersion}
+              onConfigure={onConfigure}
+            />
+          </TabsContent>
+        </Tabs>
 
         <aside className="meeting-aside">
           <Card className="recording-card gap-0 rounded-xl p-5 shadow-none">
@@ -360,9 +402,11 @@ export function MeetingDetail({
       </div>
       <div className="detail-bottom-note">
         <ArrowDown className="size-3.5" />
-        {autoScroll
-          ? "开启自动滚动，始终跟上对话的节奏。"
-          : "自动滚动已关闭，可以自由回看之前的内容。"}
+        {activeTab === "minutes"
+          ? "纪要根据转写内容整理，重要结论请结合原文确认。"
+          : autoScroll
+            ? "开启自动滚动，始终跟上对话的节奏。"
+            : "自动滚动已关闭，可以自由回看之前的内容。"}
       </div>
     </section>
   )

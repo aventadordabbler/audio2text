@@ -258,7 +258,7 @@ export class RecordingSession {
         this.update({ error: "录音发生错误，请重新进入会议后继续。" })
         socket.close()
       }
-      this.recorder.start(2500)
+      this.recorder.start(1000)
       this.update({ finishing: false })
     } catch (error) {
       this.disconnect()
