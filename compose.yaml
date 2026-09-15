@@ -1,10 +1,13 @@
 services:
   app:
     build: .
+    profiles: [app]
+    container_name: audio2text-server
     environment:
-      ASR_MODE: ${ASR_MODE:-mock}
-      VLLM_BASE_URL: http://vllm:8001/v1
-      VLLM_MODEL: ${VLLM_MODEL:-Qwen/Qwen3-ASR-1.7B}
+      ASR_MODE: ${ASR_MODE:-api}
+      VLLM_BASE_URL: ${VLLM_BASE_URL:-http://vllm:8001/v1}
+      VLLM_API_KEY: ${VLLM_API_KEY:-EMPTY}
+      VLLM_MODEL: ${VLLM_MODEL:-qwen3-asr-1.7b}
       DATA_DIR: /app/data/archives
     ports:
       - "8000:8000"
@@ -15,13 +18,28 @@ services:
         condition: service_healthy
         required: false
   vllm:
-    image: vllm/vllm-openai:v0.14.0
+    image: qwenllm/qwen3-asr:latest
+    container_name: audio2text-vllm
     profiles: [gpu]
-    command: ["--model", "${VLLM_MODEL:-Qwen/Qwen3-ASR-1.7B}", "--host", "0.0.0.0", "--port", "8001"]
+    command:
+      - qwen-asr-serve
+      - ${VLLM_MODEL_PATH:-/models/qwen3-asr-1.7b}
+      - --served-model-name
+      - ${VLLM_MODEL:-qwen3-asr-1.7b}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8001"
+      - --gpu-memory-utilization
+      - ${VLLM_GPU_MEMORY_UTILIZATION:-0.8}
+      - --max-model-len
+      - ${VLLM_MAX_MODEL_LEN:-32768}
     ports:
       - "8001:8001"
     volumes:
+      - ./models:/models:ro
       - hf-cache:/root/.cache/huggingface
+    shm_size: 4gb
     deploy:
       resources:
         reservations:

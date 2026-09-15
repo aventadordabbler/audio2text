@@ -6,9 +6,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     app_name: str = "Audio2Text"
-    asr_mode: str = "mock"
-    vllm_base_url: str = "http://localhost:8001/v1"
-    vllm_model: str = "Qwen/Qwen3-ASR-1.7B"
+    # Use the real OpenAI-compatible transcription API.
+    asr_mode: str = "api"
+    vllm_base_url: str = "http://127.0.0.1:8001/v1"
+    vllm_model: str = "qwen3-asr-1.7b"
     vllm_api_key: str = "EMPTY"
     asr_timeout_seconds: float = 120.0
     data_dir: Path = Path("data/archives")

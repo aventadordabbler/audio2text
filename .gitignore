@@ -13,3 +13,7 @@ data/archives/
 __pycache__/
 .pytest_cache/
 .venv/
+.idea
+tests
+
+models

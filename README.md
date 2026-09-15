@@ -2,20 +2,21 @@
 
 一个基于 FastAPI、WebSocket、浏览器 MediaRecorder 和 Qwen3-ASR-1.7B/vLLM 的实时转写原型。
 
-### 本地启动（无需 GPU）
+### 本地启动（宿主机 uv + vLLM 容器）
 
     cp .env.example .env
-    docker compose up --build
+    docker compose --profile gpu up -d vllm
+    uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
-打开 http://localhost:8000，点击“开始录音”并允许麦克风权限。默认 ASR_MODE=mock，用于验证页面、WebSocket 和归档流程，不会加载模型。
+打开 http://localhost:8000，点击“开始录音”并允许麦克风权限。应用通过 `.env` 中的 `VLLM_BASE_URL` 调用本机 8001 端口上的 vLLM 服务。模型目录 `./models/qwen3-asr-1.7b` 会以只读方式挂载到 vLLM 容器内的 `/models/qwen3-asr-1.7b`。
 
 ### GPU + vLLM
 
 需要已安装 NVIDIA Container Toolkit 的 Docker 主机：
 
-    ASR_MODE=vllm docker compose --profile gpu up --build
+    docker compose --profile gpu up -d vllm
 
-vllm 服务会在首次启动时下载 Qwen/Qwen3-ASR-1.7B。模型服务监听容器内 8001，应用通过 OpenAI 兼容的 /v1/audio/transcriptions 请求调用。
+使用 GPU profile 时，官方 Qwen3-ASR 镜像通过 `qwen-asr-serve` 从本地目录加载模型，不需要再次下载权重。默认显存利用率设为 `0.8`，上下文长度设为 `32768`，适合 12 GiB 显卡并为 KV cache 和其他进程留出余量；可分别通过 `VLLM_GPU_MEMORY_UTILIZATION` 和 `VLLM_MAX_MODEL_LEN` 调整。模型服务监听容器内 8001，应用通过 OpenAI 兼容的 `/v1/audio/transcriptions` 请求调用。`VLLM_MODEL` 必须与 vLLM `/v1/models` 返回的模型 ID 完全一致，默认值为 `qwen3-asr-1.7b`。
 
 ### 协议
 
