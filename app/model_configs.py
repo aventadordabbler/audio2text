@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import closing
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
@@ -9,9 +10,17 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, field_validator
 
-from .config import Settings
+from .meetings import MeetingError
 
 ModelKind = Literal["asr", "llm"]
+
+
+@dataclass(frozen=True)
+class ModelConfig:
+    base_url: str
+    model: str
+    api_key: str = field(repr=False)
+    timeout_seconds: float
 
 
 class ModelConfigInput(BaseModel):
@@ -40,7 +49,7 @@ class ModelConfigInput(BaseModel):
 class ModelConfigStore:
     """One saved configuration for speech and one for text; secrets stay on the server."""
 
-    def __init__(self, path: Path, defaults: Settings) -> None:
+    def __init__(self, path: Path) -> None:
         self.path = path
         with closing(sqlite3.connect(path)) as db, db:
             db.execute("""CREATE TABLE IF NOT EXISTS model_configs (
@@ -48,15 +57,6 @@ class ModelConfigStore:
                 base_url TEXT NOT NULL, model TEXT NOT NULL, api_key TEXT NOT NULL,
                 timeout_seconds REAL NOT NULL, updated_at TEXT NOT NULL
             )""")
-            # Bootstrap existing deployments once. Saved database values always take precedence.
-            for kind, url, model, key, timeout in [
-                ("asr", defaults.vllm_base_url, defaults.vllm_model, defaults.vllm_api_key, defaults.asr_timeout_seconds),
-                ("llm", defaults.llm_base_url, defaults.llm_model, defaults.llm_api_key, defaults.llm_timeout_seconds),
-            ]:
-                if url.strip() and model.strip():
-                    db.execute("INSERT OR IGNORE INTO model_configs VALUES (?, ?, ?, ?, ?, ?)", (
-                        kind, url.strip().rstrip("/"), model.strip(), key, timeout, datetime.now(timezone.utc).isoformat(),
-                    ))
 
     def get(self, kind: ModelKind) -> dict[str, Any] | None:
         with closing(sqlite3.connect(self.path)) as db:
@@ -90,12 +90,14 @@ class ModelConfigStore:
         assert record is not None
         return self.public(record)
 
-    def settings(self, kind: ModelKind, defaults: Settings) -> Settings:
+    def require(self, kind: ModelKind) -> ModelConfig:
         record = self.get(kind)
-        prefix = "vllm" if kind == "asr" else "llm"
-        return defaults.model_copy(update={
-            f"{prefix}_base_url": record["base_url"] if record else "",
-            f"{prefix}_model": record["model"] if record else "",
-            f"{prefix}_api_key": record["api_key"] or "EMPTY" if record else "EMPTY",
-            f"{'asr' if kind == 'asr' else 'llm'}_timeout_seconds": record["timeout_seconds"] if record else 120,
-        })
+        if record is None:
+            name = "ASR 模型" if kind == "asr" else "大语言模型"
+            raise MeetingError(f"尚未配置{name}，请在模型配置中添加。", 503)
+        return ModelConfig(
+            base_url=record["base_url"],
+            model=record["model"],
+            api_key=record["api_key"],
+            timeout_seconds=record["timeout_seconds"],
+        )

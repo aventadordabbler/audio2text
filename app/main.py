@@ -47,7 +47,7 @@ def create_app(
 ) -> FastAPI:
     app_settings = settings or get_settings()
     store = MeetingStore(app_settings.database_path or app_settings.data_dir / "meetings.sqlite3", app_settings.data_dir)
-    models = ModelConfigStore(store.path, app_settings)
+    models = ModelConfigStore(store.path)
     minutes = MinutesService(store, models, app_settings, minutes_generator)
 
     @asynccontextmanager
@@ -82,7 +82,7 @@ def create_app(
 
     @app.get("/health")
     def health() -> dict[str, str]:
-        return {"status": "ok", "asr_mode": app_settings.asr_mode}
+        return {"status": "ok"}
 
     @app.get("/api/model-configs")
     def list_model_configs() -> list[dict[str, Any]]:
@@ -193,7 +193,7 @@ def create_app(
             meeting = await asyncio.to_thread(store.claim, meeting_id, owner)
             claimed = True
             if asr is None:
-                asr = build_transcriber(await asyncio.to_thread(models.settings, "asr", app_settings))
+                asr = build_transcriber(await asyncio.to_thread(models.require, "asr"))
             base_text = meeting["text"]
             await send_event({"type": "ready", "meeting": meeting})
             while True:

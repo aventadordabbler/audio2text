@@ -6,7 +6,7 @@ from typing import Protocol
 from openai import NOT_GIVEN, AsyncOpenAI
 
 from .audio import is_silent_wav, to_wav
-from .config import Settings
+from .model_configs import ModelConfig
 
 LANGUAGE_ALIASES = {"Chinese": "zh", "English": "en", "Japanese": "ja"}
 ASR_PREFIX = re.compile(r"^(?:language\s+[^<\r\n]+\s*)?<asr_text>")
@@ -27,12 +27,12 @@ class Transcriber(Protocol):
 
 
 class VLLMTranscriber:
-    def __init__(self, settings: Settings) -> None:
-        self.settings = settings
+    def __init__(self, config: ModelConfig) -> None:
+        self.config = config
         self.client = AsyncOpenAI(
-            base_url=settings.vllm_base_url,
-            api_key=settings.vllm_api_key,
-            timeout=settings.asr_timeout_seconds,
+            base_url=config.base_url,
+            api_key=config.api_key or "EMPTY",
+            timeout=config.timeout_seconds,
             # Preserve the previous single-attempt behavior for live transcription.
             max_retries=0,
         )
@@ -41,11 +41,11 @@ class VLLMTranscriber:
         await self.client.close()
 
     async def transcribe(self, audio: bytes, mime_type: str, language: str | None = None) -> str:
-        wav_audio = await to_wav(audio, timeout=self.settings.asr_timeout_seconds)
+        wav_audio = await to_wav(audio, timeout=self.config.timeout_seconds)
         if is_silent_wav(wav_audio):
             return ""
         response = await self.client.audio.transcriptions.create(
-            model=self.settings.vllm_model,
+            model=self.config.model,
             file=("recording.wav", wav_audio, "audio/wav"),
             response_format="json",
             language=LANGUAGE_ALIASES.get(language, language) if language else NOT_GIVEN,
@@ -56,16 +56,5 @@ class VLLMTranscriber:
         return _parse_transcription_text(text)
 
 
-class MockTranscriber:
-    async def transcribe(self, audio: bytes, mime_type: str, language: str | None = None) -> str:
-        if not audio:
-            return ""
-        return "模拟转写：已收到音频内容。"
-
-
-def build_transcriber(settings: Settings) -> Transcriber:
-    if settings.asr_mode.lower() == "mock":
-        return MockTranscriber()
-    if settings.asr_mode.lower() != "api":
-        raise ValueError("ASR_MODE must be 'api'")
-    return VLLMTranscriber(settings)
+def build_transcriber(config: ModelConfig) -> Transcriber:
+    return VLLMTranscriber(config)

@@ -12,7 +12,7 @@
     npm run build --prefix web
     uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
-打开 http://localhost:8000，首页按创建时间倒序显示会议记录。点击侧栏“模型配置”，分别设置 ASR 模型和大语言模型。点击“创建会议”，填写会议名称与识别语言，进入会议后点击“开始录音”并允许麦克风权限。首次启动会用 `.env` 中的 `VLLM_*` 初始化 ASR 配置，此后以数据库中保存的配置为准。模型目录 `./models/qwen3-asr-1.7b` 会以只读方式挂载到 vLLM 容器内的 `/models/qwen3-asr-1.7b`。
+打开 http://localhost:8000，首页按创建时间倒序显示会议记录。首次使用需点击侧栏“模型配置”，设置 ASR 模型；需要生成纪要时再配置大语言模型。宿主机运行应用时，本地 ASR 地址填写 `http://localhost:8001/v1`，模型名称填写 `qwen3-asr-1.7b`。配置保存后，点击“创建会议”，填写会议名称与识别语言，进入会议后点击“开始录音”并允许麦克风权限。模型目录 `./models/qwen3-asr-1.7b` 会以只读方式挂载到 vLLM 容器内的 `/models/qwen3-asr-1.7b`。
 
 ### 前端开发与构建
 
@@ -35,7 +35,7 @@ Dockerfile 会在 Node.js 构建阶段自动编译前端，将静态文件复制
 
     docker compose --profile gpu up -d vllm
 
-使用 GPU profile 时，官方 Qwen3-ASR 镜像通过 `qwen-asr-serve` 从本地目录加载模型，不需要再次下载权重。默认显存利用率设为 `0.8`，上下文长度设为 `32768`，适合 12 GiB 显卡并为 KV cache 和其他进程留出余量；可分别通过 `VLLM_GPU_MEMORY_UTILIZATION` 和 `VLLM_MAX_MODEL_LEN` 调整。模型服务监听容器内 8001，应用使用 OpenAI Python SDK 的 `AsyncOpenAI` 调用兼容的 [`/v1/audio/transcriptions` 接口](https://developers.openai.com/api/reference/python/resources/audio/subresources/transcriptions/methods/create)。页面“模型配置 → ASR 模型”中的模型名称必须与 vLLM `/v1/models` 返回的模型 ID 完全一致，默认值为 `qwen3-asr-1.7b`。
+使用 GPU profile 时，官方 Qwen3-ASR 镜像通过 `qwen-asr-serve` 从本地目录加载模型，不需要再次下载权重。默认显存利用率设为 `0.8`，上下文长度设为 `32768`，适合 12 GiB 显卡并为 KV cache 和其他进程留出余量；可分别通过 `VLLM_GPU_MEMORY_UTILIZATION` 和 `VLLM_MAX_MODEL_LEN` 调整。模型服务监听容器内 8001，应用使用 OpenAI Python SDK 的 `AsyncOpenAI` 调用兼容的 [`/v1/audio/transcriptions` 接口](https://developers.openai.com/api/reference/python/resources/audio/subresources/transcriptions/methods/create)。页面“模型配置 → ASR 模型”中的模型名称必须与 vLLM `/v1/models` 返回的模型 ID 完全一致。Compose 中 vLLM 服务的模型名称由 `VLLM_MODEL` 指定，默认为 `qwen3-asr-1.7b`，应用端需在页面填写相同名称。
 
 ### 模型配置
 
@@ -45,7 +45,7 @@ Dockerfile 会在 Node.js 构建阶段自动编译前端，将静态文件复制
 - **大语言模型**：需要支持 OpenAI 兼容的 `/chat/completions` 接口，用于会议纪要；需单独提供文本生成模型。
 - 配置保存至同一个 SQLite 数据库的 `model_configs` 表，刷新页面和重启服务后保留。后续录音连接和纪要任务从数据库读取配置，无需重启；正在进行的任务沿用启动时的配置。
 - API Key 只提交给后端保存，读取配置时不返回原值。编辑时留空保留已有密钥，勾选“清除已保存的密钥”可移除。无鉴权的本地服务可留空。
-- `VLLM_BASE_URL`、`VLLM_MODEL`、`VLLM_API_KEY`、`ASR_TIMEOUT_SECONDS` 仅初始化尚不存在的 ASR 配置；可选的 `LLM_BASE_URL`、`LLM_MODEL`、`LLM_API_KEY`、`LLM_TIMEOUT_SECONDS` 同样只用于初始化大语言模型配置。已保存配置不会被环境变量覆盖。
+- 应用的模型地址、名称、密钥和请求超时只从数据库读取，不再通过环境变量初始化。尚未配置 ASR 时，录音连接会提示先添加模型。`.env` 中的 `VLLM_MODEL`、`VLLM_MODEL_PATH` 等仅用于启动 Compose 的 vLLM 服务。
 
 ### 会议纪要
 
@@ -55,7 +55,7 @@ Dockerfile 会在 Node.js 构建阶段自动编译前端，将静态文件复制
 
 历史会议可以手动“生成纪要”，生成后可“重新生成”。同一会议同时只运行一个任务，不同会议相互独立。失败后可重试，重新生成失败时保留上一版纪要和原始转写。无语音的会议不会调用总结模型；服务重启时，中断的任务标记为失败，可重新生成。
 
-长会议按 `LLM_CHUNK_CHARS`（默认 12000 个字符）提取分段要点，再合并整理；每次模型输出上限由 `LLM_MAX_TOKENS`（默认 3000）控制。字符限制并非精确的 token 限制，应根据文本模型的上下文容量调整。输出为空、被截断或仅含思考过程时不会当作成功纪要保存。
+长会议按 `LLM_CHUNK_CHARS`（默认 12000 个字符）提取分段要点，再合并整理；每次模型输出上限由 `LLM_MAX_TOKENS`（默认 16384）控制。字符限制并非精确的 token 限制，应根据文本模型的上下文容量调整。输出为空、被截断或仅含思考过程时不会当作成功纪要保存。
 
 ### 会议操作
 

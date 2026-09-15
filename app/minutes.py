@@ -9,7 +9,7 @@ from openai import AsyncOpenAI
 
 from .config import Settings
 from .meetings import MeetingError, MeetingStore
-from .model_configs import ModelConfigStore
+from .model_configs import ModelConfig, ModelConfigStore
 
 logger = logging.getLogger(__name__)
 
@@ -41,12 +41,13 @@ class MinutesGenerationError(Exception):
 
 
 class OpenAIMinutesGenerator:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, config: ModelConfig, settings: Settings) -> None:
+        self.config = config
         self.settings = settings
         self.client = AsyncOpenAI(
-            base_url=settings.llm_base_url,
-            api_key=settings.llm_api_key or "EMPTY",
-            timeout=settings.llm_timeout_seconds,
+            base_url=config.base_url,
+            api_key=config.api_key or "EMPTY",
+            timeout=config.timeout_seconds,
             max_retries=0,
         )
 
@@ -55,7 +56,7 @@ class OpenAIMinutesGenerator:
 
     async def _chat(self, title: str, text: str, prompt: str, max_tokens: int) -> str:
         response = await self.client.chat.completions.create(
-            model=self.settings.llm_model,
+            model=self.config.model,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": f"{prompt}\n\n会议名称：{title}\n\n会议内容：\n{text}"},
@@ -135,8 +136,9 @@ class MinutesService:
                 raise MeetingError("尚未配置大语言模型，请在模型配置中添加。", 503)
             if meeting_id in self.tasks:
                 return await self.get(meeting_id)
-            generator = self.generator or build_minutes_generator(await asyncio.to_thread(self.models.settings, "llm", self.settings))
-            assert generator is not None
+            generator = self.generator or build_minutes_generator(
+                await asyncio.to_thread(self.models.require, "llm"), self.settings,
+            )
             try:
                 await asyncio.to_thread(self.store.begin_minutes, meeting_id)
                 result = await self.get(meeting_id)
@@ -194,7 +196,5 @@ class MinutesService:
             await close()
 
 
-def build_minutes_generator(settings: Settings) -> MinutesGenerator | None:
-    if not settings.llm_base_url.strip() or not settings.llm_model.strip():
-        return None
-    return OpenAIMinutesGenerator(settings)
+def build_minutes_generator(config: ModelConfig, settings: Settings) -> MinutesGenerator:
+    return OpenAIMinutesGenerator(config, settings)
