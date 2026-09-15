@@ -1,0 +1,14 @@
+.git
+.venv
+.env
+.idea
+__pycache__
+**/__pycache__
+.pytest_cache
+node_modules
+**/node_modules
+web/dist
+data
+models
+wav_files
+tests

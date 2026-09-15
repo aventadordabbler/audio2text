@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    app_name: str = "Audio2Text"
+    app_name: str = "会议助手"
     # Use the real OpenAI-compatible transcription API.
     asr_mode: str = "api"
     vllm_base_url: str = "http://127.0.0.1:8001/v1"
@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     vllm_api_key: str = "EMPTY"
     asr_timeout_seconds: float = 120.0
     data_dir: Path = Path("data/archives")
+    database_path: Path | None = None
     max_audio_bytes: int = 25 * 1024 * 1024
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="", extra="ignore")

@@ -1,36 +1,24 @@
 from __future__ import annotations
 
-from uuid import uuid4
+import re
 from typing import Protocol
 
-import httpx
+from openai import NOT_GIVEN, AsyncOpenAI
 
+from .audio import is_silent_wav, to_wav
 from .config import Settings
 
+LANGUAGE_ALIASES = {"Chinese": "zh", "English": "en", "Japanese": "ja"}
+ASR_PREFIX = re.compile(r"^(?:language\s+[^<\r\n]+\s*)?<asr_text>")
 
-def _multipart_body(
-    fields: list[tuple[str, str]], file_name: str, file_content: bytes, file_type: str
-) -> tuple[bytes, str]:
-    boundary = uuid4().hex
-    boundary_bytes = boundary.encode("ascii")
-    body = bytearray()
 
-    def quote(value: str) -> str:
-        return value.replace("\\", "\\\\").replace('"', '\\"').replace("\r", "").replace("\n", "")
-
-    for name, value in fields:
-        body.extend(b"--" + boundary_bytes + b"\r\n")
-        body.extend(f'Content-Disposition: form-data; name="{quote(name)}"\r\n\r\n'.encode("utf-8"))
-        body.extend(value.encode("utf-8"))
-        body.extend(b"\r\n")
-    body.extend(b"--" + boundary_bytes + b"\r\n")
-    body.extend(
-        f'Content-Disposition: form-data; name="file"; filename="{quote(file_name)}"\r\n'
-        f"Content-Type: {file_type}\r\n\r\n".encode("utf-8")
-    )
-    body.extend(file_content)
-    body.extend(b"\r\n--" + boundary_bytes + b"--\r\n")
-    return bytes(body), f"multipart/form-data; boundary={boundary}"
+def _parse_transcription_text(raw: str) -> str:
+    text = raw.strip().removeprefix("<|im_start|>assistant").strip()
+    text = re.sub(r"(?:<\|(?:im_end|endoftext)\|>\s*)+$", "", text).strip()
+    # Strip only leading protocol fields, preserving literal tags inside ordinary text.
+    while match := ASR_PREFIX.match(text):
+        text = text[match.end():].strip()
+    return text
 
 
 class Transcriber(Protocol):
@@ -41,29 +29,31 @@ class Transcriber(Protocol):
 class VLLMTranscriber:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        self.client = httpx.AsyncClient(
-            base_url=settings.vllm_base_url.rstrip("/"),
+        self.client = AsyncOpenAI(
+            base_url=settings.vllm_base_url,
+            api_key=settings.vllm_api_key,
             timeout=settings.asr_timeout_seconds,
+            # Preserve the previous single-attempt behavior for live transcription.
+            max_retries=0,
         )
 
     async def close(self) -> None:
-        await self.client.aclose()
+        await self.client.close()
 
     async def transcribe(self, audio: bytes, mime_type: str, language: str | None = None) -> str:
-        suffix = ".webm" if "webm" in mime_type else ".wav"
-        headers = {"Authorization": f"Bearer {self.settings.vllm_api_key}"}
-        data: list[tuple[str, str]] = [("model", self.settings.vllm_model), ("response_format", "json")]
-        if language:
-            data.append(("language", language))
-        body, content_type = _multipart_body(data, f"recording{suffix}", audio, mime_type)
-        headers["Content-Type"] = content_type
-        response = await self.client.post("/audio/transcriptions", headers=headers, content=body)
-        response.raise_for_status()
-        payload = response.json()
-        text = payload.get("text") if isinstance(payload, dict) else None
+        wav_audio = await to_wav(audio, timeout=self.settings.asr_timeout_seconds)
+        if is_silent_wav(wav_audio):
+            return ""
+        response = await self.client.audio.transcriptions.create(
+            model=self.settings.vllm_model,
+            file=("recording.wav", wav_audio, "audio/wav"),
+            response_format="json",
+            language=LANGUAGE_ALIASES.get(language, language) if language else NOT_GIVEN,
+        )
+        text = getattr(response, "text", None)
         if not isinstance(text, str):
             raise RuntimeError("vLLM returned an invalid transcription response")
-        return text.strip()
+        return _parse_transcription_text(text)
 
 
 class MockTranscriber:

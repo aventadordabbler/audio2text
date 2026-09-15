@@ -17,3 +17,7 @@ __pycache__/
 tests
 
 models
+wav_files
+# Frontend dependencies and build output
+node_modules/
+web/dist/
