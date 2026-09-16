@@ -1,9 +1,26 @@
 export type MeetingStatus = "created" | "recording" | "paused" | "ended"
 
+export interface TranscriptSegment {
+  segment_id: number
+  start_ms: number
+  end_ms: number
+  text: string
+  speaker_ids: string[]
+  speaker_status: "pending" | "assigned" | "unknown" | "multiple" | "overlap"
+  speaker_turns?: { start_ms: number; end_ms: number; speaker_ids: string[] }[]
+}
+
+export interface ProcessingState {
+  status: "idle" | "pending" | "queued" | "running" | "ready" | "failed" | "unavailable"
+  error: string
+}
+
 export interface Meeting {
   id: string
   title: string
   language: string | null
+  department_id: string | null
+  department_name: string | null
   status: MeetingStatus
   text: string
   text_path: string
@@ -11,6 +28,33 @@ export interface Meeting {
   updated_at: string
   ended_at: string | null
   duration_seconds: number
+  segments: TranscriptSegment[]
+  speakers: Record<string, { name: string }>
+  transcript_revision: number
+  content_revision: number
+  minutes_version?: number
+  next_segment_id: number
+  processing: ProcessingState
+}
+
+export interface Department {
+  id: string
+  name: string
+  created_at: string
+  updated_at: string
+  meeting_count: number
+}
+
+export interface MeetingFilters {
+  title: string
+  departmentId: string
+  status: MeetingStatus | "all"
+  startDate: string
+  endDate: string
+}
+
+export const emptyMeetingFilters: MeetingFilters = {
+  title: "", departmentId: "all", status: "all", startDate: "", endDate: "",
 }
 
 export const statusLabels: Record<MeetingStatus, string> = {
@@ -53,6 +97,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
       response.status,
     )
   }
+  if (response.status === 204) return undefined as T
   return response.json()
 }
 

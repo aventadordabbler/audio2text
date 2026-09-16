@@ -10,6 +10,7 @@ from openai import AsyncOpenAI
 from .config import Settings
 from .meetings import MeetingError, MeetingStore
 from .model_configs import ModelConfig, ModelConfigStore
+from .transcripts import plain_text
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +19,8 @@ SYSTEM_PROMPT = """你是严谨的会议助手，输出清晰、简洁、结构�
 只记录原文有依据的内容，不补造结论、人物、决策、责任人或日期。
 转写可能存在错字或重复，谨慎整理；无法确认的信息标注“未明确”。
 仅输出整理结果，不输出思考过程。"""
+
+SYSTEM_PROMPT += "\n说话人编号仅用于区分发言，不代表真实姓名；多人、重叠或待确认片段不得推断个人责任归属。"
 
 MINUTES_PROMPT = """请将以下会议内容整理成正式会议纪要，使用 Markdown，包含以下六个二级标题：
 会议主题、核心结论、决策事项、待办事项、风险与阻塞、下一步安排。
@@ -108,13 +111,14 @@ class OpenAIMinutesGenerator:
 class MinutesService:
     """Run one background generation per meeting, independent of its browser/socket."""
 
-    def __init__(self, store: MeetingStore, models: ModelConfigStore, settings: Settings, generator: MinutesGenerator | None = None) -> None:
+    def __init__(self, store: MeetingStore, models: ModelConfigStore, settings: Settings, generator: MinutesGenerator | None = None, *, events=None) -> None:
         self.store = store
         self.models = models
         self.settings = settings
         self.generator = generator
         self.tasks: dict[str, asyncio.Task[None]] = {}
         self._lock = asyncio.Lock()
+        self.events = events
 
     @property
     def available(self) -> bool:
@@ -123,13 +127,17 @@ class MinutesService:
     async def get(self, meeting_id: str) -> dict[str, Any]:
         return {**await asyncio.to_thread(self.store.get_minutes, meeting_id), "available": self.available}
 
-    async def start(self, meeting_id: str) -> dict[str, Any]:
+    async def start(self, meeting_id: str, *, automatic=False) -> dict[str, Any]:
         async with self._lock:
             meeting = await asyncio.to_thread(self.store.get, meeting_id)
             if meeting is None:
                 raise MeetingError("会议不存在", 404)
             if meeting["status"] != "ended":
                 raise MeetingError("请先结束会议，再生成完整会议纪要")
+            if await asyncio.to_thread(self.store.processing_active, meeting_id):
+                raise MeetingError("正在校正说话人，完成后将生成纪要")
+            if automatic and (await self.get(meeting_id))["status"] != "not_started":
+                return await self.get(meeting_id)
             if not meeting["text"].strip():
                 raise MeetingError("没有转写内容，无法生成会议纪要", 422)
             if not self.available:
@@ -140,7 +148,9 @@ class MinutesService:
                 await asyncio.to_thread(self.models.require, "llm"), self.settings,
             )
             try:
-                await asyncio.to_thread(self.store.begin_minutes, meeting_id)
+                document = await asyncio.to_thread(self.store.transcript(meeting_id).read)
+                meeting["text"] = plain_text(document, labels=True) if document["segments"] else meeting["text"]
+                await asyncio.to_thread(self.store.begin_minutes, meeting_id, document.get("content_revision", 0))
                 result = await self.get(meeting_id)
             except BaseException:
                 if generator is not self.generator:
@@ -151,6 +161,8 @@ class MinutesService:
             task = asyncio.create_task(self._generate(meeting, generator), name=f"minutes-{meeting_id}")
             self.tasks[meeting_id] = task
             task.add_done_callback(lambda completed: self._finished(meeting_id, completed))
+            if self.events:
+                self.events.publish(meeting_id, {"type": "minutes", "minutes": result})
             return result
 
     def _finished(self, meeting_id: str, task: asyncio.Task[None]) -> None:
@@ -161,7 +173,7 @@ class MinutesService:
     async def after_end(self, meeting: dict[str, Any]) -> None:
         try:
             if self.available and meeting["text"].strip():
-                await self.start(meeting["id"])
+                await self.start(meeting["id"], automatic=True)
         except Exception:
             # A summary failure must not make a successfully ended recording look failed.
             logger.exception("Could not schedule minutes for meeting %s", meeting["id"])
@@ -185,6 +197,8 @@ class MinutesService:
                 close = getattr(generator, "close", None)
                 if close is not None:
                     await close()
+            if self.events:
+                self.events.publish(meeting["id"], {"type": "minutes", "minutes": await self.get(meeting["id"])})
 
     async def close(self) -> None:
         tasks = list(self.tasks.values())

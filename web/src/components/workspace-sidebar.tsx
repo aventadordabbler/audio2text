@@ -1,39 +1,29 @@
-import { AudioLines, CheckCheck, Clock3, FileText, FolderClosed, Settings2 } from "lucide-react"
+import { AudioLines, Building2, FileText, FolderClosed, Settings2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { cn } from "@/lib/utils"
 import type { Meeting } from "@/lib/meetings"
-import type { MeetingFilter } from "./meeting-list"
 
 interface Props {
   meetings: Meeting[]
-  filter: MeetingFilter
-  inMeeting: boolean
+  page: "meetings" | "departments"
   busy: boolean
-  onFilter: (filter: MeetingFilter) => void
+  onPage: (page: "meetings" | "departments") => void
   onConfigure: () => void
   onNavigate?: () => void
 }
 
 export function WorkspaceSidebar({
   meetings,
-  filter,
-  inMeeting,
+  page,
   busy,
-  onFilter,
+  onPage,
   onConfigure,
   onNavigate,
 }: Props) {
-  const active = meetings.filter((meeting) => meeting.status !== "ended").length
   const navigation = [
-    { value: "all" as const, label: "会议记录", icon: FolderClosed, count: meetings.length },
-    { value: "active" as const, label: "未结束的会议", icon: Clock3, count: active },
-    {
-      value: "ended" as const,
-      label: "已结束的会议",
-      icon: CheckCheck,
-      count: meetings.length - active,
-    },
+    { value: "meetings" as const, label: "会议管理", icon: FolderClosed },
+    { value: "departments" as const, label: "部门管理", icon: Building2 },
   ]
   return (
     <div className="sidebar-content">
@@ -55,19 +45,19 @@ export function WorkspaceSidebar({
       </a>
       <div className="sidebar-section-label">工作空间</div>
       <nav aria-label="会议导航" className="workspace-nav">
-        {navigation.map(({ value, label, icon: Icon, count }) => (
+        {navigation.map(({ value, label, icon: Icon }) => (
           <button
             key={value}
             disabled={busy}
-            className={cn("nav-item", !inMeeting && filter === value && "selected")}
+            className={cn("nav-item", page === value && "selected")}
+            aria-current={page === value ? "page" : undefined}
             onClick={() => {
-              onFilter(value)
+              onPage(value)
               onNavigate?.()
             }}
           >
             <Icon className="size-4" />
             <span>{label}</span>
-            <small>{count}</small>
           </button>
         ))}
       </nav>

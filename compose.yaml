@@ -5,16 +5,22 @@ services:
     container_name: audio2text-server
     environment:
       DATA_DIR: /app/data/archives
+      ASR_TOKENIZER: ${ASR_TOKENIZER:-/app/data/tokenizers/qwen}
+      ASR_SEND_CHAT_TEMPLATE: ${ASR_SEND_CHAT_TEMPLATE:-false}
+      DIARIZATION_MODEL_DIR: /app/models/diarization
+      DIARIZATION_SEGMENTATION_DIR: /app/models/pyannote/segmentation-3.0
+      DIARIZATION_WORKERS: ${DIARIZATION_WORKERS:-1}
+      DIARIZATION_THREADS: ${DIARIZATION_THREADS:-2}
+      DIARIZATION_TIMEOUT_SECONDS: ${DIARIZATION_TIMEOUT_SECONDS:-120}
+      DIARIZATION_FINAL_TIMEOUT_SECONDS: ${DIARIZATION_FINAL_TIMEOUT_SECONDS:-1800}
     ports:
       - "8000:8000"
     volumes:
       - ./data:/app/data
-    depends_on:
-      vllm:
-        condition: service_healthy
-        required: false
+      - ${DIARIZATION_MODEL_DIR:-./models/diarization}:/app/models/diarization:ro
+      - ${DIARIZATION_SEGMENTATION_DIR:-./models/pyannote/segmentation-3.0}:/app/models/pyannote/segmentation-3.0:ro
   vllm:
-    image: qwenllm/qwen3-asr:latest
+    image: ${VLLM_IMAGE:-qwenllm/qwen3-asr:latest}
     container_name: audio2text-vllm
     profiles: [gpu]
     command:
@@ -22,6 +28,7 @@ services:
       - ${VLLM_MODEL_PATH:-/models/qwen3-asr-1.7b}
       - --served-model-name
       - ${VLLM_MODEL:-qwen3-asr-1.7b}
+      - --trust-request-chat-template
       - --host
       - 0.0.0.0
       - --port

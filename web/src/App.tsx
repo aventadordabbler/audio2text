@@ -12,11 +12,12 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { CreateMeetingDialog } from "@/components/create-meeting-dialog"
+import { DepartmentManagement } from "@/components/department-management"
 import { MeetingDetail } from "@/components/meeting-detail"
 import { ModelConfigDialog } from "@/components/model-config-dialog"
-import { MeetingList, type MeetingFilter } from "@/components/meeting-list"
+import { MeetingList } from "@/components/meeting-list"
 import { WorkspaceSidebar } from "@/components/workspace-sidebar"
-import { api, errorMessage, type Meeting } from "@/lib/meetings"
+import { api, emptyMeetingFilters, errorMessage, type Department, type Meeting, type MeetingFilters } from "@/lib/meetings"
 import { RecordingSession } from "@/lib/recording-session"
 
 export default function App() {
@@ -25,8 +26,9 @@ export default function App() {
   const [meetings, setMeetings] = useState<Meeting[]>([])
   const [loading, setLoading] = useState(true)
   const [routing, setRouting] = useState(true)
-  const [filter, setFilter] = useState<MeetingFilter>("all")
-  const [query, setQuery] = useState("")
+  const [filters, setFilters] = useState<MeetingFilters>(emptyMeetingFilters)
+  const [departments, setDepartments] = useState<Department[]>([])
+  const [page, setPage] = useState<"meetings" | "departments">("meetings")
   const [error, setError] = useState("")
   const [createOpen, setCreateOpen] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -36,7 +38,15 @@ export default function App() {
   const refresh = useCallback(async () => {
     setLoading(true)
     try {
-      setMeetings(await api<Meeting[]>("/api/meetings"))
+      const [meetings, departments] = await Promise.all([
+        api<Meeting[]>("/api/meetings"), api<Department[]>("/api/departments"),
+      ])
+      setMeetings(meetings)
+      setDepartments(departments)
+      setFilters((filters) =>
+        filters.departmentId === "all" || filters.departmentId === "unassigned" || departments.some((department) => department.id === filters.departmentId)
+          ? filters : { ...filters, departmentId: "all" },
+      )
     } catch (error) {
       setError(errorMessage(error))
     } finally {
@@ -54,6 +64,7 @@ export default function App() {
           await session.leave()
           setError("")
           const match = location.hash.match(/^#meeting\/([a-f0-9]{32})$/)
+          if (active) setPage(location.hash === "#departments" ? "departments" : "meetings")
           try {
             if (match) {
               const meeting = await api<Meeting>(`/api/meetings/${match[1]}`)
@@ -112,10 +123,8 @@ export default function App() {
       )
   }, [state.meeting])
 
-  function selectFilter(value: MeetingFilter) {
-    setFilter(value)
-    setQuery("")
-    if (location.hash) location.hash = ""
+  function selectPage(value: "meetings" | "departments") {
+    location.hash = value === "departments" ? "departments" : ""
   }
   function created(meeting: Meeting) {
     setMeetings((meetings) => [meeting, ...meetings])
@@ -127,11 +136,10 @@ export default function App() {
   }, [])
   const sidebarProps = {
     meetings,
-    filter,
-    inMeeting: !!state.meeting,
+    page,
     busy: state.busy,
     onConfigure: configureModels,
-    onFilter: selectFilter,
+    onPage: selectPage,
   }
   const visibleError = error || state.error
 
@@ -157,7 +165,7 @@ export default function App() {
                 </SheetTrigger>
                 <SheetContent side="left" className="w-[260px] gap-0 p-0">
                   <SheetTitle className="sr-only">会议助手导航</SheetTitle>
-                  <SheetDescription className="sr-only">浏览和筛选会议记录</SheetDescription>
+                  <SheetDescription className="sr-only">会议管理与部门管理</SheetDescription>
                   <WorkspaceSidebar {...sidebarProps} onNavigate={() => setMobileOpen(false)} />
                 </SheetContent>
               </Sheet>
@@ -165,7 +173,7 @@ export default function App() {
               <nav aria-label="面包屑" className="breadcrumb">
                 <span>工作空间</span>
                 <ChevronRight />
-                <a href="#">会议记录</a>
+                <a href={page === "departments" ? "#departments" : "#"}>{page === "departments" ? "部门管理" : "会议管理"}</a>
                 {state.meeting && (
                   <>
                     <ChevronRight />
@@ -213,6 +221,8 @@ export default function App() {
               <Skeleton className="mb-9 h-4 w-72 max-w-full" />
               <Skeleton className="h-80 w-full rounded-xl" />
             </div>
+          ) : page === "departments" ? (
+            <DepartmentManagement departments={departments} onChanged={refresh} />
           ) : state.meeting ? (
             <MeetingDetail
               key={state.meeting.id}
@@ -225,10 +235,9 @@ export default function App() {
             <MeetingList
               meetings={meetings}
               loading={loading}
-              filter={filter}
-              onFilter={setFilter}
-              query={query}
-              onQuery={setQuery}
+              departments={departments}
+              filters={filters}
+              onFilters={setFilters}
               onCreate={() => setCreateOpen(true)}
               onRefresh={() => {
                 setError("")
@@ -238,7 +247,7 @@ export default function App() {
           )}
         </main>
       </div>
-      <CreateMeetingDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={created} />
+      <CreateMeetingDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={created} departments={departments} />
       <ModelConfigDialog
         open={modelsOpen}
         onOpenChange={setModelsOpen}

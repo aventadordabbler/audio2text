@@ -18,25 +18,29 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { api, errorMessage, type Meeting } from "@/lib/meetings"
+import { api, errorMessage, type Department, type Meeting } from "@/lib/meetings"
 
 export function CreateMeetingDialog({
   open,
   onOpenChange,
   onCreated,
+  departments,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   onCreated: (meeting: Meeting) => void
+  departments: Department[]
 }) {
   const [title, setTitle] = useState("")
   const [language, setLanguage] = useState("auto")
+  const [departmentId, setDepartmentId] = useState("unassigned")
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState("")
   useEffect(() => {
     if (open) {
       setTitle("")
       setLanguage("auto")
+      setDepartmentId("unassigned")
       setError("")
     }
   }, [open])
@@ -56,6 +60,7 @@ export function CreateMeetingDialog({
         body: JSON.stringify({
           title: title.trim(),
           language: language === "auto" ? null : language,
+          department_id: departmentId === "unassigned" ? null : departmentId,
         }),
       })
       onCreated(meeting)
@@ -88,7 +93,7 @@ export function CreateMeetingDialog({
                 开始一场新会议
               </DialogTitle>
               <DialogDescription className="mt-2 leading-6">
-                设置会议名称与转写语言。
+                设置会议名称、所属部门与转写语言。
               </DialogDescription>
             </DialogHeader>
             <div className="mt-7 space-y-5">
@@ -106,6 +111,21 @@ export function CreateMeetingDialog({
                   disabled={submitting}
                   className="h-11"
                 />
+              </div>
+              <div className="space-y-2.5">
+                <Label htmlFor="department-input">所属部门</Label>
+                <Select value={departmentId} onValueChange={setDepartmentId} disabled={submitting}>
+                  <SelectTrigger id="department-input" className="h-11 w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="unassigned">未分类</SelectItem>
+                    {departments.map((department) => (
+                      <SelectItem key={department.id} value={department.id}>{department.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {!departments.length && <p className="text-xs text-muted-foreground">可先在「部门管理」中添加部门。</p>}
               </div>
               <div className="space-y-2.5">
                 <Label htmlFor="language-input">转写语言</Label>

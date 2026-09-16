@@ -51,6 +51,7 @@ export function MeetingDetail({
   const previousStatus = useRef(meeting.status)
   const scrollRoot = useRef<HTMLDivElement>(null)
   const copyTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const following = useRef(true)
   const { status } = meeting
   const recording = status === "recording" && state.localRecording && !state.finishing
   const followLiveText = autoScroll && state.liveVersion > 0
@@ -78,18 +79,20 @@ export function MeetingDetail({
   }
 
   useEffect(() => {
-    if (!autoScroll || state.liveVersion === 0) return
+    if (!autoScroll || !following.current || state.liveVersion === 0) return
     const frame = requestAnimationFrame(scrollToBottom)
     return () => cancelAnimationFrame(frame)
-  }, [meeting.text, state.liveVersion, autoScroll])
+  }, [meeting.text, state.partialText, state.liveVersion, autoScroll])
 
   useEffect(() => {
     const viewport = scrollRoot.current?.querySelector("[data-slot='scroll-area-viewport']")
-    if (!viewport || !followLiveText) return
-    const observer = new ResizeObserver(scrollToBottom)
+    if (!viewport) return
+    const track = () => { following.current = viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop < 80 }
+    viewport.addEventListener("scroll", track, { passive: true })
+    const observer = new ResizeObserver(() => { if (autoScroll && following.current && followLiveText) scrollToBottom() })
     observer.observe(viewport)
-    return () => observer.disconnect()
-  }, [followLiveText])
+    return () => { observer.disconnect(); viewport.removeEventListener("scroll", track) }
+  }, [followLiveText, autoScroll])
 
   async function copyText() {
     try {
@@ -112,7 +115,12 @@ export function MeetingDetail({
   }
 
   return (
-    <section id="meeting-view" className="page-content detail-page animate-page-in">
+    <Tabs
+      id="meeting-view"
+      value={activeTab}
+      onValueChange={setActiveTab}
+      className="page-content detail-page gap-0 animate-page-in"
+    >
       <Button
         id="back-button"
         variant="ghost"
@@ -136,37 +144,41 @@ export function MeetingDetail({
           <div className="detail-status mb-3">
             <MeetingStatusBadge id="meeting-status" status={status} />
           </div>
-          <h1 id="meeting-title" title={meeting.title}>
-            {meeting.title}
-          </h1>
-          <div id="meeting-meta" className="meeting-meta">
-            <span>
-              <CalendarDays />
-              {formatDate(meeting.created_at)}
-            </span>
-            <i />
-            <span>
-              <Languages />
-              {languageLabels[meeting.language || ""] || meeting.language || "自动识别语言"}
-            </span>
+          <div className="detail-title-row">
+            <h1 id="meeting-title" title={meeting.title}>
+              {meeting.title}
+            </h1>
+            <div id="meeting-meta" className="meeting-meta">
+              <span>
+                <CalendarDays />
+                {formatDate(meeting.created_at)}
+              </span>
+              <i />
+              <span>
+                <Languages />
+                {languageLabels[meeting.language || ""] || meeting.language || "自动识别语言"}
+              </span>
+            </div>
           </div>
         </div>
-        {meeting.text && (
-          <Button variant="outline" className="download-heading shrink-0 gap-2 bg-white" asChild>
-            <a id="download-link" href={`/api/meetings/${meeting.id}/download`}>
-              <Download className="size-4" />
-              下载文本
-            </a>
-          </Button>
-        )}
-      </div>
-
-      <div className="meeting-workspace">
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="meeting-content">
+        <div className="detail-toolbar">
           <TabsList className="meeting-tabs">
             <TabsTrigger value="transcript">实时转写</TabsTrigger>
             <TabsTrigger value="minutes">会议纪要</TabsTrigger>
           </TabsList>
+          {meeting.text && (
+            <Button variant="outline" className="download-heading shrink-0 gap-2 bg-white" asChild>
+              <a id="download-link" href={`/api/meetings/${meeting.id}/download`}>
+                <Download className="size-4" />
+                下载文本
+              </a>
+            </Button>
+          )}
+        </div>
+      </div>
+
+      <div className="meeting-workspace">
+        <div className="meeting-content">
           <TabsContent value="transcript" forceMount className="meeting-panel">
             <Card className="transcript-card gap-0 overflow-hidden rounded-xl py-0 shadow-none">
               <div className="transcript-heading">
@@ -192,6 +204,7 @@ export function MeetingDetail({
                     checked={autoScroll}
                     onCheckedChange={(checked) => {
                       setAutoScroll(checked)
+                      if (checked) following.current = true
                       if (checked) requestAnimationFrame(scrollToBottom)
                     }}
                     size="sm"
@@ -201,12 +214,23 @@ export function MeetingDetail({
               <ScrollArea ref={scrollRoot} className="transcript-scroll">
                 <article
                   id="transcript"
-                  className={meeting.text ? "transcript-text" : "transcript-empty"}
+                  className={meeting.text || state.partialText ? "transcript-text" : "transcript-empty"}
                   aria-label="会议转写文本"
                   tabIndex={0}
                 >
-                  {meeting.text ? (
-                    meeting.text
+                  {meeting.text || state.partialText ? (
+                    <>
+                      {meeting.segments?.length ? meeting.segments.map((segment) => (
+                        <section className="transcript-segment" key={segment.segment_id} data-segment-id={segment.segment_id}>
+                          <div className="transcript-segment-meta">
+                            <span>{segment.speaker_status === "overlap" ? "多人同时讲话" : segment.speaker_status === "multiple" ? "多位说话人" : ["unknown", "pending"].includes(segment.speaker_status) ? "说话人待确认" : segment.speaker_ids.map((id) => meeting.speakers[id]?.name || "未知说话人").join("、") || "说话人待确认"}</span>
+                            <time>{formatDuration(segment.start_ms / 1000)}</time>
+                          </div>
+                          <p>{segment.text}</p>
+                        </section>
+                      )) : meeting.text}
+                      <span className="text-muted-foreground transcript-partial" aria-label="正在识别">{state.partialText}</span>
+                    </>
                   ) : (
                     <div className="document-empty">
                       <div className="document-empty-icon">
@@ -243,8 +267,15 @@ export function MeetingDetail({
                     {recording ? <span /> : <CheckCheck className="size-3.5" />}
                   </span>
                   {state.notice}
+                  {meeting.processing?.status === "unavailable" && <span title={meeting.processing.error}> · 说话人识别未就绪</span>}
+                  {["queued", "running"].includes(meeting.processing?.status) && <span> · 正在校正说话人</span>}
+                  {meeting.processing?.status === "failed" && <span title={meeting.processing.error}> · 说话人校正未完成</span>}
+                  {meeting.processing?.status === "pending" && <span> · 说话人标注中</span>}
                 </span>
                 <div>
+                  {status === "ended" && ["failed", "unavailable"].includes(meeting.processing?.status) && (
+                    <Button variant="ghost" size="sm" disabled={state.busy} onClick={() => void session.retryDiarization()}>重试说话人校正</Button>
+                  )}
                   <span id="text-count">{textLength.toLocaleString()} 字</span>
                   {meeting.text && (
                     <>
@@ -275,7 +306,7 @@ export function MeetingDetail({
               onConfigure={onConfigure}
             />
           </TabsContent>
-        </Tabs>
+        </div>
 
         <aside className="meeting-aside">
           <Card className="recording-card gap-0 rounded-xl p-5 shadow-none">
@@ -378,6 +409,10 @@ export function MeetingDetail({
                 <dd>{formatDate(meeting.created_at, false)}</dd>
               </div>
               <div>
+                <dt>所属部门</dt>
+                <dd className="max-w-36 break-words">{meeting.department_name || "未分类"}</dd>
+              </div>
+              <div>
                 <dt>转写语言</dt>
                 <dd>{languageLabels[meeting.language || ""] || meeting.language || "自动识别"}</dd>
               </div>
@@ -408,6 +443,6 @@ export function MeetingDetail({
             ? "开启自动滚动，始终跟上对话的节奏。"
             : "自动滚动已关闭，可以自由回看之前的内容。"}
       </div>
-    </section>
+    </Tabs>
   )
 }

@@ -1,5 +1,6 @@
 .git
 .venv
+**/.venv
 .env
 .idea
 __pycache__
@@ -12,3 +13,4 @@ data
 models
 wav_files
 tests
+checks

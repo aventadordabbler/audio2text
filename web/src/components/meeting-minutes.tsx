@@ -31,6 +31,7 @@ interface Minutes {
   updated_at: string | null
   error: string
   available: boolean
+  stale: boolean
 }
 
 export const MeetingMinutes = memo(function MeetingMinutes({
@@ -51,10 +52,10 @@ export const MeetingMinutes = memo(function MeetingMinutes({
   const generating = submitting || minutes?.status === "generating"
   const ended = meeting.status === "ended"
   const hasTranscript = !!meeting.text.trim()
+  const correcting = ["queued", "running"].includes(meeting.processing?.status)
 
   useEffect(() => {
     const controller = new AbortController()
-    let timer: ReturnType<typeof setTimeout> | undefined
     async function load() {
       try {
         const result = await api<Minutes>(`/api/meetings/${meeting.id}/minutes`, {
@@ -63,28 +64,17 @@ export const MeetingMinutes = memo(function MeetingMinutes({
         if (controller.signal.aborted) return
         setMinutes(result)
         setError("")
-        if (result.status === "generating") timer = setTimeout(load, 1000)
       } catch (error) {
         if (!controller.signal.aborted) {
           setError(minutesErrorMessage(error))
-          // Retry transient failures; missing routes/meetings and invalid requests need action.
-          if (
-            !(error instanceof ApiError) ||
-            error.status === 408 ||
-            error.status === 429 ||
-            error.status >= 500
-          ) {
-            timer = setTimeout(load, 5000)
-          }
         }
       }
     }
     void load()
     return () => {
       controller.abort()
-      clearTimeout(timer)
     }
-  }, [meeting.id, meeting.status, revision, modelsVersion])
+  }, [meeting.id, meeting.status, meeting.minutes_version, meeting.processing?.status, revision, modelsVersion])
 
   useEffect(
     () => () => {
@@ -94,7 +84,7 @@ export const MeetingMinutes = memo(function MeetingMinutes({
   )
 
   async function generate() {
-    if (generating) return
+    if (generating || correcting) return
     setSubmitting(true)
     setError("")
     try {
@@ -119,7 +109,9 @@ export const MeetingMinutes = memo(function MeetingMinutes({
     }
   }
 
-  const hint = generating
+  const hint = correcting
+    ? "正在校正说话人，完成后将自动整理纪要。"
+    : generating
     ? "正在整理核心结论、决策与待办，离开页面后仍会继续生成。"
     : !ended
       ? "结束会议后，将根据完整转写自动整理会议纪要。"
@@ -144,7 +136,7 @@ export const MeetingMinutes = memo(function MeetingMinutes({
             id="generate-minutes"
             variant="outline"
             size="sm"
-            disabled={generating}
+            disabled={generating || correcting}
             onClick={generate}
             className="gap-1.5 text-xs"
           >
@@ -155,7 +147,7 @@ export const MeetingMinutes = memo(function MeetingMinutes({
             ) : (
               <Sparkles />
             )}
-            {generating
+            {correcting ? "等待校正" : generating
               ? "生成中"
               : minutes.status === "failed"
                 ? "重试生成"
@@ -166,6 +158,7 @@ export const MeetingMinutes = memo(function MeetingMinutes({
         )}
       </div>
       <ScrollArea className="minutes-scroll">
+        {minutes?.stale && <p className="minutes-message" role="status">转写已更新，可重新生成纪要。</p>}
         {failure && (
           <div className="minutes-message" role="alert">
             <p>{failure}</p>
@@ -226,7 +219,7 @@ export const MeetingMinutes = memo(function MeetingMinutes({
           ) : minutes?.text ? (
             <CheckCheck className="size-3.5 shrink-0" />
           ) : null}
-          {generating
+          {correcting ? "等待说话人校正" : generating
             ? "后台生成中"
             : minutes?.status === "failed"
               ? "生成失败，可重试"

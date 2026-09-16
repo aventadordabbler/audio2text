@@ -1,10 +1,9 @@
-import { useEffect, useState, type FormEvent } from "react"
-import { Check, LoaderCircle, Save, Settings2 } from "lucide-react"
+import { useEffect, useRef, useState, type FormEvent } from "react"
+import { Check, CircleCheck, CircleX, LoaderCircle, PlugZap, Save, Settings2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -19,9 +18,14 @@ interface ModelConfig {
   base_url: string
   model: string
   timeout_seconds: number
+  asr_mode: "qwen_streaming" | "transcription"
   api_key_configured: boolean
   configured: boolean
   updated_at: string | null
+}
+
+interface ConnectionResult {
+  success: boolean
 }
 
 function ModelForm({
@@ -35,17 +39,65 @@ function ModelForm({
 }) {
   const [url, setUrl] = useState(config.base_url)
   const [model, setModel] = useState(config.model)
+  const [mode, setMode] = useState(config.asr_mode)
   const [key, setKey] = useState("")
   const [clearKey, setClearKey] = useState(false)
   const [timeout, setTimeout] = useState(String(config.timeout_seconds))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
   const [saved, setSaved] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<ConnectionResult | null>(null)
+  const formRef = useRef<HTMLFormElement>(null)
+  const testController = useRef<AbortController | null>(null)
+  const disabled = busy || testing
   const prefix = `model-${config.kind}`
+  const testState = testing ? "testing" : testResult ? (testResult.success ? "success" : "failure") : "idle"
+  const testStatus = testing ? "测试中…" : testResult ? (testResult.success ? "连接成功" : "连接失败") : ""
+
+  useEffect(() => () => {
+    testController.current?.abort()
+    testController.current = null
+  }, [])
+
+  function payload() {
+    return JSON.stringify({
+      base_url: url.trim(),
+      model: model.trim(),
+      timeout_seconds: Number(timeout),
+      api_key: clearKey ? "" : key || undefined,
+      ...(config.kind === "asr" ? { asr_mode: mode } : {}),
+    })
+  }
+
+  async function testConnection() {
+    if (disabled || testController.current || !formRef.current?.reportValidity()) return
+    const controller = new AbortController()
+    testController.current = controller
+    setTesting(true)
+    setTestResult(null)
+    setError("")
+    try {
+      const result = await api<ConnectionResult>(`/api/model-configs/${config.kind}/test`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload(),
+        signal: controller.signal,
+      })
+      if (!controller.signal.aborted) setTestResult(result)
+    } catch {
+      if (!controller.signal.aborted) setTestResult({ success: false })
+    } finally {
+      if (testController.current === controller) {
+        testController.current = null
+        setTesting(false)
+      }
+    }
+  }
 
   async function save(event: FormEvent) {
     event.preventDefault()
-    if (busy) return
+    if (disabled) return
     setBusy(true)
     setError("")
     setSaved(false)
@@ -53,12 +105,7 @@ function ModelForm({
       const result = await api<ModelConfig>(`/api/model-configs/${config.kind}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          base_url: url.trim(),
-          model: model.trim(),
-          timeout_seconds: Number(timeout),
-          api_key: clearKey ? "" : key || undefined,
-        }),
+        body: payload(),
       })
       setKey("")
       setClearKey(false)
@@ -72,13 +119,11 @@ function ModelForm({
   }
 
   return (
-    <form onSubmit={save} onChange={() => setSaved(false)}>
+    <form ref={formRef} onSubmit={save} onChange={() => { setSaved(false); setTestResult(null) }}>
       <div className="model-config-fields create-dialog-body">
-        <p className="model-config-hint">
-          {config.kind === "asr"
-            ? "用于会议音频转写，需要支持 OpenAI 兼容的音频转写接口。"
-            : "用于整理会议纪要，需要支持 OpenAI 兼容的对话接口。"}
-        </p>
+        {config.kind === "llm" && (
+          <p className="model-config-hint">用于整理会议纪要，需要支持 OpenAI 兼容的对话接口。</p>
+        )}
         <div className="space-y-2">
           <Label htmlFor={`${prefix}-url`}>API 地址</Label>
           <Input
@@ -86,12 +131,12 @@ function ModelForm({
             type="url"
             value={url}
             onChange={(event) => setUrl(event.target.value)}
-            placeholder="http://localhost:8001/v1"
+            placeholder="https://your-model-server/v1"
             required
-            disabled={busy}
+            disabled={disabled}
             maxLength={2000}
           />
-          <p className="model-field-help">填写 API 基础地址，通常以 /v1 结尾。</p>
+          <p className="model-field-help">填写应用后端能访问的 API 基础地址，通常以 /v1 结尾。</p>
         </div>
         <div className="space-y-2">
           <Label htmlFor={`${prefix}-name`}>模型名称</Label>
@@ -101,10 +146,24 @@ function ModelForm({
             onChange={(event) => setModel(event.target.value)}
             placeholder={config.kind === "asr" ? "qwen3-asr-1.7b" : "服务提供的模型 ID"}
             required
-            disabled={busy}
+            disabled={disabled}
             maxLength={200}
           />
         </div>
+        {config.kind === "asr" && (
+          <div className="space-y-2">
+            <Label htmlFor={`${prefix}-mode`}>识别方式</Label>
+            <select id={`${prefix}-mode`} value={mode} disabled={disabled}
+              onChange={(event) => setMode(event.target.value as ModelConfig["asr_mode"])}
+              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm">
+              <option value="qwen_streaming">Qwen 前缀续写</option>
+              <option value="transcription">文件转写（兼容模式）</option>
+            </select>
+            <p className="model-field-help">{mode === "qwen_streaming"
+              ? "需要模型服务支持音频对话和 assistant 前缀续写，可修订当前发言的末尾文字。"
+              : "使用标准音频转写接口，分段刷新当前发言；无需服务支持前缀续写。"}</p>
+          </div>
+        )}
         <div className="space-y-2">
           <Label htmlFor={`${prefix}-key`}>
             API Key <span className="text-muted-foreground">（可选）</span>
@@ -118,7 +177,7 @@ function ModelForm({
             placeholder={
               config.api_key_configured ? "已保存密钥，留空保留" : "无鉴权的本地服务可留空"
             }
-            disabled={busy || clearKey}
+            disabled={disabled || clearKey}
             maxLength={4096}
           />
           {config.api_key_configured && (
@@ -126,7 +185,7 @@ function ModelForm({
               <input
                 type="checkbox"
                 checked={clearKey}
-                disabled={busy}
+                disabled={disabled}
                 onChange={(event) => setClearKey(event.target.checked)}
               />
               清除已保存的密钥
@@ -144,7 +203,7 @@ function ModelForm({
             value={timeout}
             onChange={(event) => setTimeout(event.target.value)}
             required
-            disabled={busy}
+            disabled={disabled}
           />
         </div>
         <p className="model-field-help">
@@ -162,13 +221,25 @@ function ModelForm({
           </p>
         )}
       </div>
-      <DialogFooter className="m-0 shrink-0 px-6 py-4 sm:justify-between">
-        <Button variant="ghost" type="button" onClick={onClose} disabled={busy}>
-          关闭
-        </Button>
-        <Button type="submit" disabled={busy} className="gap-2" id={`${prefix}-save`}>
-          {busy ? <LoaderCircle className="animate-spin" /> : <Save />}保存配置
-        </Button>
+      <DialogFooter className="model-config-footer m-0 shrink-0 px-6 py-4">
+        <span className="sr-only" role="status" aria-live="polite">{testStatus}</span>
+        <div className="model-config-actions">
+          <Button variant="ghost" type="button" onClick={onClose} disabled={busy}>
+            关闭
+          </Button>
+          <div>
+            <Button type="button" variant="outline" disabled={disabled} onClick={testConnection} id={`${prefix}-test`}
+              className="model-test-button" data-state={testState} aria-busy={testing}
+              aria-label={testStatus ? `测试连通性：${testStatus}` : "测试连通性"}
+              title={testResult ? `${testStatus}，点击重新测试` : undefined}>
+              {testing ? <LoaderCircle className="animate-spin" /> : testResult ? (testResult.success ? <CircleCheck /> : <CircleX />) : <PlugZap />}
+              {testing ? "测试中…" : "测试连通性"}
+            </Button>
+            <Button type="submit" disabled={disabled} className="gap-2" id={`${prefix}-save`}>
+              {busy ? <LoaderCircle className="animate-spin" /> : <Save />}保存配置
+            </Button>
+          </div>
+        </div>
       </DialogFooter>
     </form>
   )
@@ -205,6 +276,7 @@ export function ModelConfigDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         id="model-config-dialog"
+        aria-describedby={undefined}
         className="create-dialog model-config-dialog gap-0 overflow-hidden p-0 sm:max-w-[520px]"
       >
         <DialogHeader className="shrink-0 px-6 pb-4 pt-6 text-left">
@@ -212,7 +284,6 @@ export function ModelConfigDialog({
             <Settings2 className="size-5" />
             模型配置
           </DialogTitle>
-          <DialogDescription>分别设置语音识别和会议纪要使用的模型。</DialogDescription>
         </DialogHeader>
         {error ? (
           <div className="p-6">

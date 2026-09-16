@@ -2,27 +2,26 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
-import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import quote
-from uuid import uuid4
 
-from anyio import CancelScope
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, WebSocket
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AwareDatetime, BaseModel, Field, field_validator
 
-from .asr import Transcriber, build_transcriber
-from .audio import AudioNotReadyError
+from .realtime import meeting_socket
 from .config import Settings, get_settings
 from .meetings import MeetingError, MeetingStore
 from .minutes import MinutesGenerator, MinutesService
 from .model_configs import ModelConfigInput, ModelConfigStore, ModelKind
+from .model_probe import ModelProbeResult, probe_model
+from .meeting_events import MeetingEvents
+from .diarization.service import DiarizationService
 
 logger = logging.getLogger(__name__)
 WEB_DIR = Path(__file__).resolve().parent.parent / "web" / "dist"
@@ -31,6 +30,7 @@ WEB_DIR = Path(__file__).resolve().parent.parent / "web" / "dist"
 class MeetingCreate(BaseModel):
     title: str = Field(min_length=1, max_length=80)
     language: str | None = Field(default=None, max_length=40)
+    department_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
 
     @field_validator("title")
     @classmethod
@@ -40,33 +40,47 @@ class MeetingCreate(BaseModel):
         return value.strip()
 
 
+class DepartmentInput(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+
+    @field_validator("name")
+    @classmethod
+    def nonempty_name(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("请输入部门名称")
+        return value.strip()
+
+
 def create_app(
     settings: Settings | None = None,
-    transcriber: Transcriber | None = None,
+    stream_factory=None,
     minutes_generator: MinutesGenerator | None = None,
+    diarization_worker_factory=None,
 ) -> FastAPI:
     app_settings = settings or get_settings()
     store = MeetingStore(app_settings.database_path or app_settings.data_dir / "meetings.sqlite3", app_settings.data_dir)
     models = ModelConfigStore(store.path)
-    minutes = MinutesService(store, models, app_settings, minutes_generator)
+    events = MeetingEvents()
+    minutes = MinutesService(store, models, app_settings, minutes_generator, events=events)
+    diarization = DiarizationService(store, models, minutes, app_settings, events, diarization_worker_factory)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         await asyncio.to_thread(store.recover)
+        await diarization.start()
         try:
             yield
         finally:
+            await diarization.close()
             await minutes.close()
-            close = getattr(transcriber, "close", None)
-            if close is not None:
-                await close()
 
     app = FastAPI(title=app_settings.app_name, lifespan=lifespan)
     app.state.settings = app_settings
     app.state.meeting_store = store
-    app.state.transcriber = transcriber
     app.state.minutes_service = minutes
     app.state.model_configs = models
+    app.state.meeting_events = events
+    app.state.diarization_service = diarization
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
 
     @app.exception_handler(MeetingError)
@@ -92,13 +106,44 @@ def create_app(
     def save_model_config(kind: ModelKind, payload: ModelConfigInput) -> dict[str, Any]:
         return models.save(kind, payload)
 
+    @app.post("/api/model-configs/{kind}/test", response_model=ModelProbeResult)
+    async def test_model_config(kind: ModelKind, payload: ModelConfigInput) -> ModelProbeResult:
+        config = await asyncio.to_thread(models.resolve_draft, kind, payload)
+        return await probe_model(config)
+
     @app.get("/api/meetings")
-    def list_meetings() -> list[dict[str, Any]]:
-        return store.list()
+    def list_meetings(
+        title: str = Query(default="", max_length=80),
+        department_id: str | None = Query(default=None, pattern=r"^(?:[a-f0-9]{32}|unassigned)$"),
+        status: Literal["created", "recording", "paused", "ended"] | None = None,
+        created_from: AwareDatetime | None = None,
+        created_before: AwareDatetime | None = None,
+    ) -> list[dict[str, Any]]:
+        if created_from and created_before and created_from >= created_before:
+            raise HTTPException(422, "开始时间必须早于结束时间")
+        return store.list(title=title, department_id=department_id, status=status,
+                          created_from=created_from, created_before=created_before)
 
     @app.post("/api/meetings", status_code=201)
     def create_meeting(payload: MeetingCreate) -> dict[str, Any]:
-        return store.create(payload.title, payload.language)
+        return store.create(payload.title, payload.language, payload.department_id)
+
+    @app.get("/api/departments")
+    def list_departments() -> list[dict[str, Any]]:
+        return store.list_departments()
+
+    @app.post("/api/departments", status_code=201)
+    def create_department(payload: DepartmentInput) -> dict[str, Any]:
+        return store.save_department(payload.name)
+
+    @app.put("/api/departments/{department_id}")
+    def update_department(department_id: str, payload: DepartmentInput) -> dict[str, Any]:
+        return store.save_department(payload.name, department_id)
+
+    @app.delete("/api/departments/{department_id}", status_code=204)
+    def delete_department(department_id: str) -> Response:
+        store.delete_department(department_id)
+        return Response(status_code=204)
 
     @app.get("/api/meetings/{meeting_id}")
     def get_meeting(meeting_id: str) -> dict[str, Any]:
@@ -110,8 +155,30 @@ def create_app(
     @app.post("/api/meetings/{meeting_id}/end")
     async def end_meeting(meeting_id: str) -> dict[str, Any]:
         meeting = await asyncio.to_thread(store.transition, meeting_id, "end")
-        await minutes.after_end(meeting)
+        await diarization.finish(meeting_id)
         return meeting
+
+    @app.post("/api/meetings/{meeting_id}/diarization", status_code=202)
+    async def retry_diarization(meeting_id: str):
+        await diarization.finish(meeting_id, retry=True)
+        return await asyncio.to_thread(store.get, meeting_id)
+
+    @app.delete("/api/meetings/{meeting_id}", status_code=204)
+    async def delete_meeting(meeting_id: str):
+        async with diarization.finish_lock, minutes._lock:
+            if meeting_id in diarization.live or meeting_id in diarization.finalizers:
+                raise MeetingError("正在处理说话人，请完成后再删除")
+            await asyncio.to_thread(store.delete, meeting_id)
+            if timer := diarization.timers.pop(meeting_id, None):
+                timer.cancel()
+            diarization.dirty.discard(meeting_id)
+        events.publish(meeting_id, {"type": "deleted"})
+        return Response(status_code=204)
+
+    @app.get("/api/diarization/status")
+    def diarization_status():
+        error = diarization.workers[0].readiness()
+        return {"available": error is None, "error": error or ""}
 
     @app.get("/api/meetings/{meeting_id}/minutes")
     async def get_minutes(meeting_id: str) -> dict[str, Any]:
@@ -141,132 +208,9 @@ def create_app(
         )
 
     @app.websocket("/ws/meetings/{meeting_id}")
-    async def meeting_socket(websocket: WebSocket, meeting_id: str) -> None:
-        await websocket.accept()
-        owner = uuid4().hex
-        claimed = False
-        audio = bytearray()
-        recognized_bytes = 0
-        mime_type = "audio/webm"
-        initialized = False
-        session_text = ""
-        no_speech_notified = False
-        asr = transcriber
-
-        async def send_event(event: dict[str, Any]) -> None:
-            await websocket.send_json({**event, "meeting_id": meeting_id})
-
-        async def send_state(action: str) -> None:
-            await send_event({"type": "state", "action": action, "meeting": meeting})
-
-        def combined_text() -> str:
-            return "\n\n".join(part for part in (base_text, session_text) if part)
-
-        async def recognize(final: bool = False) -> bool:
-            nonlocal session_text, recognized_bytes, no_speech_notified
-            if not audio or len(audio) == recognized_bytes:
-                return True
-            try:
-                text = (await asr.transcribe(bytes(audio), mime_type, meeting["language"])).strip()
-                if text:
-                    session_text = text
-                    no_speech_notified = False
-                await asyncio.to_thread(store.save_text, meeting_id, combined_text(), owner)
-                recognized_bytes = len(audio)
-                if text:
-                    await send_event({"type": "transcript", "text": combined_text(), "bytes": len(audio)})
-                elif not no_speech_notified:
-                    await send_event({"type": "no_speech", "bytes": len(audio)})
-                    no_speech_notified = True
-                return True
-            except AudioNotReadyError:
-                # An initial MP4 header contains no samples. Keep it for the next fragment.
-                return final
-            except WebSocketDisconnect:
-                raise
-            except Exception:
-                logger.exception("ASR request failed for meeting %s", meeting_id)
-                await send_event({"type": "error", "action": "end" if final else None, "message": "识别服务暂时不可用，请稍后重试", "meeting": await asyncio.to_thread(store.get, meeting_id)})
-                return False
-
-        try:
-            meeting = await asyncio.to_thread(store.claim, meeting_id, owner)
-            claimed = True
-            if asr is None:
-                asr = build_transcriber(await asyncio.to_thread(models.require, "asr"))
-            base_text = meeting["text"]
-            await send_event({"type": "ready", "meeting": meeting})
-            while True:
-                message = await websocket.receive()
-                if message["type"] == "websocket.disconnect":
-                    return
-                if message.get("bytes") is not None:
-                    if meeting["status"] != "recording":
-                        await send_event({"type": "error", "message": "请先开始或继续会议录音"})
-                        continue
-                    chunk = message["bytes"]
-                    if len(audio) + len(chunk) > app_settings.max_audio_bytes:
-                        await send_event({"type": "error", "message": "本次录音超过 25 MB，已保存文字，请重新进入会议继续"})
-                        await websocket.close(code=1009)
-                        return
-                    audio.extend(chunk)
-                    await recognize()
-                    continue
-                action = None
-                try:
-                    payload = json.loads(message.get("text") or "null")
-                    if not isinstance(payload, dict):
-                        raise MeetingError("消息必须是 JSON 对象", 400)
-                    action = payload.get("type")
-                    if payload.get("meeting_id", meeting_id) != meeting_id:
-                        raise MeetingError("消息中的会议 ID 与当前连接不一致", 400)
-                    if action in {"start", "resume"}:
-                        if not initialized:
-                            value = payload.get("mime_type", "audio/webm")
-                            if not isinstance(value, str):
-                                raise MeetingError("音频类型必须是文本", 400)
-                            mime_type = value
-                        meeting = await asyncio.to_thread(store.transition, meeting_id, action, owner)
-                        initialized = True
-                        await send_state(action)
-                    elif action == "pause":
-                        meeting = await asyncio.to_thread(store.transition, meeting_id, "pause", owner)
-                        await send_state(action)
-                    elif action == "end":
-                        # Stop counting recording time before waiting for a final recognition retry.
-                        if meeting["status"] == "recording":
-                            meeting = await asyncio.to_thread(store.transition, meeting_id, "pause", owner)
-                        if not await recognize(final=True):
-                            continue
-                        meeting = await asyncio.to_thread(store.transition, meeting_id, "end", owner)
-                        await minutes.after_end(meeting)
-                        await send_state(action)
-                        await websocket.close(code=1000)
-                        return
-                    elif action == "ping":
-                        await send_event({"type": "pong"})
-                    else:
-                        raise MeetingError("未知会议操作", 400)
-                except (ValueError, TypeError):
-                    await send_event({"type": "error", "action": action, "message": "消息格式不正确"})
-                except MeetingError as exc:
-                    await send_event({"type": "error", "action": action, "message": str(exc)})
-        except MeetingError as exc:
-            await send_event({"type": "error", "message": str(exc)})
-            await websocket.close(code=1008)
-        except WebSocketDisconnect:
-            return
-        finally:
-            # Finish persistence/client cleanup even if the socket task is cancelled.
-            with CancelScope(shield=True):
-                try:
-                    if claimed:
-                        await asyncio.to_thread(store.release, meeting_id, owner)
-                finally:
-                    if asr is not transcriber:
-                        close = getattr(asr, "close", None)
-                        if close is not None:
-                            await close()
+    async def recognize_meeting(websocket: WebSocket, meeting_id: str) -> None:
+        await meeting_socket(websocket, meeting_id, store, models, minutes, stream_factory,
+                             settings=app_settings, diarization=diarization, events=events)
 
     # Mounts also match WebSockets, but StaticFiles only handles HTTP scopes.
     # Keep this fallback after the meeting socket and before the static mount.

@@ -1,7 +1,7 @@
+import { useEffect, useState } from "react"
 import {
-  ArrowDown,
   ArrowRight,
-  CalendarDays,
+  AudioLines,
   Check,
   Clock3,
   FileText,
@@ -14,7 +14,8 @@ import {
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
   Table,
   TableBody,
@@ -30,55 +31,90 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { MeetingStatusBadge } from "./meeting-status"
-import { formatDate, formatDuration, type Meeting } from "@/lib/meetings"
+import { api, emptyMeetingFilters, errorMessage, formatDate, formatDuration, statusLabels, type Department, type Meeting, type MeetingFilters, type MeetingStatus } from "@/lib/meetings"
 
-export type MeetingFilter = "all" | "active" | "ended"
 interface Props {
   meetings: Meeting[]
   loading: boolean
-  filter: MeetingFilter
-  onFilter: (filter: MeetingFilter) => void
-  query: string
-  onQuery: (query: string) => void
+  departments: Department[]
+  filters: MeetingFilters
+  onFilters: (filters: MeetingFilters) => void
   onCreate: () => void
   onRefresh: () => void
 }
 
 export function MeetingList({
   meetings,
-  loading,
-  filter,
-  onFilter,
-  query,
-  onQuery,
+  loading: loadingAll,
+  departments,
+  filters,
+  onFilters,
   onCreate,
   onRefresh,
 }: Props) {
+  const [result, setResult] = useState<{ key: string; source: Meeting[]; meetings: Meeting[]; error: string } | null>(null)
+  const params = new URLSearchParams()
+  if (filters.title.trim()) params.set("title", filters.title.trim())
+  if (filters.departmentId !== "all") params.set("department_id", filters.departmentId)
+  if (filters.status !== "all") params.set("status", filters.status)
+  if (filters.startDate) params.set("created_from", new Date(`${filters.startDate}T00:00:00`).toISOString())
+  if (filters.endDate) {
+    const end = new Date(`${filters.endDate}T00:00:00`)
+    end.setDate(end.getDate() + 1)
+    params.set("created_before", end.toISOString())
+  }
+  const searchKey = params.toString()
+  const rangeError = filters.startDate && filters.endDate && filters.startDate > filters.endDate
+    ? "开始日期不能晚于结束日期。" : ""
+  const currentResult = result?.key === searchKey && result.source === meetings ? result : null
+  const loading = loadingAll || (!!searchKey && !rangeError && !currentResult)
+  const searchError = rangeError || currentResult?.error
+  const filtered = rangeError ? [] : searchKey ? currentResult?.meetings || [] : meetings
+  const filteredEmpty = !!searchKey
+
+  useEffect(() => {
+    if (!searchKey || rangeError) return
+    const controller = new AbortController()
+    const timer = setTimeout(async () => {
+      try {
+        const found = await api<Meeting[]>(`/api/meetings?${searchKey}`, { signal: controller.signal })
+        if (!controller.signal.aborted) setResult({ key: searchKey, source: meetings, meetings: found, error: "" })
+      } catch (error) {
+        if (!controller.signal.aborted) setResult({ key: searchKey, source: meetings, meetings: [], error: errorMessage(error) })
+      }
+    }, 250)
+    return () => { clearTimeout(timer); controller.abort() }
+  }, [searchKey, rangeError, meetings])
+
+  function update(patch: Partial<MeetingFilters>) {
+    onFilters({ ...filters, ...patch })
+  }
+
   const active = meetings.filter((meeting) => meeting.status !== "ended").length
   const minutes = Math.round(
     meetings.reduce((total, meeting) => total + meeting.duration_seconds, 0) / 60,
   )
-  const filtered = meetings.filter((meeting) => {
-    const matchesStatus =
-      filter === "all" ||
-      (filter === "active" ? meeting.status !== "ended" : meeting.status === "ended")
-    return (
-      matchesStatus &&
-      `${meeting.title}\n${meeting.text}`
-        .toLocaleLowerCase()
-        .includes(query.trim().toLocaleLowerCase())
-    )
-  })
-  const filteredEmpty = !!query || filter !== "all"
 
   return (
     <section id="list-view" className="page-content animate-page-in">
-      <div className="page-heading">
-        <div>
-          <h1>会议记录</h1>
-          <p>查看会议记录，或继续未结束的转写。</p>
+      <div className="page-heading meeting-list-heading">
+        <div className="meeting-title-summary">
+          <h1>会议管理</h1>
+          <dl className="meeting-stats" aria-label="会议统计">
+            <div>
+              <dt><span className="meeting-stat-icon"><FileText aria-hidden="true" /></span>全部会议</dt>
+              <dd><strong id="total-count">{meetings.length}</strong><span>场</span></dd>
+            </div>
+            <div>
+              <dt><span className="meeting-stat-icon"><AudioLines aria-hidden="true" /></span>累计录音</dt>
+              <dd><strong>{minutes}</strong><span>分钟</span></dd>
+            </div>
+            <div>
+              <dt><span className="meeting-stat-icon"><Clock3 aria-hidden="true" /></span>未结束</dt>
+              <dd><strong id="active-count">{active}</strong><span>场</span></dd>
+            </div>
+          </dl>
         </div>
         <Button
           id="create-button"
@@ -90,104 +126,84 @@ export function MeetingList({
         </Button>
       </div>
 
-      <div className="overview-strip">
-        <div className="overview-item">
-          <span className="overview-icon">
-            <FileText />
-          </span>
-          <div>
-            <p>全部会议</p>
-            <div>
-              <strong id="total-count">{meetings.length}</strong>
-              <span>场会议</span>
-            </div>
-          </div>
-        </div>
-        <div className="overview-item">
-          <span className="overview-icon">
-            <Clock3 />
-          </span>
-          <div>
-            <p>累计录音</p>
-            <div>
-              <strong>{minutes}</strong>
-              <span>分钟</span>
-            </div>
-          </div>
-        </div>
-        <div className="overview-item">
-          <span className="overview-icon">
-            <CalendarDays />
-          </span>
-          <div>
-            <p>待继续</p>
-            <div>
-              <strong id="active-count">{active}</strong>
-              <span>场未结束</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
       <div className="list-heading">
         <h2>
           会议列表 <span>{meetings.length}</span>
         </h2>
-        <span className="sort-note">
-          <ArrowDown className="size-3.5" />
-          最近创建优先
-        </span>
       </div>
-      <div className="list-toolbar">
-        <Tabs value={filter} onValueChange={(value) => onFilter(value as MeetingFilter)}>
-          <TabsList className="h-9 bg-neutral-100/90 p-1">
-            <TabsTrigger value="all" className="px-3.5 text-xs">
-              全部会议
-            </TabsTrigger>
-            <TabsTrigger value="active" className="px-3.5 text-xs">
-              未结束<span className="tab-count">{active}</span>
-            </TabsTrigger>
-            <TabsTrigger value="ended" className="px-3.5 text-xs">
-              已结束
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
-        <div className="search-actions">
+      <div className="meeting-filters" aria-label="会议筛选">
+        <div className="filter-field filter-title">
+          <Label htmlFor="meeting-search" className="sr-only">会议名称</Label>
           <div className="search-field">
             <Search className="size-4" />
             <Input
               id="meeting-search"
-              aria-label="搜索会议"
-              placeholder="搜索会议名称或内容…"
-              value={query}
-              onChange={(event) => onQuery(event.target.value)}
+              placeholder="搜索会议名称…"
+              maxLength={80}
+              value={filters.title}
+              onChange={(event) => update({ title: event.target.value })}
             />
-            {query ? (
-              <button onClick={() => onQuery("")} aria-label="清空搜索">
+            {filters.title ? (
+              <button onClick={() => update({ title: "" })} aria-label="清空搜索">
                 <X className="size-3.5" />
               </button>
             ) : (
               <kbd>/</kbd>
             )}
           </div>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                id="refresh-button"
-                variant="outline"
-                size="icon"
-                aria-label="刷新会议记录"
-                onClick={onRefresh}
-                disabled={loading}
-              >
-                <RefreshCw className={loading ? "animate-spin" : ""} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>刷新会议记录</TooltipContent>
-          </Tooltip>
         </div>
+        <div className="filter-field">
+          <Label htmlFor="filter-department" className="sr-only">所属部门</Label>
+          <Select value={filters.departmentId} onValueChange={(departmentId) => update({ departmentId })}>
+            <SelectTrigger id="filter-department"><SelectValue /></SelectTrigger>
+            <SelectContent
+              position="popper"
+              side="bottom"
+              align="start"
+              sideOffset={4}
+              avoidCollisions={false}
+              className="meeting-filter-menu"
+            >
+              <SelectItem value="all">全部部门</SelectItem>
+              <SelectItem value="unassigned">未分类</SelectItem>
+              {departments.map((department) => <SelectItem key={department.id} value={department.id}>{department.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="filter-field">
+          <Label htmlFor="filter-status" className="sr-only">会议状态</Label>
+          <Select value={filters.status} onValueChange={(status) => update({ status: status as MeetingStatus | "all" })}>
+            <SelectTrigger id="filter-status"><SelectValue /></SelectTrigger>
+            <SelectContent
+              position="popper"
+              side="bottom"
+              align="start"
+              sideOffset={4}
+              avoidCollisions={false}
+              className="meeting-filter-menu"
+            >
+              <SelectItem value="all">全部状态</SelectItem>
+              {Object.entries(statusLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="filter-field">
+          <Label htmlFor="filter-start-date" className="sr-only">创建日期 · 从</Label>
+          <Input id="filter-start-date" type="date" title="创建开始日期" value={filters.startDate} max={filters.endDate || undefined} onChange={(e) => update({ startDate: e.target.value })} />
+        </div>
+        <div className="filter-field">
+          <Label htmlFor="filter-end-date" className="sr-only">创建日期 · 至</Label>
+          <Input id="filter-end-date" type="date" title="创建结束日期" value={filters.endDate} min={filters.startDate || undefined} onChange={(e) => update({ endDate: e.target.value })} />
+        </div>
+        <div className="filter-actions">
+          <Button variant="ghost" onClick={() => onFilters(emptyMeetingFilters)} disabled={!filteredEmpty}>重置筛选</Button>
+          <Button id="refresh-button" variant="outline" aria-label="刷新会议记录" onClick={onRefresh} disabled={loading}>
+            <RefreshCw className={loading ? "animate-spin" : ""} />刷新
+          </Button>
+        </div>
+        {searchError && <p role="alert" className="filter-error">{searchError}</p>}
       </div>
-      <Card className="meeting-table-card gap-0 overflow-hidden rounded-xl py-0 shadow-none">
+      <Card className="meeting-table-card gap-0 overflow-hidden rounded-xl py-0 shadow-none" aria-busy={loading}>
         <Table>
           <TableHeader>
             <TableRow className="bg-muted/45 hover:bg-muted/45">
@@ -201,7 +217,7 @@ export function MeetingList({
             </TableRow>
           </TableHeader>
           <TableBody id="meeting-list">
-            {loading && meetings.length === 0
+            {loading && filtered.length === 0
               ? Array.from({ length: 4 }, (_, i) => (
                   <TableRow key={i}>
                     <TableCell className="py-6 pl-6">
@@ -231,6 +247,7 @@ export function MeetingList({
                     </span>
                     <span className="meeting-summary">
                       <strong>{meeting.title}</strong>
+                      <span className="meeting-department">{meeting.department_name || "未分类"}</span>
                       <span className="meeting-preview">
                         {meeting.text ||
                           (meeting.status === "created"
@@ -288,7 +305,7 @@ export function MeetingList({
                 </TableCell>
               </TableRow>
             ))}
-            {!loading && filtered.length === 0 && (
+            {!loading && !searchError && filtered.length === 0 && (
               <TableRow>
                 <TableCell colSpan={5} className="whitespace-normal">
                   <div className="empty-state">
@@ -306,10 +323,7 @@ export function MeetingList({
                     {filteredEmpty ? (
                       <Button
                         variant="outline"
-                        onClick={() => {
-                          onFilter("all")
-                          onQuery("")
-                        }}
+                        onClick={() => onFilters(emptyMeetingFilters)}
                       >
                         查看全部会议
                       </Button>
@@ -327,7 +341,7 @@ export function MeetingList({
         </Table>
         <div className="table-footer">
           <span>
-            {query ? `找到 ${filtered.length} 场相关会议` : `共 ${filtered.length} 场会议`}
+            {loading ? "正在读取会议…" : searchError ? "查询未完成" : filteredEmpty ? `找到 ${filtered.length} 场相关会议` : `共 ${filtered.length} 场会议`}
           </span>
           <span>
             <Check className="size-3.5" />

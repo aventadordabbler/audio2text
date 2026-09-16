@@ -9,15 +9,20 @@ wheels/
 # Virtual environments
 .venv
 .env
+.codex
+.agents
 data/archives/
+data/tokenizers/
 __pycache__/
 .pytest_cache/
 .venv/
 .idea
 tests
+checks
 
 models
 wav_files
 # Frontend dependencies and build output
 node_modules/
 web/dist/
+web/node_modules
