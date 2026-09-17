@@ -17,6 +17,12 @@ class Flush:
     complete: asyncio.Future
 
 
+@dataclass
+class AudioFrame:
+    pcm: bytes
+    archived: asyncio.Future
+
+
 class StreamingTranscriber:
     """CPU-only meeting stream with ordered remote requests and bounded PCM queues."""
 
@@ -74,8 +80,10 @@ class StreamingTranscriber:
             raise ASRError("音频帧格式不正确，请使用单声道 PCM16 录音。")
         if self.pending_bytes + len(pcm) > self.max_pending:
             raise ASRError("识别处理积压，录音已停止；已定稿内容已保存，请稍后继续。")
-        self._enqueue(pcm)
+        archived = asyncio.get_running_loop().create_future()
+        self._enqueue(AudioFrame(pcm, archived))
         self.pending_bytes += len(pcm)
+        return await archived
 
     def flow_status(self):
         """Return a flow-control transition when the bounded queue changes level."""
@@ -99,10 +107,13 @@ class StreamingTranscriber:
         }
 
     async def _ingest(self):
+        frame = None
         try:
             while True:
                 item = await self.input.get()
-                samples = self.normalizer.feed(item) if isinstance(item, bytes) else self.normalizer.flush()
+                frame = item if isinstance(item, AudioFrame) else None
+                pcm = frame.pcm if frame else item
+                samples = self.normalizer.feed(pcm) if frame else self.normalizer.flush()
                 if self.archive is not None and len(samples):
                     writing = asyncio.create_task(asyncio.to_thread(self.archive.append, samples))
                     try:
@@ -114,10 +125,14 @@ class StreamingTranscriber:
                         raise
                     if self.audio_notify:
                         self.audio_notify()
-                await self.decoding.put((item, samples))
+                if frame and not frame.archived.done():
+                    frame.archived.set_result(self.archive.samples if self.archive else None)
+                await self.decoding.put((pcm, samples))
         except Exception as exc:
             self.failure = ASRError("无法归档录音，录音已停止；请检查数据目录和磁盘空间。")
             self.failure.__cause__ = exc
+            if frame and not frame.archived.done():
+                frame.archived.set_exception(self.failure)
             await self.output.put(self.failure)
 
     async def _process(self):

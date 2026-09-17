@@ -67,6 +67,18 @@ class WavExport:
                     yield block
 
 
+@dataclass(frozen=True)
+class AudioSummary:
+    """Authoritative sample clock from a committed audio manifest."""
+
+    sample_rate: int
+    samples: int
+
+    @property
+    def duration_seconds(self) -> float:
+        return self.samples / self.sample_rate
+
+
 class PCMNormalizer:
     def __init__(self, input_rate):
         self.input_rate = input_rate
@@ -165,12 +177,7 @@ class AudioArchive:
         self.capture_id = None
 
 
-def prepare_wav_export(directory: Path) -> WavExport:
-    """Validate a committed archive and return a streaming WAV view.
-
-    The manifest is authoritative: files are read only for the sample ranges
-    declared there, so bytes left behind by an interrupted capture are omitted.
-    """
+def _load_audio_manifest(directory: Path) -> tuple[Path, dict, AudioSummary]:
     audio_directory = directory / "audio"
     manifest_path = audio_directory / "manifest.json"
     if not manifest_path.is_file():
@@ -195,6 +202,26 @@ def prepare_wav_export(directory: Path) -> WavExport:
         raise AudioExportInvalid("录音采样率无效")
     if not isinstance(samples, int) or isinstance(samples, bool) or samples < 0:
         raise AudioExportInvalid("录音采样数无效")
+    return audio_directory, manifest, AudioSummary(sample_rate, samples)
+
+
+def read_audio_summary(directory: Path) -> AudioSummary | None:
+    """Return committed sample metadata, or ``None`` for a missing/invalid archive."""
+    try:
+        return _load_audio_manifest(directory)[2]
+    except (AudioExportUnavailable, AudioExportInvalid):
+        return None
+
+
+def prepare_wav_export(directory: Path) -> WavExport:
+    """Validate a committed archive and return a streaming WAV view.
+
+    The manifest is authoritative: files are read only for the sample ranges
+    declared there, so bytes left behind by an interrupted capture are omitted.
+    """
+    audio_directory, manifest, summary = _load_audio_manifest(directory)
+    sample_rate, samples = summary.sample_rate, summary.samples
+    chunks = manifest.get("chunks")
     if not isinstance(chunks, list):
         raise AudioExportInvalid("录音分片清单无效")
     if samples == 0:

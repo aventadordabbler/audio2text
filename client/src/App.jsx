@@ -983,6 +983,22 @@ export function App() {
     0,
   );
   const recordingActive = isRecording && !paused && !isControlling;
+  const diagnosticRows = asrDiagnostics
+    ? [
+        [
+          "模式",
+          asrDiagnostics.mode === "transcription" ? "文件转写" : "流式续写",
+        ],
+        [
+          "积压",
+          `${asrDiagnostics.pending_seconds} / ${asrDiagnostics.max_pending_seconds} 秒`,
+        ],
+        ["最近请求", `${Math.round(asrDiagnostics.last_request_ms)} ms`],
+        ["平均请求", `${Math.round(asrDiagnostics.average_request_ms)} ms`],
+        ["峰值请求", `${Math.round(asrDiagnostics.max_request_ms)} ms`],
+        ["发送缓冲", `${asrDiagnostics.bufferedBytes} B`],
+      ]
+    : [];
   const statusError = /失败|错误|EOF|断开|超时/i.test(statusLine);
   const navigation = [
     { key: "history", label: "会议管理", icon: FolderClosed },
@@ -1461,43 +1477,12 @@ export function App() {
                       >
                         {asrDiagnostics ? (
                           <>
-                            <span>
-                              模式
-                              <strong>
-                                {asrDiagnostics.mode === "transcription"
-                                  ? "文件转写"
-                                  : "流式续写"}
-                              </strong>
-                            </span>
-                            <span>
-                              积压
-                              <strong>
-                                {asrDiagnostics.pending_seconds} /{" "}
-                                {asrDiagnostics.max_pending_seconds} 秒
-                              </strong>
-                            </span>
-                            <span>
-                              最近请求
-                              <strong>
-                                {Math.round(asrDiagnostics.last_request_ms)} ms
-                              </strong>
-                            </span>
-                            <span>
-                              平均请求
-                              <strong>
-                                {Math.round(asrDiagnostics.average_request_ms)} ms
-                              </strong>
-                            </span>
-                            <span>
-                              峰值请求
-                              <strong>
-                                {Math.round(asrDiagnostics.max_request_ms)} ms
-                              </strong>
-                            </span>
-                            <span>
-                              发送缓冲
-                              <strong>{asrDiagnostics.bufferedBytes} B</strong>
-                            </span>
+                            {diagnosticRows.map(([label, value]) => (
+                              <span key={label}>
+                                {label}
+                                <strong>{value}</strong>
+                              </span>
+                            ))}
                             <small>最近心跳 {asrDiagnostics.updatedAt}</small>
                           </>
                         ) : (

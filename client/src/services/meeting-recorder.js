@@ -302,6 +302,10 @@ export class MeetingRecorder {
     this.heartbeatTimer = null;
   }
 
+  rememberDisconnectReason(message) {
+    if (!this.disconnectReason && message) this.disconnectReason = message;
+  }
+
   startHeartbeat(socket) {
     this.stopHeartbeat();
     this.lastPongAt = Date.now();
@@ -317,11 +321,16 @@ export class MeetingRecorder {
     )
       return;
     if (!this.pending && Date.now() - this.lastPongAt > 45000) {
-      this.disconnectReason = "会议连接心跳超时，已识别内容已保存";
+      this.rememberDisconnectReason("会议连接心跳超时，已识别内容已保存");
       socket.close();
       return;
     }
-    socket.send(JSON.stringify({ type: "ping" }));
+    try {
+      socket.send(JSON.stringify({ type: "ping" }));
+    } catch (error) {
+      this.rememberDisconnectReason(error.message);
+      socket.close();
+    }
   }
 
   sendCommand(action, extra = {}) {
@@ -333,14 +342,18 @@ export class MeetingRecorder {
       return Promise.reject(new Error("请等待上一个会议操作完成"));
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.rejectCommand(new Error("会议处理超时，请重试"));
+        const error = new Error("会议处理超时，请重试");
+        this.rememberDisconnectReason(error.message);
+        this.rejectCommand(error);
         this.socket?.close();
       }, 150000);
       this.pending = { action, resolve, reject, timer };
       try {
         this.socket.send(JSON.stringify({ type: action, ...extra }));
       } catch (error) {
+        this.rememberDisconnectReason(error.message);
         this.rejectCommand(error);
+        this.socket?.close();
       }
     });
   }
@@ -355,7 +368,9 @@ export class MeetingRecorder {
       let ready = false;
       let messages = Promise.resolve();
       const timer = setTimeout(() => {
-        reject(new Error("连接会议服务超时"));
+        const error = new Error("连接会议服务超时");
+        this.rememberDisconnectReason(error.message);
+        reject(error);
         socket.close();
       }, 10000);
       const handle = async ({ data }) => {
@@ -369,6 +384,7 @@ export class MeetingRecorder {
           clearTimeout(timer);
           reject(error);
           this.rejectCommand(error);
+          this.rememberDisconnectReason(error.message);
           socket.close();
           return;
         }
@@ -431,6 +447,20 @@ export class MeetingRecorder {
             asr: payload.asr,
             buffered_bytes: socket.bufferedAmount,
           });
+        } else if (
+          payload.type === "audio.committed" &&
+          Number.isInteger(payload.samples) &&
+          payload.samples >= 0 &&
+          Number.isInteger(payload.sample_rate) &&
+          payload.sample_rate > 0
+        ) {
+          this.recordedSeconds = payload.samples / payload.sample_rate;
+          this.emitEvent({
+            type: "clock",
+            seconds: this.recordedSeconds,
+            samples: payload.samples,
+            sample_rate: payload.sample_rate,
+          });
         } else if (payload.type === "error") {
           const error = new Error(payload.message || "会议服务返回错误");
           if (payload.meeting) this.setMeeting(payload.meeting);
@@ -441,7 +471,7 @@ export class MeetingRecorder {
           if (payload.fatal || this.pending?.action === payload.action)
             this.rejectCommand(error);
           if (payload.fatal) {
-            this.disconnectReason = error.message;
+            this.rememberDisconnectReason(error.message);
             this.disposeMedia();
             socket.close();
           }
@@ -455,7 +485,7 @@ export class MeetingRecorder {
           if (!ready) reject(error);
           this.rejectCommand(error);
           this.emitEvent({ type: "error", text: error.message });
-          this.disconnectReason = error.message;
+          this.rememberDisconnectReason(error.message);
           socket.close();
         });
       };
@@ -464,7 +494,7 @@ export class MeetingRecorder {
         const error = new Error("无法连接会议服务");
         if (!ready) reject(error);
         this.rejectCommand(error);
-        this.disconnectReason = error.message;
+        this.rememberDisconnectReason(error.message);
         socket.close();
       };
       socket.onclose = () => {
@@ -519,9 +549,6 @@ export class MeetingRecorder {
           )
             throw new Error("音频发送积压，请检查网络后继续会议");
           socket.send(buffer);
-          this.recordedSeconds +=
-            buffer.byteLength / (this.mediaRecorder.sampleRate * 2);
-          this.emitEvent({ type: "clock", seconds: this.recordedSeconds });
         } catch (error) {
           this.uploadError = error;
           this.emitEvent({ type: "error", text: error.message });

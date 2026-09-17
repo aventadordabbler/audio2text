@@ -145,7 +145,13 @@ async def meeting_socket(websocket: WebSocket, meeting_id, store, models, minute
                 if meeting["status"] != "recording" or stream is None:
                     await send({"type": "error", "message": "请先开始或继续会议录音"})
                     continue
-                await stream.send_audio(message["bytes"])
+                committed_samples = await stream.send_audio(message["bytes"])
+                if native_ids:
+                    await send({
+                        "type": "audio.committed",
+                        "samples": committed_samples if committed_samples is not None else archive.samples,
+                        "sample_rate": archive.manifest["sample_rate"],
+                    })
                 if hasattr(stream, "flow_status"):
                     flow = stream.flow_status()
                     if flow:

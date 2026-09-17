@@ -13,6 +13,7 @@ import time
 from typing import Any
 from uuid import uuid4
 
+from .recordings import read_audio_summary
 from .transcripts import TranscriptStore, plain_text
 
 logger = logging.getLogger(__name__)
@@ -100,28 +101,10 @@ class MeetingStore:
         archived_duration = None
         try:
             directory = self.path.parent / "meetings" / row["id"]
-            result["audio_available"] = False
-            manifest_path = directory / "audio" / "manifest.json"
-            if manifest_path.exists():
-                try:
-                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-                    samples = manifest.get("samples")
-                    sample_rate = manifest.get("sample_rate")
-                    result["audio_available"] = (
-                        isinstance(manifest, dict)
-                        and isinstance(samples, int)
-                        and samples > 0
-                    )
-                    if (
-                        isinstance(samples, int)
-                        and samples >= 0
-                        and isinstance(sample_rate, int)
-                        and sample_rate > 0
-                    ):
-                        archived_duration = samples / sample_rate
-                except (OSError, UnicodeError, json.JSONDecodeError):
-                    # The export endpoint reports malformed archives explicitly.
-                    result["audio_available"] = False
+            audio = read_audio_summary(directory)
+            result["audio_available"] = bool(audio and audio.samples)
+            if audio is not None:
+                archived_duration = audio.duration_seconds
             if (directory / "transcript.json").exists() or (directory / "events.jsonl").exists():
                 document = self.transcript(row["id"]).read()
                 result.update(text=plain_text(document), segments=document["segments"],

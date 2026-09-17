@@ -69,7 +69,7 @@ class TestPcmRecorder {
 }
 
 before(async () => {
-  backend = await startBackend();
+  backend = await startBackend({ archiveAudio: true });
   baseUrl = backend.baseUrl;
 });
 after(async () => {
@@ -265,13 +265,17 @@ test("heartbeat returns hidden ASR diagnostics without interrupting recording", 
   await recorder.stop();
 });
 
-test("recording clock advances from sent PCM duration", async () => {
+test("recording clock advances only from server-committed samples", async () => {
   const { recorder, events } = await start();
 
   recorder.mediaRecorder.emitAudio(1);
   await until(() => events.some((event) => event.type === "clock"));
 
-  assert.equal(events.filter((event) => event.type === "clock").at(-1).seconds, 1);
+  const clock = events.filter((event) => event.type === "clock").at(-1);
+  assert.equal(clock.seconds, 1);
+  assert.equal(clock.samples, 16000);
+  assert.equal(clock.sample_rate, 16000);
+  assert.equal((await recorder.api.get(recorder.meeting.id)).duration_seconds, 1);
   await recorder.stop();
 });
 

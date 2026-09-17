@@ -97,6 +97,7 @@ class TestRecordedStream(TestStream):
         if audio and len(audio) % 2 == 0 and not audio.startswith(b"TEST"):
             self.archive.append(self.normalizer.feed(audio))
         await super().send_audio(audio)
+        return self.archive.samples
 
     async def flush(self):
         self.archive.append(self.normalizer.flush())

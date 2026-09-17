@@ -82,19 +82,23 @@ class SlowDecoder:
         pass
 
 
-async def test_stream_diagnostics_combine_backlog_and_request_latency():
+async def test_stream_diagnostics_combine_backlog_and_request_latency(tmp_path):
     decoder = SlowDecoder()
+    archive = AudioArchive(tmp_path)
+    archive.begin()
     stream = StreamingTranscriber(
         ModelConfig("http://asr.invalid", "slow", "", 10, "transcription"),
         decoder=decoder,
     )
+    stream.bind_recording(archive, 0)
     await stream.start("Chinese", 16000)
     frame = b"\xff\x7f" * 16000
     try:
-        await stream.send_audio(frame)
+        assert await stream.send_audio(frame) == 16000
         await decoder.entered.wait()
         for _ in range(5):
             await stream.send_audio(frame)
+        assert archive.samples == 96000
         assert stream.flow_status()["level"] == "lagging"
 
         assert stream.diagnostics() == {
@@ -110,3 +114,4 @@ async def test_stream_diagnostics_combine_backlog_and_request_latency():
     finally:
         decoder.release.set()
         await stream.close()
+        archive.end()
