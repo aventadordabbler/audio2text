@@ -15,7 +15,9 @@
     "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\"",
     "dev:renderer": "vite",
     "dev:electron": "wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .",
+    "prebuild": "npm run icons",
     "build": "tsc --noEmit && vite build",
+    "prebuild:win7": "npm run icons",
     "build:win7": "tsc --noEmit && vite build --mode win7",
     "start": "electron .",
     "icons": "node scripts/generate-icons.mjs",
@@ -91,7 +93,7 @@
       }
     ],
     "win": {
-      "signAndEditExecutable": false,
+      "signAndEditExecutable": true,
       "icon": "assets/icon.ico",
       "target": [
         "nsis",
@@ -103,6 +105,8 @@
       "artifactName": "meeting-float-desktop-${version}-portable.${ext}"
     },
     "nsis": {
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "artifactName": "meeting-float-desktop-${version}-setup.${ext}"

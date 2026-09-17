@@ -7,17 +7,19 @@ import pngToIco from "png-to-ico";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
 const assetsDir = path.join(rootDir, "assets");
-const svgPath = path.join(assetsDir, "logo.svg");
+const svgPath = path.join(assetsDir, "fluent-mic", "icon.svg");
 const pngPath = path.join(assetsDir, "icon.png");
 const icoPath = path.join(assetsDir, "icon.ico");
 
 const svgBuffer = await fs.readFile(svgPath);
 
-await sharp(svgBuffer).resize(1024, 1024).png().toFile(pngPath);
+await sharp(svgBuffer, { density: 1536 }).resize(1024, 1024).png().toFile(pngPath);
 
 const iconSizes = [256, 128, 64, 48, 32, 16];
 const pngBuffers = await Promise.all(
-  iconSizes.map((size) => sharp(svgBuffer).resize(size, size).png().toBuffer())
+  iconSizes.map((size) =>
+    sharp(svgBuffer, { density: 768 }).resize(size, size).png().toBuffer()
+  )
 );
 
 const icoBuffer = await pngToIco(pngBuffers);
