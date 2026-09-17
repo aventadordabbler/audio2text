@@ -12,6 +12,7 @@ from functools import lru_cache
 import io
 from pathlib import Path
 import re
+from time import perf_counter
 import wave
 
 import numpy as np
@@ -147,6 +148,20 @@ class RemoteDecoder:
             timeout=config.timeout_seconds, max_retries=0,
         )
         self.tokenizer = None
+        self.request_count = 0
+        self.total_request_ms = 0.0
+        self.last_request_ms = 0.0
+        self.max_request_ms = 0.0
+
+    def diagnostics(self):
+        return {
+            "request_count": self.request_count,
+            "last_request_ms": round(self.last_request_ms, 2),
+            "average_request_ms": (
+                round(self.total_request_ms / self.request_count, 2) if self.request_count else 0
+            ),
+            "max_request_ms": round(self.max_request_ms, 2),
+        }
 
     async def prepare(self):
         if self.config.asr_mode == "qwen_streaming":
@@ -195,6 +210,7 @@ class RemoteDecoder:
 
     async def _decode(self, chunk, state):
         wav = as_wav(chunk)
+        started = perf_counter()
         try:
             async with asyncio.timeout(self.config.timeout_seconds):
                 if self.config.asr_mode == "transcription":
@@ -270,6 +286,12 @@ class RemoteDecoder:
             else:
                 message = "ASR 服务识别失败，已定稿内容已保存，请检查模型服务日志。"
             raise ASRError(message) from exc
+        finally:
+            elapsed = (perf_counter() - started) * 1000
+            self.request_count += 1
+            self.total_request_ms += elapsed
+            self.last_request_ms = elapsed
+            self.max_request_ms = max(self.max_request_ms, elapsed)
 
     async def close(self):
         await self.client.close()

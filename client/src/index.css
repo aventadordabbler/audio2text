@@ -778,6 +778,42 @@ button:disabled {
 .recording-card-heading h2 svg {
   color: #a3a3a3;
 }
+.recording-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.recording-heading-actions button {
+  color: #a3a3a3;
+}
+.recording-diagnostics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 12px;
+  margin-top: 12px;
+  padding: 10px;
+  border-radius: 8px;
+  background: #fafafa;
+  color: #a3a3a3;
+  font-size: 9px;
+}
+.recording-diagnostics span {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.recording-diagnostics strong {
+  overflow: hidden;
+  color: #525252;
+  font-size: 10px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recording-diagnostics small {
+  grid-column: 1 / -1;
+  font-size: 9px;
+}
 .recording-indicator {
   width: 6px;
   height: 6px;
@@ -1595,6 +1631,10 @@ button:disabled {
   }
   .recording-card-heading {
     grid-column: 1 / -1;
+  }
+  .recording-diagnostics {
+    grid-column: 1 / -1;
+    margin-top: 0;
   }
   .recording-timer {
     padding: 0;

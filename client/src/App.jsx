@@ -182,6 +182,8 @@ export function App() {
     message: "浏览器媒体链路待检测",
   });
   const [mediaProbeText, setMediaProbeText] = useState("");
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [asrDiagnostics, setAsrDiagnostics] = useState(null);
   const [livePreview, setLivePreview] = useState("");
   const [isStarting, setIsStarting] = useState(false);
   const [isControlling, setIsControlling] = useState(false);
@@ -474,12 +476,7 @@ export function App() {
     }
     if (sessionRef.current.remoteMeetingId) {
       const clock = recordingClockRef.current;
-      setElapsedLabel(
-        formatElapsed(
-          clock.seconds * 1000 +
-            (recorder.running ? Date.now() - clock.updatedAt : 0),
-        ),
-      );
+      setElapsedLabel(formatElapsed(clock.seconds * 1000));
     } else {
       setElapsedLabel(formatElapsed(Date.now() - baseStartedAtMs));
     }
@@ -553,6 +550,24 @@ export function App() {
           updatedAt: Date.now(),
         };
       }
+      return;
+    }
+
+    if (event.type === "clock" && Number.isFinite(event.seconds)) {
+      recordingClockRef.current = {
+        seconds: event.seconds,
+        updatedAt: Date.now(),
+      };
+      syncTimer();
+      return;
+    }
+
+    if (event.type === "diagnostics" && event.asr) {
+      setAsrDiagnostics({
+        ...event.asr,
+        bufferedBytes: event.buffered_bytes || 0,
+        updatedAt: new Date().toLocaleTimeString(),
+      });
       return;
     }
 
@@ -666,6 +681,8 @@ export function App() {
     setStatusLine("正在结束会议...");
     stopTimerLoop();
     setLivePreview("");
+    setAsrDiagnostics(null);
+    setShowDiagnostics(false);
 
     try {
       await recorder.stop();
@@ -763,8 +780,14 @@ export function App() {
     controllingRef.current = true;
     setIsControlling(true);
     try {
-      if (recorder.isPaused()) await recorder.resume();
-      else await recorder.pause();
+      if (recorder.isPaused()) {
+        await recorder.resume();
+        startTimerLoop(startedAtMs);
+      } else {
+        await recorder.pause();
+        stopTimerLoop();
+        syncTimer();
+      }
       await refreshBridgeState();
     } catch (error) {
       appendError(`录音操作失败: ${error.message || error}`);
@@ -895,6 +918,8 @@ export function App() {
     stopTimerLoop();
     setActiveFocusTab("transcript");
     setLivePreview("");
+    setAsrDiagnostics(null);
+    setShowDiagnostics(false);
     setActiveView("overview");
     setStatusLine(`已载入历史会话：${deriveSessionTitle(nextSession)}`);
     const duration =
@@ -1412,10 +1437,74 @@ export function App() {
                         <Mic size={15} />
                         录音控制
                       </h2>
-                      <i
-                        className={`recording-indicator${recordingActive ? " active" : ""}`}
-                      />
+                      <div className="recording-heading-actions">
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          aria-label={
+                            showDiagnostics ? "隐藏运行诊断" : "显示运行诊断"
+                          }
+                          aria-expanded={showDiagnostics}
+                          onClick={() => setShowDiagnostics((value) => !value)}
+                        >
+                          <AudioLines size={13} />
+                        </Button>
+                        <i
+                          className={`recording-indicator${recordingActive ? " active" : ""}`}
+                        />
+                      </div>
                     </div>
+                    {showDiagnostics && (
+                      <div
+                        className="recording-diagnostics"
+                        aria-label="ASR 运行诊断"
+                      >
+                        {asrDiagnostics ? (
+                          <>
+                            <span>
+                              模式
+                              <strong>
+                                {asrDiagnostics.mode === "transcription"
+                                  ? "文件转写"
+                                  : "流式续写"}
+                              </strong>
+                            </span>
+                            <span>
+                              积压
+                              <strong>
+                                {asrDiagnostics.pending_seconds} /{" "}
+                                {asrDiagnostics.max_pending_seconds} 秒
+                              </strong>
+                            </span>
+                            <span>
+                              最近请求
+                              <strong>
+                                {Math.round(asrDiagnostics.last_request_ms)} ms
+                              </strong>
+                            </span>
+                            <span>
+                              平均请求
+                              <strong>
+                                {Math.round(asrDiagnostics.average_request_ms)} ms
+                              </strong>
+                            </span>
+                            <span>
+                              峰值请求
+                              <strong>
+                                {Math.round(asrDiagnostics.max_request_ms)} ms
+                              </strong>
+                            </span>
+                            <span>
+                              发送缓冲
+                              <strong>{asrDiagnostics.bufferedBytes} B</strong>
+                            </span>
+                            <small>最近心跳 {asrDiagnostics.updatedAt}</small>
+                          </>
+                        ) : (
+                          <small>等待下一次心跳诊断…</small>
+                        )}
+                      </div>
+                    )}
                     <div className="recording-timer">
                       <strong>{elapsedLabel}</strong>
                       <span>会议录音时长</span>

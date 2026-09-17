@@ -23,6 +23,10 @@ export class MeetingRecorder {
     this.reconnectTimer = null;
     this.reconnectAttempts = 0;
     this.minutesVersion = 0;
+    this.recordedSeconds = 0;
+    this.heartbeatTimer = null;
+    this.lastPongAt = 0;
+    this.disconnectReason = "";
   }
 
   emitEvent(payload) {
@@ -57,6 +61,7 @@ export class MeetingRecorder {
     if (!preservePartial || this.nextSegment !== meeting.next_segment_id)
       this.onPreview?.("");
     this.meeting = meeting;
+    if (updateClock) this.recordedSeconds = meeting.duration_seconds || 0;
     this.nextSegment = meeting.next_segment_id || 0;
     this.emitEvent({
       type: "meeting",
@@ -185,6 +190,7 @@ export class MeetingRecorder {
     await this.mediaRecorder.resume();
     this.running = true;
     this.paused = false;
+    this.sendHeartbeat();
     this.emitEvent({ type: "status", status: "recording", text: "录音已开始" });
   }
 
@@ -236,6 +242,7 @@ export class MeetingRecorder {
     await this.mediaRecorder.resume();
     this.running = true;
     this.paused = false;
+    this.sendHeartbeat();
     this.emitEvent({ type: "status", status: "recording", text: "录音已恢复" });
   }
 
@@ -272,6 +279,7 @@ export class MeetingRecorder {
 
   disconnect() {
     clearTimeout(this.reconnectTimer);
+    this.stopHeartbeat();
     this.minutesVersion++;
     this.disposeMedia();
     this.running = false;
@@ -287,6 +295,33 @@ export class MeetingRecorder {
     clearTimeout(this.pending.timer);
     this.pending.reject(error);
     this.pending = null;
+  }
+
+  stopHeartbeat() {
+    clearInterval(this.heartbeatTimer);
+    this.heartbeatTimer = null;
+  }
+
+  startHeartbeat(socket) {
+    this.stopHeartbeat();
+    this.lastPongAt = Date.now();
+    this.sendHeartbeat(socket);
+    this.heartbeatTimer = setInterval(() => this.sendHeartbeat(socket), 15000);
+  }
+
+  sendHeartbeat(socket = this.socket) {
+    if (
+      !socket ||
+      this.socket !== socket ||
+      socket.readyState !== WebSocket.OPEN
+    )
+      return;
+    if (!this.pending && Date.now() - this.lastPongAt > 45000) {
+      this.disconnectReason = "会议连接心跳超时，已识别内容已保存";
+      socket.close();
+      return;
+    }
+    socket.send(JSON.stringify({ type: "ping" }));
   }
 
   sendCommand(action, extra = {}) {
@@ -312,6 +347,7 @@ export class MeetingRecorder {
 
   openSocket() {
     clearTimeout(this.reconnectTimer);
+    this.disconnectReason = "";
     return new Promise((resolve, reject) => {
       const id = this.meeting.id;
       const socket = new WebSocket(this.api.socketUrl(id));
@@ -344,6 +380,7 @@ export class MeetingRecorder {
           this.readOnly = Boolean(payload.read_only);
           clearTimeout(timer);
           this.setMeeting(payload.meeting);
+          this.startHeartbeat(socket);
           if (this.readOnly) void this.syncMinutes();
           resolve();
         } else if (payload.type === "snapshot" && payload.meeting) {
@@ -387,6 +424,13 @@ export class MeetingRecorder {
                 ? `转写有延迟（积压约 ${payload.pending_seconds} 秒），正在追赶。`
                 : "转写延迟已恢复。",
           });
+        } else if (payload.type === "pong") {
+          this.lastPongAt = Date.now();
+          this.emitEvent({
+            type: "diagnostics",
+            asr: payload.asr,
+            buffered_bytes: socket.bufferedAmount,
+          });
         } else if (payload.type === "error") {
           const error = new Error(payload.message || "会议服务返回错误");
           if (payload.meeting) this.setMeeting(payload.meeting);
@@ -397,6 +441,7 @@ export class MeetingRecorder {
           if (payload.fatal || this.pending?.action === payload.action)
             this.rejectCommand(error);
           if (payload.fatal) {
+            this.disconnectReason = error.message;
             this.disposeMedia();
             socket.close();
           }
@@ -410,6 +455,7 @@ export class MeetingRecorder {
           if (!ready) reject(error);
           this.rejectCommand(error);
           this.emitEvent({ type: "error", text: error.message });
+          this.disconnectReason = error.message;
           socket.close();
         });
       };
@@ -418,12 +464,14 @@ export class MeetingRecorder {
         const error = new Error("无法连接会议服务");
         if (!ready) reject(error);
         this.rejectCommand(error);
+        this.disconnectReason = error.message;
         socket.close();
       };
       socket.onclose = () => {
         clearTimeout(timer);
         if (!ready) reject(new Error("会议连接未建立"));
         if (this.socket !== socket) return;
+        this.stopHeartbeat();
         this.socket = null;
         this.minutesVersion++;
         this.onPreview?.("");
@@ -431,10 +479,14 @@ export class MeetingRecorder {
         this.running = false;
         this.paused = this.meeting?.status !== "ended";
         this.rejectCommand(new Error("会议连接已断开，已识别内容已保存"));
+        const reason = this.disconnectReason;
+        this.disconnectReason = "";
         if (this.paused)
           this.emitEvent({
             type: "disconnected",
-            text: "连接已断开，已识别内容已保存。可点击继续重连，或结束会议。",
+            text: reason
+              ? `${reason}。可点击继续重连，或结束会议。`
+              : "连接已断开，已识别内容已保存。可点击继续重连，或结束会议。",
           });
         else if (this.reconnectAttempts < 5) {
           const delay = 1000 * 2 ** this.reconnectAttempts++;
@@ -467,6 +519,9 @@ export class MeetingRecorder {
           )
             throw new Error("音频发送积压，请检查网络后继续会议");
           socket.send(buffer);
+          this.recordedSeconds +=
+            buffer.byteLength / (this.mediaRecorder.sampleRate * 2);
+          this.emitEvent({ type: "clock", seconds: this.recordedSeconds });
         } catch (error) {
           this.uploadError = error;
           this.emitEvent({ type: "error", text: error.message });

@@ -60,6 +60,14 @@ class TestStream:
             else:
                 yield event
 
+    def diagnostics(self):
+        return {
+            "mode": "transcription", "flow_level": "normal",
+            "pending_seconds": 0, "max_pending_seconds": 10,
+            "request_count": 1, "last_request_ms": 1,
+            "average_request_ms": 1, "max_request_ms": 1,
+        }
+
     async def close(self):
         pass
 

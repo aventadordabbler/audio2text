@@ -88,6 +88,16 @@ class StreamingTranscriber:
         self.flow_level = level
         return {"type": "flow", "level": level, "pending_seconds": round(pending_seconds, 2)}
 
+    def diagnostics(self):
+        decoder = self.decoder.diagnostics() if hasattr(self.decoder, "diagnostics") else {}
+        return {
+            "mode": self.config.asr_mode,
+            "flow_level": self.flow_level,
+            "pending_seconds": round(self.pending_bytes / (self.sample_rate * 2), 2),
+            "max_pending_seconds": round(self.max_pending / (self.sample_rate * 2), 2),
+            **decoder,
+        }
+
     async def _ingest(self):
         try:
             while True:

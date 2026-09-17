@@ -20,6 +20,7 @@ __pycache__/
 tests
 checks/*
 !checks/test_audio_export.py
+!checks/test_recording_timing.py
 
 models
 wav_files

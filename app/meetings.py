@@ -97,6 +97,7 @@ class MeetingStore:
 
     def _record(self, row: sqlite3.Row) -> dict[str, Any]:
         result = dict(row)
+        archived_duration = None
         try:
             directory = self.path.parent / "meetings" / row["id"]
             result["audio_available"] = False
@@ -104,11 +105,20 @@ class MeetingStore:
             if manifest_path.exists():
                 try:
                     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    samples = manifest.get("samples")
+                    sample_rate = manifest.get("sample_rate")
                     result["audio_available"] = (
                         isinstance(manifest, dict)
-                        and isinstance(manifest.get("samples"), int)
-                        and manifest["samples"] > 0
+                        and isinstance(samples, int)
+                        and samples > 0
                     )
+                    if (
+                        isinstance(samples, int)
+                        and samples >= 0
+                        and isinstance(sample_rate, int)
+                        and sample_rate > 0
+                    ):
+                        archived_duration = samples / sample_rate
                 except (OSError, UnicodeError, json.JSONDecodeError):
                     # The export endpoint reports malformed archives explicitly.
                     result["audio_available"] = False
@@ -124,7 +134,9 @@ class MeetingStore:
                               processing={"status": "idle", "error": ""})
         except OSError as exc:
             raise MeetingError("无法读取会议文本文件，请检查数据目录", 500) from exc
-        result["duration_seconds"] = round(self._duration(row, time.time()), 2)
+        result["duration_seconds"] = round(
+            archived_duration if archived_duration is not None else self._duration(row, time.time()), 2
+        )
         result.pop("owner")
         result.pop("recording_since")
         return result

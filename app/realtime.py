@@ -203,7 +203,12 @@ async def meeting_socket(websocket: WebSocket, meeting_id, store, models, minute
                     else:
                         meeting = await asyncio.to_thread(store.get, meeting_id)
                 elif action == "ping":
-                    await send({"type": "pong"})
+                    diagnostics = (
+                        stream.diagnostics()
+                        if stream is not None and hasattr(stream, "diagnostics")
+                        else None
+                    )
+                    await send({"type": "pong", "asr": diagnostics})
                     continue
                 else:
                     raise MeetingError("未知会议操作", 400)

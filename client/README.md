@@ -61,6 +61,8 @@ npm run dist:win
 - Start: `POST /api/meetings` with the meeting title and optional language, then connect to `/ws/meetings/{id}`. Wait for `ready`, send `start` with `mime_type`, and wait for the matching `state` before recording.
 - Audio remains binary MediaRecorder data (prefer WebM/Opus); the backend converts it to WAV. The default upload interval is 1 second; saved 2-second configurations migrate to 1 second when loaded or saved.
 - Pause: pause capture, flush buffered audio, send `pause`, and wait for confirmation. Resume waits for the `resume` confirmation before capturing again.
+- Heartbeats send `ping` every 15 seconds. `pong` keeps the WebSocket active and carries an in-memory ASR latency/backlog snapshot; the compact diagnostics panel remains hidden until opened.
+- The recording clock advances from captured PCM duration and reconciles with the server's archived-sample duration after reconnects.
 - End: flush the last audio and send `end`. Completion depends on the `state` event with `action: "end"`; failed recognition can be retried. A disconnected meeting can be ended through `POST /api/meetings/{id}/end`.
 - `transcript.text` replaces the full transcript, including corrections to earlier words. No `is_final` or `archived` events are required. `no_speech` preserves existing text and allows empty meetings to end normally.
 - The desktop saves the backend meeting ID with its local session. During an active meeting, connection loss releases the microphone; click Continue to reconnect to the same meeting. Desktop history and generated summaries remain stored locally.

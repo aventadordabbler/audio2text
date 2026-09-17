@@ -51,6 +51,9 @@ class TestPcmRecorder {
     buffer.set(bytes);
     this.onAudio(buffer.buffer);
   }
+  emitAudio(seconds = 1) {
+    this.onAudio(new ArrayBuffer(this.sampleRate * 2 * seconds));
+  }
   async pause() {
     if (this.nextChunk) {
       this.emit(this.nextChunk);
@@ -246,6 +249,32 @@ test("PCM stream preserves partial/final ordering, pause flush, resume and final
   assert.equal(events.filter((event) => event.type === "error").length, 0);
 });
 
+test("heartbeat returns hidden ASR diagnostics without interrupting recording", async () => {
+  const { recorder, events } = await start();
+
+  await until(() =>
+    events.some((event) => event.type === "diagnostics" && event.asr),
+  );
+
+  const diagnostics = events.find(
+    (event) => event.type === "diagnostics" && event.asr,
+  );
+  assert.equal(diagnostics.asr.mode, "transcription");
+  assert.equal(diagnostics.asr.pending_seconds, 0);
+  assert.equal(recorder.running, true);
+  await recorder.stop();
+});
+
+test("recording clock advances from sent PCM duration", async () => {
+  const { recorder, events } = await start();
+
+  recorder.mediaRecorder.emitAudio(1);
+  await until(() => events.some((event) => event.type === "clock"));
+
+  assert.equal(events.filter((event) => event.type === "clock").at(-1).seconds, 1);
+  await recorder.stop();
+});
+
 test("ending a paused meeting preserves its saved transcript", async () => {
   const { recorder } = await start();
   recorder.mediaRecorder.nextChunk = "partial:已保存。";
@@ -286,6 +315,10 @@ test("fatal ASR error retains confirmed text and permits ending via REST", async
   await until(() => snapshots.includes("已定稿。"));
   recorder.mediaRecorder.emit("fatal");
   await until(() => events.some((event) => event.type === "disconnected"));
+  assert.match(
+    events.find((event) => event.type === "disconnected").text,
+    /测试识别连接中断/,
+  );
   await until(
     async () =>
       (await recorder.api.get(recorder.meeting.id)).status === "paused",

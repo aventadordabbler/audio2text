@@ -298,18 +298,47 @@ try {
   await dialog.getByRole("combobox", { name: "所属部门" }).click();
   await page.getByRole("option", { name: "研发中心", exact: true }).click();
   await dialog.getByRole("button", { name: "创建并进入" }).click();
+  await page.evaluate(() => {
+    const NativeWebSocket = window.WebSocket;
+    window.WebSocket = class TestWebSocket extends NativeWebSocket {
+      constructor(...args) {
+        super(...args);
+        window.__activeMeetingSocket = this;
+      }
+    };
+  });
   await page.getByRole("button", { name: "开始会议", exact: true }).click();
   await page
     .getByText(/浏览器 PCM16 录音已识别，共 16000 个采样。/)
     .first()
     .waitFor();
-  await page.getByRole("button", { name: "暂停", exact: true }).click();
+  assert.equal(await page.getByLabel("ASR 运行诊断").count(), 0);
+  await page.getByRole("button", { name: "显示运行诊断", exact: true }).click();
+  await page
+    .getByLabel("ASR 运行诊断")
+    .getByText("文件转写", { exact: true })
+    .waitFor();
+  await page.getByRole("button", { name: "隐藏运行诊断", exact: true }).click();
+  await page.getByLabel("ASR 运行诊断").waitFor({ state: "detached" });
+  await page.waitForFunction(
+    () => document.querySelector(".recording-timer strong")?.textContent !== "00:00:00",
+  );
+  await page.evaluate(() => window.__activeMeetingSocket.close());
+  await until(async () => {
+    const [active] = await api.list({ title: "桌面 PCM 录音验证" });
+    return (await api.get(active.id)).status === "paused";
+  });
   await until(async () =>
     page.getByRole("button", { name: "继续", exact: true }).isEnabled(),
   );
+  const frozenClock = await page.locator(".recording-timer strong").textContent();
   await page.getByRole("button", { name: "继续", exact: true }).click();
   await until(async () =>
     page.getByRole("button", { name: "暂停", exact: true }).isEnabled(),
+  );
+  await page.waitForFunction(
+    (previous) => document.querySelector(".recording-timer strong")?.textContent !== previous,
+    frozenClock,
   );
   await page.getByRole("button", { name: "结束会议", exact: true }).click();
   await page.getByRole("tab", { name: "会议总结", exact: true }).click();
@@ -483,6 +512,8 @@ try {
     temporaryProfile: true,
     checks: [
       "Production file:// PCM16 capture at 1 second",
+      "Socket interruption resumes the sample-based recording clock",
+      "Hidden heartbeat and ASR diagnostics panel",
       "Native WAV download and renderer request cancellation",
       "Department CRUD and meeting assignment",
       "Combined department/date/status/title filters",
