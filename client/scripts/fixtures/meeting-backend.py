@@ -17,32 +17,36 @@ class TestStream:
         self.output = asyncio.Queue()
         self.segment = 0
         self.pending = ""
+        self.position_ms = 0
 
     async def start(self, language, sample_rate):
         self.sample_rate = sample_rate
 
-    async def emit(self, kind, text):
-        await self.output.put({"type": kind, "segment_id": self.segment, "text": text})
+    async def emit(self, kind, text, start_ms=0, end_ms=0):
+        await self.output.put({"type": kind, "segment_id": self.segment, "text": text,
+                               "start_ms": start_ms, "end_ms": end_ms})
         if kind == "final":
             self.segment += 1
 
     async def send_audio(self, audio):
         if not audio or len(audio) % 2 or len(audio) > self.sample_rate * 2:
             raise ASRError("音频帧格式不正确，请使用单声道 PCM16 录音。")
+        start_ms = self.position_ms
         if audio.startswith(b"TEST"):
             text = audio[4:].rstrip(b"\0").decode("utf-8")
             if text == "fatal":
                 raise ASRError("测试识别连接中断")
             if text.startswith("partial:"):
                 self.pending = text[8:]
-                await self.emit("partial", self.pending)
+                await self.emit("partial", self.pending, start_ms, self.position_ms)
                 return
             text = text.removeprefix("final:")
         else:
+            self.position_ms += len(audio) // 2 * 1000 / self.sample_rate
             text = f"浏览器 PCM16 录音已识别，共 {len(audio) // 2} 个采样。"
-            await self.emit("partial", "正在识别浏览器录音")
+            await self.emit("partial", "正在识别浏览器录音", start_ms, self.position_ms)
         self.pending = ""
-        await self.emit("final", text)
+        await self.emit("final", text, start_ms, self.position_ms)
 
     async def flush(self):
         if self.pending:
@@ -82,12 +86,18 @@ class TestMinutesGenerator:
         return f"# {title}\n\n## 核心结论\n\n{transcript}\n\n| 待办事项 | 负责人 |\n| --- | --- |\n| 确认下一步安排 | 项目组 |"
 
 
+class TestStageSummaryGenerator:
+    async def generate(self, title, transcript, start_seconds, end_seconds):
+        return f"阶段总结 {start_seconds:g}-{end_seconds:g} 秒：{transcript}"
+
+
 class TestRecordedStream(TestStream):
     """Use the real archive for desktop WAV download checks, with fixture ASR."""
 
     def bind_recording(self, archive, next_segment, notify=None):
         self.archive = archive
         self.segment = next_segment
+        self.position_ms = archive.samples / 16
 
     async def start(self, language, sample_rate):
         await super().start(language, sample_rate)
@@ -129,7 +139,8 @@ class TestUnavailableWorker(TestWorker):
 
 
 app = create_app(settings, TestRecordedStream if archive_audio else TestStream, generator,
-                 TestWorker if controlled else TestUnavailableWorker if archive_audio else None)
+                 TestWorker if controlled else TestUnavailableWorker if archive_audio else None,
+                 TestStageSummaryGenerator())
 if controlled:
     # Only this localhost test process exposes controls. Real routes, durable
     # revisions, job scheduling and minutes generation still run unchanged.

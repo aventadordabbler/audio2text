@@ -55,6 +55,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DesktopStore } from "@/services/desktop-store.js";
 import { MeetingRecorder } from "@/services/meeting-recorder.js";
+import { StageSummaryFeed } from "@/services/stage-summary-feed.js";
 import {
   DEFAULT_CONFIG,
   STT_LANGUAGE_OPTIONS,
@@ -80,6 +81,7 @@ import {
 
 const store = new DesktopStore();
 const recorder = new MeetingRecorder();
+const stageSummaryFeed = new StageSummaryFeed();
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -179,6 +181,14 @@ export function App() {
   });
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [asrDiagnostics, setAsrDiagnostics] = useState(null);
+  const [stageSummaries, setStageSummaries] = useState([]);
+  const [stageSummaryState, setStageSummaryState] = useState({
+    status: "idle",
+    windowSeconds: 0,
+    error: "",
+  });
+  const [retryingStageSummaries, setRetryingStageSummaries] = useState(false);
+  const [stageSummaryActionError, setStageSummaryActionError] = useState("");
   const [livePreview, setLivePreview] = useState("");
   const [isStarting, setIsStarting] = useState(false);
   const [isControlling, setIsControlling] = useState(false);
@@ -298,6 +308,28 @@ export function App() {
       unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    const meetingId = session?.remoteMeetingId;
+    const baseUrl = session?.remoteBaseUrl;
+    setStageSummaryActionError("");
+    if (!ready || !meetingId || !baseUrl) {
+      stageSummaryFeed.disconnect();
+      setStageSummaries([]);
+      setStageSummaryState({ status: "idle", windowSeconds: 0, error: "" });
+      return;
+    }
+    const api = new MeetingApi({
+      ...configRef.current.stt,
+      baseUrl,
+    });
+    stageSummaryFeed.connect(api, meetingId, {
+      onSummaries: setStageSummaries,
+      onStatus: (next) =>
+        setStageSummaryState((current) => ({ ...current, error: "", ...next })),
+    });
+    return () => stageSummaryFeed.disconnect();
+  }, [ready, session?.remoteMeetingId, session?.remoteBaseUrl]);
 
   useEffect(() => {
     let disposed = false;
@@ -736,6 +768,24 @@ export function App() {
     }
   }
 
+  async function retryStageSummaries() {
+    const current = sessionRef.current;
+    if (!current?.remoteMeetingId || retryingStageSummaries) return;
+    setRetryingStageSummaries(true);
+    setStageSummaryActionError("");
+    try {
+      const api = new MeetingApi({
+        ...configRef.current.stt,
+        baseUrl: current.remoteBaseUrl,
+      });
+      await api.retryStageSummaries(current.remoteMeetingId);
+    } catch (error) {
+      setStageSummaryActionError(`阶段总结重试失败：${error.message}`);
+    } finally {
+      setRetryingStageSummaries(false);
+    }
+  }
+
   async function togglePause() {
     if (!sessionRef.current || controllingRef.current) return;
     controllingRef.current = true;
@@ -959,6 +1009,12 @@ export function App() {
         ["发送缓冲", `${asrDiagnostics.bufferedBytes} B`],
       ]
     : [];
+  const stageSummaryConnecting = ["connecting", "reconnecting"].includes(
+    stageSummaryState.status,
+  );
+  const readyStageSummaryCount = stageSummaries.filter(
+    (item) => item.status === "ready",
+  ).length;
   const statusError = /失败|错误|EOF|断开|超时/i.test(statusLine);
   const navigation = [
     { key: "history", label: "会议管理", icon: FolderClosed },
@@ -1213,6 +1269,10 @@ export function App() {
                       <AudioLines size={14} />
                       实时转写
                     </TabsTrigger>
+                    <TabsTrigger value="stages">
+                      <Sparkles size={14} />
+                      阶段总结
+                    </TabsTrigger>
                     <TabsTrigger value="minutes">
                       <Sparkles size={14} />
                       会议总结
@@ -1401,6 +1461,108 @@ export function App() {
                             独立窗口
                           </Button>
                         )}
+                      </div>
+                    </Card>
+                  </TabsContent>
+                  <TabsContent value="stages" className="meeting-panel">
+                    <Card className="document-card">
+                      <div className="document-heading">
+                        <h2>
+                          <Sparkles size={16} />
+                          阶段总结
+                          {recordingActive && (
+                            <span className="live-label">
+                              <i />
+                              实时
+                            </span>
+                          )}
+                        </h2>
+                        {stageSummaries.some((item) => item.status === "failed") && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={retryingStageSummaries}
+                            onClick={retryStageSummaries}
+                          >
+                            {retryingStageSummaries ? (
+                              <LoaderCircle size={14} className="animate-spin" />
+                            ) : (
+                              <RefreshCw size={14} />
+                            )}
+                            重试失败阶段
+                          </Button>
+                        )}
+                      </div>
+                      <div className="document-scroll panel-scroll">
+                        {stageSummaryActionError && (
+                          <p className="management-error" role="alert">
+                            {stageSummaryActionError}
+                          </p>
+                        )}
+                        {stageSummaries.length ? (
+                          <article
+                            className="stage-summary-list"
+                            aria-label="阶段总结列表"
+                            tabIndex={0}
+                          >
+                            {stageSummaries.map((summary, index) => (
+                              <section
+                                className="stage-summary-entry"
+                                key={`${summary.start_seconds}-${summary.end_seconds}`}
+                              >
+                                <header>
+                                  <strong>第 {index + 1} 阶段</strong>
+                                  <time>
+                                    {formatElapsed(summary.start_seconds * 1000)}–
+                                    {formatElapsed(summary.end_seconds * 1000)}
+                                  </time>
+                                </header>
+                                {summary.status === "ready" ? (
+                                  <div className="minutes-document">
+                                    <MinutesMarkdown text={summary.text} />
+                                  </div>
+                                ) : summary.status === "failed" ? (
+                                  <p className="management-error" role="alert">
+                                    {summary.error || "阶段总结生成失败"}
+                                  </p>
+                                ) : (
+                                  <p className="stage-summary-pending" role="status">
+                                    <LoaderCircle size={14} className="animate-spin" />
+                                    正在整理本阶段内容…
+                                  </p>
+                                )}
+                              </section>
+                            ))}
+                          </article>
+                        ) : (
+                          <EmptyDocument
+                            icon={Sparkles}
+                            title="等待首个阶段总结"
+                            description={
+                              stageSummaryState.windowSeconds
+                                ? `每 ${stageSummaryState.windowSeconds} 秒归档录音生成一次；暂停或结束时会整理当前尾段。`
+                                : "会议进行一段时间后，将自动整理阶段进展、结论和待办。"
+                            }
+                          />
+                        )}
+                      </div>
+                      <div className="document-footer">
+                        <span>
+                          {stageSummaryState.status === "live" ? (
+                            <CheckCheck size={13} />
+                          ) : stageSummaryConnecting ? (
+                            <LoaderCircle size={13} className="animate-spin" />
+                          ) : (
+                            <Sparkles size={13} />
+                          )}
+                          {stageSummaryState.error ||
+                            (stageSummaryState.status === "live"
+                              ? "阶段总结已连接"
+                              : stageSummaryConnecting
+                                ? "正在连接阶段总结"
+                                : "等待会议开始")}
+                        </span>
+                        <span>{readyStageSummaryCount} 个阶段</span>
                       </div>
                     </Card>
                   </TabsContent>

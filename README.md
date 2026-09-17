@@ -11,6 +11,7 @@ Audio2Text 是一个面向会议场景的实时语音转写系统。它从浏览
 - 每个会议拥有独立的录音、转写状态和模型会话，同一会议同时只允许一个录音连接。
 - 自动区分说话人。无需提前录制声纹样本，身份只在当前会议内有效。
 - 会议结束后进行说话人全局校正，并生成结构化 Markdown 纪要。
+- 按归档录音时间窗口异步生成阶段总结，通过独立 WebSocket 实时推送，暂停或结束时整理尾段。
 - 会议管理、部门管理、历史检索、正文下载、纪要下载和录音 WAV 导出。
 - SQLite 保存元数据和任务状态，PCM 音频、结构化转写和纪要保存在数据目录。
 
@@ -28,10 +29,13 @@ flowchart LR
     D --> M[CAM++ / FSMN-VAD / pyannote]
     A --> L[纪要服务]
     L -->|OpenAI 兼容 HTTP| T[大语言模型]
+    A --> G[阶段总结后台任务]
+    G -->|OpenAI 兼容 HTTP| T
     A --> DB[(SQLite + 文件归档)]
     R --> DB
     D --> DB
     L --> DB
+    G --> DB
 ```
 
 ### 客户端
@@ -42,7 +46,7 @@ AudioWorklet 将麦克风混合为单声道 PCM16。优先创建 16 kHz AudioCon
 
 ### FastAPI 应用
 
-`app/main.py` 提供 HTTP API、静态前端和唯一的实时接口 `/ws/meetings/{meeting_id}`。`app/realtime.py` 将一个 WebSocket 绑定到一个会议，负责控制命令、音频输入、识别事件、版本同步和断线恢复。
+`app/main.py` 提供 HTTP API、静态前端、会议录音接口 `/ws/meetings/{meeting_id}` 和只读阶段总结接口 `/ws/meetings/{meeting_id}/stage-summaries`。`app/realtime.py` 将录音 WebSocket 绑定到一个会议，负责控制命令、音频输入、识别事件、版本同步和断线恢复。
 
 录音导出接口为 `GET /api/meetings/{meeting_id}/audio/download`。服务端读取该会议的 `audio/manifest.json`，按清单顺序流式封装为 WAV，不会将整场录音一次性加载到内存。
 
@@ -51,6 +55,8 @@ AudioWorklet 将麦克风混合为单声道 PCM16。优先创建 16 kHz AudioCon
 归档格式是 16 kHz、单声道、16 位小端 PCM 分片。导出时只读取清单声明的采样范围，录音中断后遗留在分片文件末尾的未提交字节不会进入 WAV 文件。
 
 `app/diarization/` 是独立的 CPU 说话人校正工作者。它通过持久化任务状态和事件日志支持重启恢复，不阻塞实时录音连接。
+
+`app/stage_summaries.py` 根据 16 kHz 归档采样数划分非重叠窗口。ASR 定稿只发送内存水位通知；暂停/结束会先持久化准确的封口边界，但不会等待 LLM。后台工作者负责 LLM 调用、最多三次瞬时失败重试和 WebSocket 推送，因此录音协程不承担模型推理。服务重启后，生成中的窗口恢复为待处理状态，并根据已登记会议的归档和定稿转写补齐尚未入库的窗口。
 
 ### 数据层
 
@@ -80,6 +86,8 @@ Qwen 前缀续写要求服务支持 `input_audio`、assistant 前缀、`continue
 ### 纪要模型
 
 纪要使用独立的大语言模型配置，通过 `/chat/completions` 调用。长会议先按 `LLM_CHUNK_CHARS` 分段提取要点，再合并生成包含结论、决策、待办、风险和下一步安排的 Markdown 纪要。
+
+阶段总结复用同一个大语言模型配置，但任务和连接均与录音链路隔离。默认每 300 秒实际归档录音形成一个窗口；窗口只读取已经定稿的文字，暂停或结束时会封口不足一个完整窗口的尾段。窗口长度和单次最大输出分别由 `STAGE_SUMMARY_WINDOW_SECONDS`、`STAGE_SUMMARY_MAX_TOKENS` 控制。
 
 ## 实时处理设计
 
@@ -126,6 +134,8 @@ Qwen 模式在窗口内继续使用前缀回退；文件转写模式对相邻窗
 4. 暂停或结束前，客户端停止采集并冲刷尾音；服务端排空识别队列、提交归档，再返回 `state`。
 5. 所有事件携带 `meeting_id`。`segment_id` 在整个会议内递增，版本缺口通过 `snapshot` 恢复。
 6. 客户端定期发送 `ping`；`pong` 同时携带内存中的 ASR 请求耗时和积压快照。累计录音时长以归档 PCM 采样数为准。
+
+阶段总结使用独立的 `/ws/meetings/{id}/stage-summaries`。连接后首先返回 `stage_summaries.snapshot`，随后按窗口推送 `stage_summary.update`；该连接只接受 `ping`，不接收音频或会议控制。历史结果也可通过 `GET /api/meetings/{id}/stage-summaries` 获取，失败窗口可通过 `POST /api/meetings/{id}/stage-summaries/retry` 重试。
 
 ## 部署方案
 
@@ -207,6 +217,8 @@ Windows 标准版（Electron 35.7.5）安装包和便携版使用 `npm run dist:
 | `DIARIZATION_THREADS` | `2` | 每个工作者的推理线程数 |
 | `LLM_MAX_TOKENS` | `16384` | 纪要模型最大输出 token |
 | `LLM_CHUNK_CHARS` | `12000` | 长会议纪要分段字符数 |
+| `STAGE_SUMMARY_WINDOW_SECONDS` | `300` | 阶段总结的归档录音窗口长度 |
+| `STAGE_SUMMARY_MAX_TOKENS` | `1200` | 单个阶段总结最大输出 token |
 
 Compose 会将 `data/`、说话人模型目录和 tokenizer 目录挂载到应用容器。模型文件缺失时应用直接报告未就绪，不尝试联网下载。
 
@@ -241,4 +253,4 @@ npm run build --prefix client
 docker compose --profile app config --quiet
 ```
 
-测试覆盖会议状态、WebSocket 协议、PCM 重采样、固定窗口 ASR、慢识别时的录音归档、断线恢复、说话人校正和纪要任务。真实模型的识别质量、GPU 吞吐和长会议延迟需要在目标部署环境中单独验收。
+测试覆盖会议状态、WebSocket 协议、PCM 重采样、固定窗口 ASR、阶段总结窗口与独立推送、慢识别时的录音归档、断线恢复、说话人校正和纪要任务。真实模型的识别质量和长会议延迟需要在目标部署环境中单独验收。

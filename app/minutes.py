@@ -57,7 +57,14 @@ class OpenAIMinutesGenerator:
     async def close(self) -> None:
         await self.client.close()
 
-    async def _chat(self, title: str, text: str, prompt: str, max_tokens: int) -> str:
+    async def generate_from_prompt(
+        self,
+        title: str,
+        text: str,
+        prompt: str,
+        max_tokens: int,
+        truncation_setting: str = "LLM_MAX_TOKENS",
+    ) -> str:
         response = await self.client.chat.completions.create(
             model=self.config.model,
             messages=[
@@ -71,7 +78,9 @@ class OpenAIMinutesGenerator:
             raise MinutesGenerationError("纪要服务返回了空结果，请重试。")
         choice = response.choices[0]
         if choice.finish_reason == "length":
-            raise MinutesGenerationError("纪要输出被截断，请调大 LLM_MAX_TOKENS 后重试。")
+            raise MinutesGenerationError(
+                f"纪要输出被截断，请调大 {truncation_setting} 后重试。"
+            )
         if choice.finish_reason not in {"stop", None}:
             raise MinutesGenerationError("纪要服务未返回完整文本，请重试。")
         content = choice.message.content
@@ -95,12 +104,19 @@ class OpenAIMinutesGenerator:
         # Reduce long transcripts without silently dropping the end of the meeting.
         for _ in range(5):
             if len(text) <= limit:
-                return await self._chat(title, text, MINUTES_PROMPT, self.settings.llm_max_tokens)
+                return await self.generate_from_prompt(
+                    title, text, MINUTES_PROMPT, self.settings.llm_max_tokens
+                )
             summaries = []
             for offset in range(0, len(text), limit):
-                summaries.append(await self._chat(
-                    title, text[offset:offset + limit], EXTRACT_PROMPT, self.settings.llm_max_tokens,
-                ))
+                summaries.append(
+                    await self.generate_from_prompt(
+                        title,
+                        text[offset : offset + limit],
+                        EXTRACT_PROMPT,
+                        self.settings.llm_max_tokens,
+                    )
+                )
             reduced = "\n\n".join(summaries)
             if len(reduced) >= len(text):
                 raise MinutesGenerationError("长会议摘要未能压缩，请调整模型或 LLM_CHUNK_CHARS 后重试。")

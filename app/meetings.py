@@ -345,6 +345,15 @@ class MeetingStore:
                     raise MeetingError("纪要正在生成，请完成后再删除")
                 if db.execute("SELECT 1 FROM diarization_jobs WHERE meeting_id = ? AND status IN ('queued', 'running')", (meeting_id,)).fetchone():
                     raise MeetingError("正在校正说话人，请完成后再删除")
+                has_stage_summaries = db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'stage_summaries'"
+                ).fetchone()
+                if has_stage_summaries and db.execute(
+                    """SELECT 1 FROM stage_summaries WHERE meeting_id = ?
+                    AND status IN ('pending', 'generating')""",
+                    (meeting_id,),
+                ).fetchone():
+                    raise MeetingError("阶段总结正在生成，请完成后再删除")
                 if directory.exists():
                     trash.parent.mkdir(exist_ok=True)
                     directory.replace(trash)

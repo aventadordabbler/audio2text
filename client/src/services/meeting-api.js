@@ -158,6 +158,27 @@ export class MeetingApi {
     return this.url(`/ws/meetings/${encodeURIComponent(id)}`, true);
   }
 
+  stageSummarySocketUrl(id) {
+    return this.url(
+      `/ws/meetings/${encodeURIComponent(id)}/stage-summaries`,
+      true,
+    );
+  }
+
+  stageSummaries(id, options = {}) {
+    return this.request(
+      `/api/meetings/${encodeURIComponent(id)}/stage-summaries`,
+      options,
+    );
+  }
+
+  retryStageSummaries(id) {
+    return this.request(
+      `/api/meetings/${encodeURIComponent(id)}/stage-summaries/retry`,
+      { method: "POST" },
+    );
+  }
+
   audioDownloadUrl(id) {
     return this.url(`/api/meetings/${encodeURIComponent(id)}/audio/download`);
   }

@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { startBackend } from "./fixtures/start-backend.mjs";
 import { MeetingApi } from "../src/services/meeting-api.js";
 import { MeetingRecorder } from "../src/services/meeting-recorder.js";
+import { StageSummaryFeed } from "../src/services/stage-summary-feed.js";
 import { normalizeSttConfig } from "../src/shared/defaults.js";
 import { meetingQuery } from "../src/services/meeting-catalog.js";
 import { replaceTranscript } from "../src/services/transcript.js";
@@ -69,7 +70,7 @@ class TestPcmRecorder {
 }
 
 before(async () => {
-  backend = await startBackend({ archiveAudio: true });
+  backend = await startBackend({ archiveAudio: true, stageWindowSeconds: 10 });
   baseUrl = backend.baseUrl;
 });
 after(async () => {
@@ -277,6 +278,91 @@ test("recording clock advances only from server-committed samples", async () => 
   assert.equal(clock.sample_rate, 16000);
   assert.equal((await recorder.api.get(recorder.meeting.id)).duration_seconds, 1);
   await recorder.stop();
+});
+
+test("stage summary socket pushes fixed windows and restores its snapshot", async () => {
+  const { recorder, events } = await start();
+  const connect = async () => {
+    const socket = new WebSocket(
+      recorder.api.stageSummarySocketUrl(recorder.meeting.id),
+    );
+    const messages = [];
+    socket.addEventListener("message", ({ data }) =>
+      messages.push(JSON.parse(data)),
+    );
+    await until(() =>
+      messages.some((message) => message.type === "stage_summaries.snapshot"),
+    );
+    return { socket, messages };
+  };
+
+  const first = await connect();
+  assert.deepEqual(
+    first.messages.find(
+      (message) => message.type === "stage_summaries.snapshot",
+    ).summaries,
+    [],
+  );
+  for (let second = 1; second <= 10; second += 1) {
+    recorder.mediaRecorder.emitAudio(1);
+    await until(
+      () =>
+        events.filter((event) => event.type === "clock").at(-1)?.seconds ===
+        second,
+    );
+  }
+  await until(() =>
+    first.messages.some(
+      (message) =>
+        message.type === "stage_summary.update" &&
+        message.summary.status === "ready",
+    ),
+  );
+  const ready = first.messages.find(
+    (message) =>
+      message.type === "stage_summary.update" &&
+      message.summary.status === "ready",
+  ).summary;
+  assert.deepEqual([ready.start_seconds, ready.end_seconds], [0, 10]);
+  assert.match(ready.text, /阶段总结 0-10 秒/);
+
+  first.socket.close();
+  const second = await connect();
+  const snapshot = second.messages.find(
+    (message) => message.type === "stage_summaries.snapshot",
+  );
+  assert.equal(snapshot.summaries.length, 1);
+  assert.equal(snapshot.summaries[0].text, ready.text);
+  second.socket.close();
+  await recorder.stop();
+});
+
+test("stage summary feed preserves terminal errors and deleted meetings close", async () => {
+  const api = new MeetingApi({ baseUrl });
+  const statuses = [];
+  const feed = new StageSummaryFeed();
+  feed.connect(api, "0".repeat(32), {
+    onSummaries() {},
+    onStatus(status) {
+      statuses.push(status);
+    },
+  });
+  await until(() => statuses.at(-1)?.error === "会议不存在");
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  assert.equal(statuses.at(-1).status, "error");
+  assert.equal(statuses.filter((status) => status.status === "connecting").length, 1);
+  feed.disconnect();
+
+  const meeting = await api.create("删除阶段总结连接");
+  const socket = new WebSocket(api.stageSummarySocketUrl(meeting.id));
+  const messages = [];
+  socket.addEventListener("message", ({ data }) => messages.push(JSON.parse(data)));
+  await until(() =>
+    messages.some((message) => message.type === "stage_summaries.snapshot"),
+  );
+  await api.request(`/api/meetings/${meeting.id}`, { method: "DELETE" });
+  await until(() => messages.some((message) => message.type === "deleted"));
+  await until(() => socket.readyState === WebSocket.CLOSED);
 });
 
 test("ending a paused meeting preserves its saved transcript", async () => {

@@ -11,13 +11,13 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from .asr import ASRError
 from .meetings import MeetingError
-from .recordings import AudioArchive
+from .recordings import AudioArchive, SAMPLE_RATE
 
 logger = logging.getLogger(__name__)
 
 
 async def meeting_socket(websocket: WebSocket, meeting_id, store, models, minutes, factory, *, settings,
-                         diarization=None, events=None):
+                         diarization=None, events=None, stage_summaries=None):
     """Bind one browser and one model stream to a meeting; persist only final segments."""
     await websocket.accept()
     owner = uuid4().hex
@@ -33,6 +33,7 @@ async def meeting_socket(websocket: WebSocket, meeting_id, store, models, minute
     subscription = None
     pump = None
     revision = 0
+    summary_watermark = 0
     send_lock = asyncio.Lock()
 
     async def send(event):
@@ -64,7 +65,7 @@ async def meeting_socket(websocket: WebSocket, meeting_id, store, models, minute
                 return
 
     async def read_results():
-        nonlocal confirmed, next_segment
+        nonlocal confirmed, next_segment, summary_watermark
         async for event in stream.events():
             segment = event["segment_id"] + (0 if native_ids else local_base)
             if segment < next_segment:
@@ -81,6 +82,17 @@ async def meeting_socket(websocket: WebSocket, meeting_id, store, models, minute
                 # Send only the segment; the client already owns previously confirmed text.
                 if saved:
                     await send(saved)
+                    if stage_summaries:
+                        watermark = min(
+                            archive.samples if archive else 0,
+                            round(
+                                event.get("end_ms", 0)
+                                * (archive.sample_rate if archive else SAMPLE_RATE)
+                                / 1000
+                            ),
+                        )
+                        summary_watermark = max(summary_watermark, watermark)
+                        stage_summaries.offer(meeting_id, watermark)
                     if events:
                         events.publish(meeting_id, saved, exclude=owner)
                     if diarization:
@@ -126,6 +138,21 @@ async def meeting_socket(websocket: WebSocket, meeting_id, store, models, minute
         confirmed = meeting["text"]
         next_segment = local_base = meeting["next_segment_id"]
         archive = await asyncio.to_thread(AudioArchive, store.directory(meeting_id)) if claimed else None
+        if archive:
+            summary_watermark = min(
+                archive.samples,
+                max(
+                    (
+                        round(
+                            segment.get("end_ms", 0)
+                            * archive.sample_rate
+                            / 1000
+                        )
+                        for segment in meeting["segments"]
+                    ),
+                    default=0,
+                ),
+            )
         config = await asyncio.to_thread(models.require, "asr") if factory is None and claimed else None
         if factory is None and claimed:
             from .asr import build_transcriber
@@ -198,6 +225,8 @@ async def meeting_socket(websocket: WebSocket, meeting_id, store, models, minute
                     if stream is not None:
                         await flush()
                     await asyncio.to_thread(archive.end)
+                    if stage_summaries:
+                        await stage_summaries.finish(meeting_id, archive.samples)
                     if diarization:
                         diarization.notify(meeting_id)
                     if action == "end":
@@ -259,6 +288,8 @@ async def meeting_socket(websocket: WebSocket, meeting_id, store, models, minute
                 if claimed:
                     if archive:
                         await asyncio.to_thread(archive.end)
+                        if stage_summaries:
+                            await stage_summaries.finish(meeting_id, summary_watermark)
                         if diarization:
                             diarization.notify(meeting_id)
                     await asyncio.to_thread(store.release, meeting_id, owner)

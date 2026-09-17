@@ -303,7 +303,8 @@ try {
     window.WebSocket = class TestWebSocket extends NativeWebSocket {
       constructor(...args) {
         super(...args);
-        window.__activeMeetingSocket = this;
+        if (!String(args[0]).endsWith("/stage-summaries"))
+          window.__activeMeetingSocket = this;
       }
     };
   });
@@ -341,6 +342,8 @@ try {
     frozenClock,
   );
   await page.getByRole("button", { name: "结束会议", exact: true }).click();
+  await page.getByRole("tab", { name: "阶段总结", exact: true }).click();
+  await page.getByText(/阶段总结 \d+-\d+ 秒/).waitFor();
   await page.getByRole("tab", { name: "会议总结", exact: true }).click();
   await page.getByRole("heading", { name: "核心结论", exact: true }).waitFor();
   const [recorded] = await api.list({ title: "桌面 PCM 录音验证" });
@@ -558,6 +561,7 @@ try {
       "Production file:// PCM16 capture at 1 second",
       "Socket interruption resumes the sample-based recording clock",
       "Hidden heartbeat and ASR diagnostics panel",
+      "Independent live stage-summary feed and persisted tail window",
       "Native WAV download and renderer request cancellation",
       "Department CRUD and meeting assignment",
       "Combined department/date/status/title filters",

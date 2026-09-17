@@ -5,7 +5,11 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-export async function startBackend({ controlledDiarization = false, archiveAudio = false } = {}) {
+export async function startBackend({
+  controlledDiarization = false,
+  archiveAudio = false,
+  stageWindowSeconds = 10,
+} = {}) {
   const root = path.resolve(import.meta.dirname, "../..");
   const backendDir =
     process.env.AUDIO2TEXT_DIR || "/root/project/pyproj/audio2text";
@@ -34,6 +38,7 @@ export async function startBackend({ controlledDiarization = false, archiveAudio
         DATABASE_PATH: path.join(directory, "meetings.sqlite3"),
         DESKTOP_TEST_DIARIZATION: controlledDiarization ? "1" : "0",
         DESKTOP_TEST_ARCHIVE: archiveAudio ? "1" : "0",
+        STAGE_SUMMARY_WINDOW_SECONDS: String(stageWindowSeconds),
       },
       stdio: ["ignore", "pipe", "pipe"],
     },

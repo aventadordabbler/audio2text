@@ -22,7 +22,13 @@ from .model_configs import ModelConfigInput, ModelConfigStore, ModelKind
 from .model_probe import ModelProbeResult, probe_model
 from .meeting_events import MeetingEvents
 from .diarization.service import DiarizationService
-from .recordings import AudioExportInvalid, AudioExportUnavailable, prepare_wav_export
+from .recordings import (
+    AudioExportInvalid,
+    AudioExportUnavailable,
+    prepare_wav_export,
+    read_audio_summary,
+)
+from .stage_summaries import StageSummaryGenerator, StageSummaryService, stage_summary_socket
 
 logger = logging.getLogger(__name__)
 WEB_DIR = Path(__file__).resolve().parent.parent / "web" / "dist"
@@ -57,22 +63,26 @@ def create_app(
     stream_factory=None,
     minutes_generator: MinutesGenerator | None = None,
     diarization_worker_factory=None,
+    stage_summary_generator: StageSummaryGenerator | None = None,
 ) -> FastAPI:
     app_settings = settings or get_settings()
     store = MeetingStore(app_settings.database_path or app_settings.data_dir / "meetings.sqlite3", app_settings.data_dir)
     models = ModelConfigStore(store.path)
     events = MeetingEvents()
     minutes = MinutesService(store, models, app_settings, minutes_generator, events=events)
+    stage_summaries = StageSummaryService(store, models, app_settings, stage_summary_generator)
     diarization = DiarizationService(store, models, minutes, app_settings, events, diarization_worker_factory)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         await asyncio.to_thread(store.recover)
+        await stage_summaries.start()
         await diarization.start()
         try:
             yield
         finally:
             await diarization.close()
+            await stage_summaries.close()
             await minutes.close()
 
     app = FastAPI(title=app_settings.app_name, lifespan=lifespan)
@@ -81,6 +91,7 @@ def create_app(
     app.state.minutes_service = minutes
     app.state.model_configs = models
     app.state.meeting_events = events
+    app.state.stage_summaries = stage_summaries
     app.state.diarization_service = diarization
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
 
@@ -156,6 +167,9 @@ def create_app(
     @app.post("/api/meetings/{meeting_id}/end")
     async def end_meeting(meeting_id: str) -> dict[str, Any]:
         meeting = await asyncio.to_thread(store.transition, meeting_id, "end")
+        audio = await asyncio.to_thread(read_audio_summary, store.directory(meeting_id))
+        if audio:
+            await stage_summaries.finish(meeting_id, audio.samples)
         await diarization.finish(meeting_id)
         return meeting
 
@@ -173,6 +187,7 @@ def create_app(
             if timer := diarization.timers.pop(meeting_id, None):
                 timer.cancel()
             diarization.dirty.discard(meeting_id)
+        stage_summaries.deleted(meeting_id)
         events.publish(meeting_id, {"type": "deleted"})
         return Response(status_code=204)
 
@@ -184,6 +199,15 @@ def create_app(
     @app.get("/api/meetings/{meeting_id}/minutes")
     async def get_minutes(meeting_id: str) -> dict[str, Any]:
         return await minutes.get(meeting_id)
+
+    @app.get("/api/meetings/{meeting_id}/stage-summaries")
+    async def get_stage_summaries(meeting_id: str) -> list[dict[str, Any]]:
+        return await stage_summaries.list(meeting_id)
+
+    @app.post("/api/meetings/{meeting_id}/stage-summaries/retry", status_code=202)
+    async def retry_stage_summaries(meeting_id: str) -> list[dict[str, Any]]:
+        await stage_summaries.retry_failed(meeting_id)
+        return await stage_summaries.list(meeting_id)
 
     @app.post("/api/meetings/{meeting_id}/minutes", status_code=202)
     async def generate_minutes(meeting_id: str) -> dict[str, Any]:
@@ -234,7 +258,12 @@ def create_app(
     @app.websocket("/ws/meetings/{meeting_id}")
     async def recognize_meeting(websocket: WebSocket, meeting_id: str) -> None:
         await meeting_socket(websocket, meeting_id, store, models, minutes, stream_factory,
-                             settings=app_settings, diarization=diarization, events=events)
+                             settings=app_settings, diarization=diarization, events=events,
+                             stage_summaries=stage_summaries)
+
+    @app.websocket("/ws/meetings/{meeting_id}/stage-summaries")
+    async def summarize_meeting_stages(websocket: WebSocket, meeting_id: str) -> None:
+        await stage_summary_socket(websocket, meeting_id, store, stage_summaries)
 
     # Mounts also match WebSockets, but StaticFiles only handles HTTP scopes.
     # Keep this fallback after the meeting socket and before the static mount.
