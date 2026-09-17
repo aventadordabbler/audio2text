@@ -376,6 +376,50 @@ try {
     await page.getByLabel("接口地址", { exact: true }).inputValue(),
     backend.baseUrl,
   );
+  await page.evaluate(() => {
+    const originalGetUserMedia = navigator.mediaDevices.getUserMedia.bind(
+      navigator.mediaDevices,
+    );
+    const originalResume = AudioContext.prototype.resume;
+    navigator.mediaDevices.getUserMedia = async (...args) => {
+      const stream = await originalGetUserMedia(...args);
+      window.__microphoneTestTracks = stream.getTracks();
+      return stream;
+    };
+    AudioContext.prototype.resume = function delayedResume() {
+      return new Promise((resolve) => {
+        window.__resumeMicrophoneTest = resolve;
+      });
+    };
+    window.__restoreMicrophoneTest = () => {
+      navigator.mediaDevices.getUserMedia = originalGetUserMedia;
+      AudioContext.prototype.resume = originalResume;
+    };
+  });
+  await page.getByText("麦克风输入测试", { exact: true }).click();
+  await page.waitForFunction(() => Boolean(window.__resumeMicrophoneTest));
+  await page.getByText("麦克风输入测试", { exact: true }).click();
+  await page.waitForFunction(() =>
+    window.__microphoneTestTracks?.every((track) => track.readyState === "ended"),
+  );
+  await page.evaluate(() => window.__resumeMicrophoneTest());
+  await page.evaluate(() => window.__restoreMicrophoneTest());
+  await page.getByText("麦克风输入测试", { exact: true }).click();
+  const microphoneLevel = page.getByRole("meter", {
+    name: "麦克风输入音量",
+  });
+  await microphoneLevel.waitFor();
+  await page.waitForFunction(() => {
+    const meter = document.querySelector(
+      '[role="meter"][aria-label="麦克风输入音量"]',
+    );
+    return Number(meter?.getAttribute("aria-valuenow")) > 0;
+  });
+  assert.equal(
+    await page.getByText(/getUserMedia:|AudioContext:|WebSocket:/).count(),
+    0,
+  );
+  await page.getByText("麦克风输入测试", { exact: true }).click();
   await select("识别语言", "English");
   await page.getByRole("button", { name: "保存配置", exact: true }).click();
   await page.waitForFunction(
@@ -522,6 +566,7 @@ try {
       "No local meeting storage and legacy migration",
       "Nonpersistent renderer session",
       "Server LLM settings",
+      "Microphone input level without environment implementation details",
       "Minimum window layout",
       "Separate summary window and confirmed close",
       "Styled close dialog centered at minimum and normal window sizes",

@@ -1302,14 +1302,40 @@ button:disabled {
   gap: 7px;
   color: #737373;
 }
-.media-diagnostics p {
-  margin: 12px 0 8px;
-  font-family: monospace;
-  line-height: 1.8;
-  overflow-wrap: anywhere;
-}
 .media-diagnostics small {
+  display: block;
+  margin-top: 8px;
   font-size: 10px;
+}
+.media-diagnostics small.error {
+  color: #b91c1c;
+}
+.microphone-level-test {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+}
+.microphone-level-meter {
+  flex: 1;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #eeeeec;
+}
+.microphone-level-meter i {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #7ba787, #32804a);
+  transition: width 80ms linear;
+}
+.microphone-level-test > span {
+  width: 32px;
+  color: #525252;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 .settings-note {
   display: flex;

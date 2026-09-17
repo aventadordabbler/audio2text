@@ -72,6 +72,7 @@ import {
   CreateMeetingDialog,
 } from "@/components/meeting-management.jsx";
 import { DepartmentManagement } from "@/components/department-management.jsx";
+import { MicrophoneLevelTest } from "@/components/microphone-level-test.jsx";
 import {
   LLM_SETTINGS_FORM_ID,
   ServerModelSettings,
@@ -143,7 +144,6 @@ function Field({ label, children }) {
 
 export function App() {
   const [ready, setReady] = useState(false);
-  const [platform, setPlatform] = useState("unknown");
   const [config, setConfig] = useState(DEFAULT_CONFIG);
   const [formConfig, setFormConfig] = useState(DEFAULT_CONFIG);
   const [session, setSession] = useState(null);
@@ -177,11 +177,6 @@ export function App() {
     stt: { tone: "", text: "尚未测试语音转写服务。" },
     llm: { tone: "", text: "尚未测试大语言模型服务。" },
   });
-  const [mediaSupport, setMediaSupport] = useState({
-    helperReady: true,
-    message: "浏览器媒体链路待检测",
-  });
-  const [mediaProbeText, setMediaProbeText] = useState("");
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [asrDiagnostics, setAsrDiagnostics] = useState(null);
   const [livePreview, setLivePreview] = useState("");
@@ -328,13 +323,10 @@ export function App() {
         nextConfig.stt.protocol = "audio2text";
       }
 
-      setPlatform(payload.platform || "unknown");
       setConfig(nextConfig);
       setFormConfig(nextConfig);
       setSessions([]);
       setStatusLine("准备就绪");
-      refreshMediaProbe();
-      await refreshBridgeState(nextConfig);
       setReady(true);
     }
 
@@ -346,36 +338,6 @@ export function App() {
       recorder.disconnect();
     };
   }, []);
-
-  function refreshMediaProbe() {
-    const lines = [
-      `backend: ${recorder.backend || "unknown"}`,
-      `navigator: ${typeof navigator}`,
-      `mediaDevices: ${typeof navigator?.mediaDevices}`,
-      `getUserMedia: ${typeof navigator?.mediaDevices?.getUserMedia}`,
-      `AudioContext: ${typeof window.AudioContext}`,
-      `WebSocket: ${typeof window.WebSocket}`,
-    ];
-    setMediaProbeText(lines.join(" | "));
-  }
-
-  async function refreshBridgeState(nextConfig = configRef.current) {
-    try {
-      const health = await recorder.health();
-      setMediaSupport({
-        helperReady: true,
-        message:
-          health.status === "recording"
-            ? "浏览器音频采集链路运行中"
-            : "浏览器音频采集链路可用",
-      });
-    } catch {
-      setMediaSupport({
-        helperReady: false,
-        message: "浏览器音频采集链路不可用",
-      });
-    }
-  }
 
   function updateForm(path, value) {
     setFormConfig((current) => {
@@ -698,7 +660,6 @@ export function App() {
       setIsRecording(false);
       recordingRef.current = false;
       syncTimer();
-      await refreshBridgeState();
       await updateSession(currentSession);
       refreshCatalog();
       setStatusLine(
@@ -788,7 +749,6 @@ export function App() {
         stopTimerLoop();
         syncTimer();
       }
-      await refreshBridgeState();
     } catch (error) {
       appendError(`录音操作失败: ${error.message || error}`);
     } finally {
@@ -1726,16 +1686,7 @@ export function App() {
                       </div>
                     </CardContent>
                   </Card>
-                  <details className="media-diagnostics">
-                    <summary>
-                      <Mic size={14} />
-                      麦克风与环境诊断
-                    </summary>
-                    <p>{mediaProbeText}</p>
-                    <small>
-                      {platform} · {mediaSupport.message}
-                    </small>
-                  </details>
+                  <MicrophoneLevelTest />
                 </TabsContent>
                 <TabsContent
                   value="llm"
