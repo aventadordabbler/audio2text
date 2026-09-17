@@ -408,9 +408,53 @@ try {
   assert.deepEqual(Object.keys(JSON.parse(stored)), ["config"]);
   assert.ok(!/界面验证会议|桌面 PCM|转写来自|核心结论|旧本地/.test(stored));
   assert.deepEqual(await page.evaluate(() => Object.keys(localStorage)), []);
+
+  // Exercise the real close event and IPC while controlling the native dialog choice.
+  const mainWindowId = await (await electronApp.browserWindow(page)).evaluate((window) => window.id);
+  await electronApp.evaluate(({ BrowserWindow, dialog }, windowId) => {
+    const state = { windowId, prompts: [], minimizeCount: 0, resolve: null };
+    globalThis.closeConfirmationTest = state;
+    dialog.showMessageBox = (window, options) => {
+      state.prompts.push({ windowId: window.id, ...options });
+      return new Promise((resolve) => { state.resolve = resolve; });
+    };
+    const window = BrowserWindow.fromId(windowId);
+    const minimize = window.minimize.bind(window);
+    window.minimize = () => { state.minimizeCount++; minimize(); };
+  }, mainWindowId);
+  await page.getByRole("button", { name: "关闭窗口", exact: true }).click();
+  await until(() => electronApp.evaluate(() => globalThis.closeConfirmationTest.prompts.length === 1));
+  const prompt = await electronApp.evaluate(({ BrowserWindow }) => {
+    // A repeated native close (e.g. Alt+F4) must not create another prompt.
+    BrowserWindow.fromId(globalThis.closeConfirmationTest.windowId).close();
+    return globalThis.closeConfirmationTest.prompts[0];
+  });
+  assert.deepEqual(prompt.buttons, ["最小化窗口", "关闭窗口", "取消"]);
+  assert.equal(prompt.windowId, mainWindowId);
+  assert.equal(prompt.cancelId, 2);
+  assert.equal(prompt.defaultId, 0);
+  assert.equal(await electronApp.evaluate(() => globalThis.closeConfirmationTest.prompts.length), 1);
+  await electronApp.evaluate(() => globalThis.closeConfirmationTest.resolve({ response: 2 }));
+  assert.equal(electronApp.windows().length, 2);
+  assert.equal(page.isClosed(), false);
+
+  // Native close and the titlebar close button share the same confirmation.
+  await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.fromId(globalThis.closeConfirmationTest.windowId).close());
+  await until(() => electronApp.evaluate(() => globalThis.closeConfirmationTest.prompts.length === 2));
+  await electronApp.evaluate(() => globalThis.closeConfirmationTest.resolve({ response: 0 }));
+  await until(() => electronApp.evaluate(() => globalThis.closeConfirmationTest.minimizeCount === 1));
+  assert.equal(page.isClosed(), false);
+  await electronApp.evaluate(({ BrowserWindow }) => {
+    const window = BrowserWindow.fromId(globalThis.closeConfirmationTest.windowId);
+    window.restore();
+    window.show();
+    window.focus();
+  });
+  await page.getByRole("button", { name: "关闭窗口", exact: true }).click();
+  await until(() => electronApp.evaluate(() => globalThis.closeConfirmationTest.prompts.length === 3));
   await Promise.all([
     page.waitForEvent("close"),
-    page.getByRole("button", { name: "关闭窗口", exact: true }).click(),
+    electronApp.evaluate(() => globalThis.closeConfirmationTest.resolve({ response: 1 })),
   ]);
   assert.equal(electronApp.windows().length, 1);
   assert.deepEqual(errors, []);
@@ -432,7 +476,8 @@ try {
       "Nonpersistent renderer session",
       "Server LLM settings",
       "Minimum window layout",
-      "Separate summary window and native close",
+      "Separate summary window and confirmed close",
+      "Close cancellation, minimization and duplicate prompt prevention",
     ],
     pageErrors: errors,
     notes: [

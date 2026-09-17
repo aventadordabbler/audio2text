@@ -5,6 +5,7 @@ const {
   BrowserWindow,
   Tray,
   Menu,
+  dialog,
   ipcMain,
   nativeImage,
   session,
@@ -28,6 +29,7 @@ let minutesWindow = null;
 let tray = null;
 let pendingMinutesPayload = null;
 let rendererSession;
+let isQuitting = false;
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -158,6 +160,40 @@ function createMainWindow() {
   mainWindow.on("maximize", emitMainWindowState);
   mainWindow.on("unmaximize", emitMainWindowState);
   mainWindow.on("restore", emitMainWindowState);
+
+  let closeConfirmed = false;
+  let closePromptOpen = false;
+  mainWindow.on("close", async (event) => {
+    if (isQuitting || closeConfirmed) return;
+    event.preventDefault();
+    if (closePromptOpen) return;
+
+    const window = mainWindow;
+    closePromptOpen = true;
+    try {
+      const { response } = await dialog.showMessageBox(window, {
+        type: "question",
+        title: "关闭窗口",
+        message: "关闭窗口还是最小化？",
+        detail: "关闭窗口将停止当前录音；最小化后应用和录音会继续运行。",
+        buttons: ["最小化窗口", "关闭窗口", "取消"],
+        defaultId: 0,
+        cancelId: 2,
+        noLink: true,
+      });
+      if (isQuitting || window.isDestroyed()) return;
+      if (response === 0) {
+        window.minimize();
+      } else if (response === 1) {
+        closeConfirmed = true;
+        window.close();
+      }
+    } catch (error) {
+      console.error("Failed to show window close confirmation:", error);
+    } finally {
+      closePromptOpen = false;
+    }
+  });
 
   mainWindow.on("closed", () => {
     mainWindow = null;
@@ -301,6 +337,10 @@ app.whenReady().then(() => {
       restoreMainWindow();
     }
   });
+});
+
+app.on("before-quit", () => {
+  isQuitting = true;
 });
 
 app.on("window-all-closed", () => {
