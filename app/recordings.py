@@ -128,6 +128,10 @@ class AudioArchive:
     def samples(self):
         return self.manifest["samples"]
 
+    @property
+    def sample_rate(self):
+        return self.manifest["sample_rate"]
+
     def begin(self):
         for capture in self.manifest["captures"]:
             capture["closed"] = True

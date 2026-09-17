@@ -150,7 +150,7 @@ async def meeting_socket(websocket: WebSocket, meeting_id, store, models, minute
                     await send({
                         "type": "audio.committed",
                         "samples": committed_samples if committed_samples is not None else archive.samples,
-                        "sample_rate": archive.manifest["sample_rate"],
+                        "sample_rate": archive.sample_rate,
                     })
                 if hasattr(stream, "flow_status"):
                     flow = stream.flow_status()
