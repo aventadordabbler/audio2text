@@ -1,13 +1,8 @@
 {
-  "name": "meeting-float-desktop",
-  "productName": "Meeting Float Desktop",
+  "name": "meeting-assistant-desktop",
+  "productName": "Meeting Assistant Desktop",
   "version": "0.2.3",
   "description": "Electron desktop meeting assistant with live transcript, summaries, and minutes generation.",
-  "author": "Axe Xu",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/axeprpr/meeting-float-desktop.git"
-  },
   "private": true,
   "type": "module",
   "main": "electron/main.cjs",
@@ -84,14 +79,6 @@
     "extraMetadata": {
       "main": "electron/main.cjs"
     },
-    "publish": [
-      {
-        "provider": "github",
-        "owner": "axeprpr",
-        "repo": "meeting-float-desktop",
-        "releaseType": "release"
-      }
-    ],
     "win": {
       "signAndEditExecutable": true,
       "icon": "assets/icon.ico",
