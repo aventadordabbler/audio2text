@@ -115,10 +115,17 @@ export function CreateMeetingDialog({
               <div className="space-y-2.5">
                 <Label htmlFor="department-input">所属部门</Label>
                 <Select value={departmentId} onValueChange={setDepartmentId} disabled={submitting}>
-                  <SelectTrigger id="department-input" className="h-11 w-full">
-                    <SelectValue />
+                  <SelectTrigger id="department-input" className="w-full">
+                    <SelectValue className="min-w-0" />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent
+                    position="popper"
+                    side="bottom"
+                    align="start"
+                    sideOffset={4}
+                    avoidCollisions={false}
+                    className="meeting-filter-menu"
+                  >
                     <SelectItem value="unassigned">未分类</SelectItem>
                     {departments.map((department) => (
                       <SelectItem key={department.id} value={department.id}>{department.name}</SelectItem>

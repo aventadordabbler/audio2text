@@ -4,6 +4,7 @@ import {
   AudioLines,
   Check,
   Clock3,
+  Download,
   FileText,
   MoreHorizontal,
   Plus,
@@ -32,6 +33,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Skeleton } from "@/components/ui/skeleton"
 import { MeetingStatusBadge } from "./meeting-status"
+import { downloadRecording } from "@/lib/recording-download"
 import { api, emptyMeetingFilters, errorMessage, formatDate, formatDuration, statusLabels, type Department, type Meeting, type MeetingFilters, type MeetingStatus } from "@/lib/meetings"
 
 interface Props {
@@ -53,6 +55,8 @@ export function MeetingList({
   onCreate,
   onRefresh,
 }: Props) {
+  const [exportError, setExportError] = useState("")
+  const [exportingId, setExportingId] = useState<string | null>(null)
   const [result, setResult] = useState<{ key: string; source: Meeting[]; meetings: Meeting[]; error: string } | null>(null)
   const params = new URLSearchParams()
   if (filters.title.trim()) params.set("title", filters.title.trim())
@@ -91,6 +95,19 @@ export function MeetingList({
     onFilters({ ...filters, ...patch })
   }
 
+  async function exportAudio(id: string) {
+    if (exportingId) return
+    setExportingId(id)
+    setExportError("")
+    try {
+      await downloadRecording(id)
+    } catch (error) {
+      setExportError(`导出录音失败：${errorMessage(error)}`)
+    } finally {
+      setExportingId(null)
+    }
+  }
+
   const active = meetings.filter((meeting) => meeting.status !== "ended").length
   const minutes = Math.round(
     meetings.reduce((total, meeting) => total + meeting.duration_seconds, 0) / 60,
@@ -98,6 +115,7 @@ export function MeetingList({
 
   return (
     <section id="list-view" className="page-content animate-page-in">
+      {exportError && <p role="alert" className="text-destructive mb-3">{exportError}</p>}
       <div className="page-heading meeting-list-heading">
         <div className="meeting-title-summary">
           <h1>会议管理</h1>
@@ -298,6 +316,12 @@ export function MeetingList({
                             <FileText />
                             下载转写文本
                           </a>
+                        </DropdownMenuItem>
+                      )}
+                      {meeting.audio_available && (
+                        <DropdownMenuItem disabled={exportingId !== null} onSelect={() => void exportAudio(meeting.id)}>
+                          <Download />
+                          导出录音（WAV）
                         </DropdownMenuItem>
                       )}
                     </DropdownMenuContent>

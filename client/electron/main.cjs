@@ -1,7 +1,6 @@
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import {
+const fs = require("node:fs");
+const path = require("node:path");
+const {
   app,
   BrowserWindow,
   Tray,
@@ -9,9 +8,8 @@ import {
   ipcMain,
   nativeImage,
   session,
-} from "electron";
+} = require("electron");
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 const iconPath = path.join(__dirname, "..", "assets", "icon.png");
 
@@ -235,6 +233,14 @@ function setupTray() {
 }
 
 function registerIpc() {
+  ipcMain.handle("desktop:download-audio", ({ sender }, value) => {
+    const url = new URL(value);
+    if (!["http:", "https:"].includes(url.protocol)) {
+      throw new Error("录音下载地址必须使用 HTTP 或 HTTPS");
+    }
+    sender.downloadURL(url.href);
+    return { ok: true };
+  });
   ipcMain.handle("desktop:get-bootstrap", () => getBootstrapData());
   ipcMain.handle("desktop:save-config", (_, config) => saveConfig(config));
   ipcMain.handle("desktop:get-window-state", () => ({

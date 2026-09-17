@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+from dataclasses import dataclass
 import os
 from pathlib import Path
 from uuid import uuid4
@@ -13,6 +14,57 @@ from .transcripts import atomic_json
 
 SAMPLE_RATE = 16000
 CHUNK_SAMPLES = SAMPLE_RATE * 30
+WAV_HEADER_BYTES = 44
+WAV_MAX_DATA_BYTES = (1 << 32) - 1 - 36
+WAV_READ_BYTES = 1024 * 1024
+
+
+class AudioExportUnavailable(FileNotFoundError):
+    """The meeting has no committed audio that can be exported."""
+
+
+class AudioExportInvalid(ValueError):
+    """The committed audio manifest or one of its chunks is invalid."""
+
+
+@dataclass(frozen=True)
+class WavExport:
+    """A validated, streaming view over the committed PCM chunks."""
+
+    sample_rate: int
+    samples: int
+    chunks: tuple[tuple[Path, int], ...]
+
+    @property
+    def data_bytes(self) -> int:
+        return self.samples * 2
+
+    @property
+    def content_length(self) -> int:
+        return WAV_HEADER_BYTES + self.data_bytes
+
+    def header(self) -> bytes:
+        data_size = self.data_bytes
+        byte_rate = self.sample_rate * 2
+        return b"".join((
+            b"RIFF", (36 + data_size).to_bytes(4, "little"), b"WAVE",
+            b"fmt ", (16).to_bytes(4, "little"), (1).to_bytes(2, "little"),
+            (1).to_bytes(2, "little"), self.sample_rate.to_bytes(4, "little"),
+            byte_rate.to_bytes(4, "little"), (2).to_bytes(2, "little"),
+            (16).to_bytes(2, "little"), b"data", data_size.to_bytes(4, "little"),
+        ))
+
+    def iter_bytes(self):
+        yield self.header()
+        for path, expected in self.chunks:
+            with path.open("rb") as source:
+                remaining = expected
+                while remaining:
+                    block = source.read(min(WAV_READ_BYTES, remaining))
+                    if not block:
+                        raise OSError("录音文件在导出过程中变得不完整")
+                    remaining -= len(block)
+                    yield block
 
 
 class PCMNormalizer:
@@ -111,6 +163,87 @@ class AudioArchive:
             self.manifest["captures"][-1]["closed"] = True
             atomic_json(self.path, self.manifest)
         self.capture_id = None
+
+
+def prepare_wav_export(directory: Path) -> WavExport:
+    """Validate a committed archive and return a streaming WAV view.
+
+    The manifest is authoritative: files are read only for the sample ranges
+    declared there, so bytes left behind by an interrupted capture are omitted.
+    """
+    audio_directory = directory / "audio"
+    manifest_path = audio_directory / "manifest.json"
+    if not manifest_path.is_file():
+        raise AudioExportUnavailable("会议暂无录音")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise AudioExportInvalid("录音清单无法读取") from exc
+    if not isinstance(manifest, dict):
+        raise AudioExportInvalid("录音清单格式无效")
+    if manifest.get("format") != "pcm_s16le":
+        raise AudioExportInvalid("录音格式不受支持")
+    sample_rate = manifest.get("sample_rate")
+    samples = manifest.get("samples")
+    chunks = manifest.get("chunks")
+    if (
+        not isinstance(sample_rate, int)
+        or isinstance(sample_rate, bool)
+        or sample_rate <= 0
+        or sample_rate > 0xFFFFFFFF // 2
+    ):
+        raise AudioExportInvalid("录音采样率无效")
+    if not isinstance(samples, int) or isinstance(samples, bool) or samples < 0:
+        raise AudioExportInvalid("录音采样数无效")
+    if not isinstance(chunks, list):
+        raise AudioExportInvalid("录音分片清单无效")
+    if samples == 0:
+        raise AudioExportUnavailable("会议暂无录音")
+    data_bytes = samples * 2
+    if data_bytes > WAV_MAX_DATA_BYTES:
+        raise AudioExportInvalid("录音时长超过 WAV 格式限制")
+
+    root = audio_directory.resolve()
+    expected_start = 0
+    seen_files: set[str] = set()
+    sources: list[tuple[Path, int]] = []
+    for item in chunks:
+        if not isinstance(item, dict):
+            raise AudioExportInvalid("录音分片清单格式无效")
+        file_name = item.get("file")
+        start = item.get("start")
+        end = item.get("end")
+        if (
+            not isinstance(file_name, str)
+            or not file_name
+            or not isinstance(start, int)
+            or isinstance(start, bool)
+            or not isinstance(end, int)
+            or isinstance(end, bool)
+            or start != expected_start
+            or end <= start
+            or file_name in seen_files
+        ):
+            raise AudioExportInvalid("录音分片清单不连续")
+        path = (audio_directory / file_name).resolve()
+        if not path.is_relative_to(root):
+            raise AudioExportInvalid("录音分片路径无效")
+        if not path.is_file():
+            raise AudioExportInvalid("录音分片不存在")
+        expected_bytes = (end - start) * 2
+        try:
+            actual_bytes = path.stat().st_size
+        except OSError as exc:
+            raise AudioExportInvalid("录音分片不存在") from exc
+        if actual_bytes < expected_bytes:
+            raise AudioExportInvalid("录音分片不完整")
+        seen_files.add(file_name)
+        sources.append((path, expected_bytes))
+        expected_start = end
+
+    if expected_start != samples:
+        raise AudioExportInvalid("录音分片总长度与清单不一致")
+    return WavExport(sample_rate=sample_rate, samples=samples, chunks=tuple(sources))
 
 
 def read_audio(directory: Path, start: int, end: int):

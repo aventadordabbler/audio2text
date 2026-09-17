@@ -7,10 +7,15 @@ import { startBackend } from "./fixtures/start-backend.mjs";
 import { MeetingApi } from "../src/services/meeting-api.js";
 
 const rootDir = path.resolve(import.meta.dirname, "..");
-const outputDir = path.join(rootDir, "output", "playwright");
+const win7 = process.argv.includes("--win7");
+const outputDir = path.join(rootDir, "output", "playwright", win7 ? "win7" : "modern");
+// Test the actual packaged Electron 22 runtime and renderer, not the dev server.
+const legacyExecutable = process.platform === "win32"
+  ? path.join(rootDir, "release/win7/win-unpacked/Meeting Float Desktop Win7.exe")
+  : path.join(rootDir, "release/win7/linux-unpacked/meeting-float-desktop");
 const profileDir = await fs.mkdtemp(path.join(os.tmpdir(), "meeting-ui-"));
 await fs.mkdir(outputDir, { recursive: true });
-const backend = await startBackend();
+const backend = await startBackend({ archiveAudio: true });
 const api = new MeetingApi({ baseUrl: backend.baseUrl });
 let electronApp;
 async function until(check) {
@@ -71,6 +76,7 @@ try {
   await writeServerTranscript(meeting);
   await api.create("待开始的讨论");
   electronApp = await electron.launch({
+    ...(win7 ? { executablePath: legacyExecutable } : {}),
     args: [
       ...(process.platform === "linux" && process.getuid?.() === 0
         ? ["--no-sandbox"]
@@ -78,7 +84,7 @@ try {
       "--use-fake-device-for-media-stream",
       "--use-fake-ui-for-media-stream",
       `--user-data-dir=${path.join(profileDir, "chromium")}`,
-      ".",
+      ...(!win7 ? ["."] : []),
     ],
     cwd: rootDir,
     env: {
@@ -102,6 +108,18 @@ try {
   const bootstrap = await page.evaluate(() =>
     window.meetingDesktop.getBootstrap(),
   );
+  assert.equal(bootstrap.versions.electron, win7 ? "22.3.27" : "35.7.5");
+  assert.equal(await page.evaluate(() => typeof AbortSignal.any), "function");
+  // Exercise cancellation of a real request on Chromium 108, where any() is polyfilled.
+  assert.equal(await page.evaluate(async () => {
+    const controller = new AbortController();
+    const reason = new DOMException("Cancelled by test", "AbortError");
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]);
+    controller.abort(reason);
+    try { await fetch("http://127.0.0.1:1", { signal }); }
+    catch (error) { return error.name === "AbortError" && signal.reason === reason; }
+    return false;
+  }), true);
   assert.equal("sessions" in bootstrap, false);
   assert.equal(
     await page.evaluate(() => typeof window.meetingDesktop.saveSession),
@@ -265,6 +283,15 @@ try {
   await go("会议管理");
   await page.getByRole("button", { name: "新建会议", exact: true }).click();
   const dialog = page.getByRole("dialog");
+  const dialogStyles = await dialog.evaluate((element) => {
+    const style = getComputedStyle(element);
+    const context = document.createElement("canvas").getContext("2d");
+    context.fillStyle = style.backgroundColor;
+    context.fillRect(0, 0, 1, 1);
+    return { background: [...context.getImageData(0, 0, 1, 1).data], position: style.position };
+  });
+  assert.deepEqual(dialogStyles.background, [255, 255, 255, 255]);
+  assert.equal(dialogStyles.position, "fixed");
   await dialog
     .getByLabel("会议名称", { exact: true })
     .fill("桌面 PCM 录音验证");
@@ -290,6 +317,27 @@ try {
   const [recorded] = await api.list({ title: "桌面 PCM 录音验证" });
   assert.equal(recorded.department_name, "研发中心");
   assert.equal(recorded.status, "ended");
+  const wavPath = path.join(profileDir, "recording.wav");
+  // Electron 22 lacks CDP download context management; observe the native API.
+  await electronApp.evaluate(({ BrowserWindow }, downloadPath) => {
+    globalThis.recordingDownload = null;
+    BrowserWindow.getAllWindows()[0].webContents.session.once("will-download", (_, item) => {
+      item.setSavePath(downloadPath);
+      item.once("done", (_, state) => {
+        globalThis.recordingDownload = { state, filename: item.getFilename() };
+      });
+    });
+  }, wavPath);
+  await page.getByRole("button", { name: "导出录音（WAV）", exact: true }).click();
+  await until(() => electronApp.evaluate(() => Boolean(globalThis.recordingDownload)));
+  assert.deepEqual(await electronApp.evaluate(() => globalThis.recordingDownload), {
+    state: "completed", filename: "桌面 PCM 录音验证-录音.wav",
+  });
+  const bytes = await fs.readFile(wavPath);
+  assert.ok(bytes.length > 44);
+  assert.equal(bytes.toString("ascii", 0, 4), "RIFF");
+  assert.equal(bytes.toString("ascii", 8, 12), "WAVE");
+  assert.equal(bytes.length, bytes.readUInt32LE(4) + 8);
 
   await page
     .locator(".sidebar-bottom")
@@ -368,10 +416,14 @@ try {
   assert.deepEqual(errors, []);
   const report = {
     timestamp: new Date().toISOString(),
+    electron: bootstrap.versions.electron,
+    chromium: bootstrap.versions.chrome,
+    platform: process.platform,
     result: "passed",
     temporaryProfile: true,
     checks: [
       "Production file:// PCM16 capture at 1 second",
+      "Native WAV download and renderer request cancellation",
       "Department CRUD and meeting assignment",
       "Combined department/date/status/title filters",
       "Server list refresh and latest transcript/summary query",

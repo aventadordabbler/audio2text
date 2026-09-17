@@ -10,18 +10,23 @@
   },
   "private": true,
   "type": "module",
-  "main": "electron/main.js",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\"",
     "dev:renderer": "vite",
     "dev:electron": "wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .",
     "build": "tsc --noEmit && vite build",
+    "build:win7": "tsc --noEmit && vite build --mode win7",
     "start": "electron .",
     "icons": "node scripts/generate-icons.mjs",
     "test:integration": "node scripts/integration-check.mjs",
     "test:protocol": "node --test scripts/meeting-protocol.test.mjs scripts/meeting-events.test.mjs",
     "test:ai": "node --test scripts/ai-client.test.mjs",
     "test:e2e": "node scripts/electron-e2e.mjs",
+    "test:e2e:win7": "node scripts/electron-e2e.mjs --win7",
+    "pack:win7": "npm run build:win7 && electron-builder --config electron-builder.win7.cjs --dir --x64 --publish never",
+    "dist:win7": "npm run build:win7 && electron-builder --config electron-builder.win7.cjs --win nsis portable --x64 --publish never",
+    "dist:win:all": "npm run dist:win && npm run dist:win7",
     "pack": "npm run build && electron-builder --dir --publish never",
     "dist:win": "npm run build && electron-builder --win nsis portable --publish never"
   },
@@ -46,12 +51,16 @@
     "@vitejs/plugin-react": "6.1.1",
     "concurrently": "^9.1.2",
     "cross-env": "^7.0.3",
-    "electron": "^35.3.0",
+    "culori": "4.0.2",
+    "electron": "35.7.5",
     "electron-builder": "^26.0.12",
     "playwright": "^1.59.1",
     "png-to-ico": "^3.0.1",
+    "postcss": "8.5.6",
     "sharp": "^0.34.5",
     "tailwindcss": "4.3.3",
+    "tailwindcss-animate": "1.0.7",
+    "tailwindcss-v3": "npm:tailwindcss@3.4.17",
     "typescript": "5.9.3",
     "vite": "8.3.0",
     "wait-on": "^8.0.3"
@@ -71,7 +80,7 @@
       "package.json"
     ],
     "extraMetadata": {
-      "main": "electron/main.js"
+      "main": "electron/main.cjs"
     },
     "publish": [
       {

@@ -1,13 +1,13 @@
-FROM ghcr.io/astral-sh/uv:0.11.11 AS uv
+FROM quantitative.io/library/uv:0.11.26 AS uv
 
-FROM node:24-slim AS frontend
+FROM quantitative.io/library/node:24-slim AS frontend
 WORKDIR /frontend
 COPY web/package.json web/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY web ./
 RUN npm run build
 
-FROM python:3.12-slim
+FROM quantitative.io/library/python:3.12-slim
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 libsndfile1 ffmpeg \
     && rm -rf /var/lib/apt/lists/*

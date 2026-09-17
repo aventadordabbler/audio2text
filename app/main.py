@@ -7,10 +7,10 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import quote
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import AwareDatetime, BaseModel, Field, field_validator
 
@@ -22,6 +22,7 @@ from .model_configs import ModelConfigInput, ModelConfigStore, ModelKind
 from .model_probe import ModelProbeResult, probe_model
 from .meeting_events import MeetingEvents
 from .diarization.service import DiarizationService
+from .recordings import AudioExportInvalid, AudioExportUnavailable, prepare_wav_export
 
 logger = logging.getLogger(__name__)
 WEB_DIR = Path(__file__).resolve().parent.parent / "web" / "dist"
@@ -206,6 +207,29 @@ def create_app(
             meeting["text"] + "\n", media_type="text/plain; charset=utf-8",
             headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(meeting['title'] + '.txt', safe='')}"},
         )
+
+    @app.head("/api/meetings/{meeting_id}/audio/download")
+    @app.get("/api/meetings/{meeting_id}/audio/download")
+    def download_audio(meeting_id: str, request: Request) -> Response:
+        meeting = get_meeting(meeting_id)
+        try:
+            export = prepare_wav_export(store.directory(meeting_id))
+        except AudioExportUnavailable as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except AudioExportInvalid as exc:
+            logger.exception("Invalid audio archive for meeting %s", meeting_id)
+            raise HTTPException(500, "录音归档无法导出，请检查数据目录") from exc
+        headers = {
+            "Content-Length": str(export.content_length),
+            "Cache-Control": "no-store",
+            "Content-Disposition": (
+                "attachment; "
+                f"filename*=UTF-8''{quote(meeting['title'] + '-录音.wav', safe='')}"
+            ),
+        }
+        if request.method == "HEAD":
+            return Response(media_type="audio/wav", headers=headers)
+        return StreamingResponse(export.iter_bytes(), media_type="audio/wav", headers=headers)
 
     @app.websocket("/ws/meetings/{meeting_id}")
     async def recognize_meeting(websocket: WebSocket, meeting_id: str) -> None:

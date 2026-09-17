@@ -7,6 +7,8 @@ services:
       DATA_DIR: /app/data/archives
       ASR_TOKENIZER: ${ASR_TOKENIZER:-/app/data/tokenizers/qwen}
       ASR_SEND_CHAT_TEMPLATE: ${ASR_SEND_CHAT_TEMPLATE:-false}
+      ASR_WINDOW_SECONDS: ${ASR_WINDOW_SECONDS:-5}
+      ASR_STRIDE_SECONDS: ${ASR_STRIDE_SECONDS:-2}
       DIARIZATION_MODEL_DIR: /app/models/diarization
       DIARIZATION_SEGMENTATION_DIR: /app/models/pyannote/segmentation-3.0
       DIARIZATION_WORKERS: ${DIARIZATION_WORKERS:-1}

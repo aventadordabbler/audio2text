@@ -592,7 +592,8 @@ input {
 }
 .meeting-filters .search-field,
 .filter-field > input,
-.filter-field > [data-slot="select-trigger"] {
+.filter-field > [data-slot="select-trigger"],
+#department-input {
   width: 100%;
   min-width: 0;
   height: 36px;

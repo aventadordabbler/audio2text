@@ -99,6 +99,19 @@ class MeetingStore:
         result = dict(row)
         try:
             directory = self.path.parent / "meetings" / row["id"]
+            result["audio_available"] = False
+            manifest_path = directory / "audio" / "manifest.json"
+            if manifest_path.exists():
+                try:
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    result["audio_available"] = (
+                        isinstance(manifest, dict)
+                        and isinstance(manifest.get("samples"), int)
+                        and manifest["samples"] > 0
+                    )
+                except (OSError, UnicodeError, json.JSONDecodeError):
+                    # The export endpoint reports malformed archives explicitly.
+                    result["audio_available"] = False
             if (directory / "transcript.json").exists() or (directory / "events.jsonl").exists():
                 document = self.transcript(row["id"]).read()
                 result.update(text=plain_text(document), segments=document["segments"],

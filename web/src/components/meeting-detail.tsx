@@ -30,6 +30,7 @@ import { MeetingMinutes } from "./meeting-minutes"
 import { MeetingStatusBadge } from "./meeting-status"
 import { errorMessage, formatDate, formatDuration, languageLabels } from "@/lib/meetings"
 import { RecordingSession } from "@/lib/recording-session"
+import { downloadRecording } from "@/lib/recording-download"
 
 export function MeetingDetail({
   session,
@@ -46,6 +47,7 @@ export function MeetingDetail({
   const meeting = state.meeting!
   const [autoScroll, setAutoScroll] = useState(true)
   const [copied, setCopied] = useState(false)
+  const [exportingAudio, setExportingAudio] = useState(false)
   const [now, setNow] = useState(Date.now())
   const [activeTab, setActiveTab] = useState(meeting.status === "ended" ? "minutes" : "transcript")
   const previousStatus = useRef(meeting.status)
@@ -102,6 +104,18 @@ export function MeetingDetail({
       copyTimeout.current = setTimeout(() => setCopied(false), 2000)
     } catch (error) {
       onError(`复制失败，请使用下载文本：${errorMessage(error)}`)
+    }
+  }
+
+  async function exportAudio() {
+    if (exportingAudio) return
+    setExportingAudio(true)
+    try {
+      await downloadRecording(meeting.id)
+    } catch (error) {
+      onError(`导出录音失败：${errorMessage(error)}`)
+    } finally {
+      setExportingAudio(false)
     }
   }
 
@@ -172,6 +186,13 @@ export function MeetingDetail({
                 <Download className="size-4" />
                 下载文本
               </a>
+            </Button>
+          )}
+          {meeting.audio_available && (
+            <Button variant="outline" className="download-heading shrink-0 gap-2 bg-white"
+              id="audio-download-button" disabled={exportingAudio} onClick={exportAudio}>
+              <Download className="size-4" />
+              {exportingAudio ? "正在准备…" : "导出录音（WAV）"}
             </Button>
           )}
         </div>

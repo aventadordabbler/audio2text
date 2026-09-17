@@ -1903,12 +1903,36 @@ button:disabled {
 }
 .meeting-filters [data-slot="input"],
 .meeting-filters [data-slot="select-trigger"],
+.management-dialog [data-slot="select-trigger"],
 .meeting-filters > [data-slot="button"] {
   width: 100%;
   min-width: 0;
   height: 36px;
   min-height: 36px;
   font-size: 12px;
+}
+.meeting-filter-menu {
+  --tw-translate-x: 0;
+  --tw-translate-y: 0;
+  width: var(--radix-select-trigger-width);
+  min-width: var(--radix-select-trigger-width);
+  max-height: min(280px, var(--radix-select-content-available-height));
+  padding: 4px;
+  translate: none;
+}
+.meeting-filter-menu [data-radix-select-viewport] {
+  height: auto;
+  min-width: 0;
+}
+.meeting-filter-menu [data-slot="select-item"] {
+  min-height: 32px;
+  padding: 6px 28px 6px 8px;
+  font-size: 12px;
+}
+.meeting-filter-menu [data-slot="select-item"] > span:last-child {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .management-page .history-table-card {
   min-height: 230px;
@@ -1980,9 +2004,6 @@ button:disabled {
   font-size: 12px;
   line-height: 1.7;
   color: #737373;
-}
-.management-dialog [data-slot="select-trigger"] {
-  width: 100%;
 }
 .sidebar-bottom > .nav-item {
   margin: 0 0 16px;

@@ -1,5 +1,7 @@
 # Meeting Float Desktop
 
+Windows 客户端保留两个构建版本：Electron 35.7.5 标准版，以及 Electron 22.3.27 的 Win7 64 位兼容版。构建命令与验证方式见 [WINDOWS-BUILDS.md](./WINDOWS-BUILDS.md)。
+
 ## UI
 
 The desktop follows the workspace design and frontend stack in `/root/project/pyproj/audio2text/web`:

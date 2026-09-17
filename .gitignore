@@ -18,7 +18,8 @@ __pycache__/
 .venv/
 .idea
 tests
-checks
+checks/*
+!checks/test_audio_export.py
 
 models
 wav_files
@@ -26,3 +27,6 @@ wav_files
 node_modules/
 web/dist/
 web/node_modules
+client/dist-win7/
+client/release/
+client/output/

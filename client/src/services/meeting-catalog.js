@@ -52,6 +52,7 @@ export function sessionFromMeeting(meeting, baseUrl, previous = {}) {
       ? new Date(meeting.ended_at).toLocaleString()
       : "",
     durationSeconds: meeting.duration_seconds || 0,
+    audioAvailable: Boolean(meeting.audio_available),
     transcript: transcriptRows(meeting),
     segments: meeting.segments || [],
     speakers: meeting.speakers || {},

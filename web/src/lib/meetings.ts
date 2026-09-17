@@ -28,6 +28,7 @@ export interface Meeting {
   updated_at: string
   ended_at: string | null
   duration_seconds: number
+  audio_available: boolean
   segments: TranscriptSegment[]
   speakers: Record<string, { name: string }>
   transcript_revision: number

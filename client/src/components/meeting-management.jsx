@@ -55,9 +55,16 @@ export function DepartmentSelect({
       <span>{label}</span>
       <Select value={value} onValueChange={onChange} disabled={disabled}>
         <SelectTrigger aria-label={label}>
-          <SelectValue />
+          <SelectValue className="min-w-0" />
         </SelectTrigger>
-        <SelectContent>
+        <SelectContent
+          position="popper"
+          side="bottom"
+          align="start"
+          sideOffset={4}
+          avoidCollisions={false}
+          className="meeting-filter-menu"
+        >
           {all && <SelectItem value="all">全部部门</SelectItem>}
           <SelectItem value="unassigned">未分类</SelectItem>
           {departments.map((item) => (
@@ -299,7 +306,14 @@ export function MeetingManagement({
             <SelectTrigger aria-label="会议状态">
               <SelectValue />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent
+              position="popper"
+              side="bottom"
+              align="start"
+              sideOffset={4}
+              avoidCollisions={false}
+              className="meeting-filter-menu"
+            >
               <SelectItem value="all">全部状态</SelectItem>
               {Object.entries(MEETING_STATUS_LABELS).map(([value, label]) => (
                 <SelectItem key={value} value={value}>

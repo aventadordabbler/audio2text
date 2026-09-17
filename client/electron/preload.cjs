@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("meetingDesktop", {
+  downloadAudio: (url) => ipcRenderer.invoke("desktop:download-audio", url),
   getBootstrap: () => ipcRenderer.invoke("desktop:get-bootstrap"),
   saveConfig: (config) => ipcRenderer.invoke("desktop:save-config", config),
   getWindowState: () => ipcRenderer.invoke("desktop:get-window-state"),

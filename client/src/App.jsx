@@ -24,6 +24,7 @@ import {
   Save,
   Sparkles,
   ArrowUpRight,
+  Download,
 } from "lucide-react";
 import {
   WorkspaceBrand,
@@ -187,6 +188,7 @@ export function App() {
   const [isRecording, setIsRecording] = useState(false);
   const [diarizationReady, setDiarizationReady] = useState(null);
   const [retryingDiarization, setRetryingDiarization] = useState(false);
+  const [exportingAudio, setExportingAudio] = useState(false);
   const [startedAtMs, setStartedAtMs] = useState(0);
   const [elapsedLabel, setElapsedLabel] = useState("00:00:00");
   const [reportTask, setReportTask] = useState({
@@ -591,6 +593,20 @@ export function App() {
 
     if (event.type === "error" && event.text) {
       appendError(event.text);
+    }
+  }
+
+  async function exportAudio() {
+    const target = sessionRef.current;
+    if (!meetingApi || !target?.remoteMeetingId || exportingAudio) return;
+    setExportingAudio(true);
+    try {
+      await meetingApi.downloadAudio(target.remoteMeetingId);
+      setStatusLine("已发起录音下载，请在保存窗口中选择位置");
+    } catch (error) {
+      setStatusLine(`导出录音失败：${error.message}`);
+    } finally {
+      setExportingAudio(false);
     }
   }
 
@@ -1169,6 +1185,18 @@ export function App() {
                   >
                     <ArrowUpRight size={15} />
                     查看会议总结
+                  </Button>
+                )}
+                {session?.audioAvailable && meetingApi && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="heading-action"
+                    disabled={exportingAudio}
+                    onClick={exportAudio}
+                  >
+                    <Download size={15} />
+                    {exportingAudio ? "正在准备…" : "导出录音（WAV）"}
                   </Button>
                 )}
               </div>

@@ -8,6 +8,7 @@ sys.path.insert(0, os.environ["AUDIO2TEXT_DIR"])
 from app.asr import ASRError
 from app.config import Settings
 from app.main import create_app
+from app.recordings import PCMNormalizer
 import uvicorn
 
 
@@ -73,6 +74,27 @@ class TestMinutesGenerator:
         return f"# {title}\n\n## 核心结论\n\n{transcript}\n\n| 待办事项 | 负责人 |\n| --- | --- |\n| 确认下一步安排 | 项目组 |"
 
 
+class TestRecordedStream(TestStream):
+    """Use the real archive for desktop WAV download checks, with fixture ASR."""
+
+    def bind_recording(self, archive, next_segment, notify=None):
+        self.archive = archive
+        self.segment = next_segment
+
+    async def start(self, language, sample_rate):
+        await super().start(language, sample_rate)
+        self.normalizer = PCMNormalizer(sample_rate)
+
+    async def send_audio(self, audio):
+        if audio and len(audio) % 2 == 0 and not audio.startswith(b"TEST"):
+            self.archive.append(self.normalizer.feed(audio))
+        await super().send_audio(audio)
+
+    async def flush(self):
+        self.archive.append(self.normalizer.flush())
+        await super().flush()
+
+
 settings = Settings(_env_file=None, data_dir=Path(os.environ["DATA_DIR"]))
 generator = TestMinutesGenerator()
 
@@ -89,7 +111,16 @@ class TestWorker:
 
 
 controlled = os.environ.get("DESKTOP_TEST_DIARIZATION") == "1"
-app = create_app(settings, TestStream, generator, TestWorker if controlled else None)
+archive_audio = os.environ.get("DESKTOP_TEST_ARCHIVE") == "1"
+
+
+class TestUnavailableWorker(TestWorker):
+    def readiness(self):
+        return "桌面录音测试不加载说话人模型"
+
+
+app = create_app(settings, TestRecordedStream if archive_audio else TestStream, generator,
+                 TestWorker if controlled else TestUnavailableWorker if archive_audio else None)
 if controlled:
     # Only this localhost test process exposes controls. Real routes, durable
     # revisions, job scheduling and minutes generation still run unchanged.
