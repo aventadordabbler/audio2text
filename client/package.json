@@ -68,8 +68,8 @@
     "wait-on": "^8.0.3"
   },
   "build": {
-    "appId": "com.meetingfloat.desktop",
-    "productName": "Meeting Float Desktop",
+    "appId": "com.quantitative.desktop",
+    "productName": "Meeting Assistant Desktop",
     "asar": true,
     "directories": {
       "output": "release"
@@ -99,17 +99,17 @@
         "nsis",
         "portable"
       ],
-      "artifactName": "meeting-float-desktop-${version}-${target}.${ext}"
+      "artifactName": "meeting-assistant-desktop-${version}-${target}.${ext}"
     },
     "portable": {
-      "artifactName": "meeting-float-desktop-${version}-portable.${ext}"
+      "artifactName": "meeting-assistant-desktop-${version}-portable.${ext}"
     },
     "nsis": {
       "installerIcon": "assets/icon.ico",
       "uninstallerIcon": "assets/icon.ico",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "artifactName": "meeting-float-desktop-${version}-setup.${ext}"
+      "artifactName": "meeting-assistant-${version}-setup.${ext}"
     }
   },
   "overrides": {
