@@ -2000,6 +2000,10 @@ button:disabled {
   max-height: calc(100vh - 60px);
   overflow-y: auto;
 }
+.window-close-dialog {
+  width: calc(100vw - 32px);
+  max-width: 420px;
+}
 .management-help {
   font-size: 12px;
   line-height: 1.7;

@@ -5,7 +5,6 @@ const {
   BrowserWindow,
   Tray,
   Menu,
-  dialog,
   ipcMain,
   nativeImage,
   session,
@@ -30,6 +29,8 @@ let tray = null;
 let pendingMinutesPayload = null;
 let rendererSession;
 let isQuitting = false;
+let closeRequested = false;
+let closeConfirmed = false;
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -133,6 +134,8 @@ function emitMainWindowState() {
 }
 
 function createMainWindow() {
+  closeRequested = false;
+  closeConfirmed = false;
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 720,
@@ -161,41 +164,16 @@ function createMainWindow() {
   mainWindow.on("unmaximize", emitMainWindowState);
   mainWindow.on("restore", emitMainWindowState);
 
-  let closeConfirmed = false;
-  let closePromptOpen = false;
-  mainWindow.on("close", async (event) => {
+  mainWindow.on("close", (event) => {
     if (isQuitting || closeConfirmed) return;
     event.preventDefault();
-    if (closePromptOpen) return;
-
-    const window = mainWindow;
-    closePromptOpen = true;
-    try {
-      const { response } = await dialog.showMessageBox(window, {
-        type: "question",
-        title: "关闭窗口",
-        message: "关闭窗口还是最小化？",
-        detail: "关闭窗口将停止当前录音；最小化后应用和录音会继续运行。",
-        buttons: ["最小化窗口", "关闭窗口", "取消"],
-        defaultId: 0,
-        cancelId: 2,
-        noLink: true,
-      });
-      if (isQuitting || window.isDestroyed()) return;
-      if (response === 0) {
-        window.minimize();
-      } else if (response === 1) {
-        closeConfirmed = true;
-        window.close();
-      }
-    } catch (error) {
-      console.error("Failed to show window close confirmation:", error);
-    } finally {
-      closePromptOpen = false;
-    }
+    if (closeRequested) return;
+    closeRequested = true;
+    mainWindow.webContents.send("desktop:close-requested");
   });
 
   mainWindow.on("closed", () => {
+    closeRequested = false;
     mainWindow = null;
   });
 
@@ -269,6 +247,29 @@ function setupTray() {
 }
 
 function registerIpc() {
+  ipcMain.on("desktop:close-dialog-ready", ({ sender }) => {
+    // Replay a close request made before the renderer mounted or while it reloaded.
+    if (sender === mainWindow?.webContents && closeRequested) {
+      sender.send("desktop:close-requested");
+    }
+  });
+  ipcMain.handle("desktop:respond-close-window", ({ sender }, action) => {
+    if (
+      sender !== mainWindow?.webContents ||
+      !closeRequested ||
+      !["cancel", "minimize", "close"].includes(action)
+    ) {
+      return { ok: false };
+    }
+    closeRequested = false;
+    if (action === "minimize") {
+      mainWindow.minimize();
+    } else if (action === "close") {
+      closeConfirmed = true;
+      mainWindow.close();
+    }
+    return { ok: true };
+  });
   ipcMain.handle("desktop:download-audio", ({ sender }, value) => {
     const url = new URL(value);
     if (!["http:", "https:"].includes(url.protocol)) {

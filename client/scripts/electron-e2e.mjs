@@ -409,52 +409,68 @@ try {
   assert.ok(!/界面验证会议|桌面 PCM|转写来自|核心结论|旧本地/.test(stored));
   assert.deepEqual(await page.evaluate(() => Object.keys(localStorage)), []);
 
-  // Exercise the real close event and IPC while controlling the native dialog choice.
+  // Exercise the real in-app dialog, including native close requests such as Alt+F4.
   const mainWindowId = await (await electronApp.browserWindow(page)).evaluate((window) => window.id);
-  await electronApp.evaluate(({ BrowserWindow, dialog }, windowId) => {
-    const state = { windowId, prompts: [], minimizeCount: 0, resolve: null };
+  await electronApp.evaluate(({ BrowserWindow }, windowId) => {
+    const state = { windowId, minimizeCount: 0 };
     globalThis.closeConfirmationTest = state;
-    dialog.showMessageBox = (window, options) => {
-      state.prompts.push({ windowId: window.id, ...options });
-      return new Promise((resolve) => { state.resolve = resolve; });
-    };
     const window = BrowserWindow.fromId(windowId);
     const minimize = window.minimize.bind(window);
     window.minimize = () => { state.minimizeCount++; minimize(); };
   }, mainWindowId);
+  const closeDialog = page.getByRole("dialog", { name: "关闭窗口", exact: true });
   await page.getByRole("button", { name: "关闭窗口", exact: true }).click();
-  await until(() => electronApp.evaluate(() => globalThis.closeConfirmationTest.prompts.length === 1));
-  const prompt = await electronApp.evaluate(({ BrowserWindow }) => {
-    // A repeated native close (e.g. Alt+F4) must not create another prompt.
-    BrowserWindow.fromId(globalThis.closeConfirmationTest.windowId).close();
-    return globalThis.closeConfirmationTest.prompts[0];
+  await closeDialog.waitFor();
+  assert.equal(await closeDialog.getByRole("button", { name: "最小化窗口", exact: true }).evaluate((button) => button === document.activeElement), true);
+  for (const [width, height] of [[840, 700], [1280, 720]]) {
+    await electronApp.evaluate(({ BrowserWindow }, { windowId, width, height }) => {
+      BrowserWindow.fromId(windowId).setSize(width, height);
+    }, { windowId: mainWindowId, width, height });
+    await page.waitForFunction((width) => innerWidth === width, width);
+    await until(() => closeDialog.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return Math.abs(rect.x + rect.width / 2 - innerWidth / 2) < 1 &&
+        Math.abs(rect.y + rect.height / 2 - innerHeight / 2) < 1;
+    }));
+  }
+  const closeStyles = await closeDialog.evaluate((element) => {
+    const style = getComputedStyle(element);
+    const canvas = document.createElement("canvas").getContext("2d");
+    canvas.fillStyle = style.backgroundColor;
+    canvas.fillRect(0, 0, 1, 1);
+    return { background: [...canvas.getImageData(0, 0, 1, 1).data], position: style.position };
   });
-  assert.deepEqual(prompt.buttons, ["最小化窗口", "关闭窗口", "取消"]);
-  assert.equal(prompt.windowId, mainWindowId);
-  assert.equal(prompt.cancelId, 2);
-  assert.equal(prompt.defaultId, 0);
-  assert.equal(await electronApp.evaluate(() => globalThis.closeConfirmationTest.prompts.length), 1);
-  await electronApp.evaluate(() => globalThis.closeConfirmationTest.resolve({ response: 2 }));
+  assert.deepEqual(closeStyles, dialogStyles);
+  await screenshot("electron-close-confirmation.png");
+  await electronApp.evaluate(({ BrowserWindow }, windowId) => BrowserWindow.fromId(windowId).close(), mainWindowId);
+  assert.equal(await closeDialog.count(), 1);
+  assert.deepEqual(await minutesPage.evaluate(() => window.meetingDesktop.respondCloseWindow("close")), { ok: false });
+  await page.keyboard.press("Escape");
+  await closeDialog.waitFor({ state: "hidden" });
   assert.equal(electronApp.windows().length, 2);
   assert.equal(page.isClosed(), false);
 
-  // Native close and the titlebar close button share the same confirmation.
-  await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.fromId(globalThis.closeConfirmationTest.windowId).close());
-  await until(() => electronApp.evaluate(() => globalThis.closeConfirmationTest.prompts.length === 2));
-  await electronApp.evaluate(() => globalThis.closeConfirmationTest.resolve({ response: 0 }));
+  await electronApp.evaluate(({ BrowserWindow }, windowId) => BrowserWindow.fromId(windowId).close(), mainWindowId);
+  await closeDialog.getByRole("button", { name: "取消", exact: true }).click();
+  await closeDialog.waitFor({ state: "hidden" });
+  await page.getByRole("button", { name: "关闭窗口", exact: true }).click();
+  await closeDialog.getByRole("button", { name: "最小化窗口", exact: true }).click();
   await until(() => electronApp.evaluate(() => globalThis.closeConfirmationTest.minimizeCount === 1));
   assert.equal(page.isClosed(), false);
-  await electronApp.evaluate(({ BrowserWindow }) => {
-    const window = BrowserWindow.fromId(globalThis.closeConfirmationTest.windowId);
+  await electronApp.evaluate(({ BrowserWindow }, windowId) => {
+    const window = BrowserWindow.fromId(windowId);
     window.restore();
     window.show();
     window.focus();
-  });
+  }, mainWindowId);
+  await closeDialog.waitFor({ state: "hidden" });
   await page.getByRole("button", { name: "关闭窗口", exact: true }).click();
-  await until(() => electronApp.evaluate(() => globalThis.closeConfirmationTest.prompts.length === 3));
   await Promise.all([
     page.waitForEvent("close"),
-    electronApp.evaluate(() => globalThis.closeConfirmationTest.resolve({ response: 1 })),
+    closeDialog.getByRole("button", { name: "关闭窗口", exact: true }).click().catch((error) => {
+      // Electron can destroy the renderer before Playwright receives the click reply.
+      if (!page.isClosed()) throw error;
+    }),
   ]);
   assert.equal(electronApp.windows().length, 1);
   assert.deepEqual(errors, []);
@@ -477,7 +493,8 @@ try {
       "Server LLM settings",
       "Minimum window layout",
       "Separate summary window and confirmed close",
-      "Close cancellation, minimization and duplicate prompt prevention",
+      "Styled close dialog centered at minimum and normal window sizes",
+      "Escape/cancel, minimization, confirmed close and duplicate prompt prevention",
     ],
     pageErrors: errors,
     notes: [

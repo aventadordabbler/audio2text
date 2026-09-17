@@ -8,11 +8,19 @@ contextBridge.exposeInMainWorld("meetingDesktop", {
   minimizeWindow: () => ipcRenderer.invoke("desktop:minimize-window"),
   toggleMaximize: () => ipcRenderer.invoke("desktop:toggle-maximize"),
   closeWindow: () => ipcRenderer.invoke("desktop:close-window"),
+  respondCloseWindow: (action) =>
+    ipcRenderer.invoke("desktop:respond-close-window", action),
   minimizeToTray: () => ipcRenderer.invoke("desktop:minimize-to-tray"),
   closeApp: () => ipcRenderer.invoke("desktop:close-app"),
   openMinutesWindow: (payload) =>
     ipcRenderer.invoke("desktop:open-minutes-window", payload),
   getMinutesPayload: () => ipcRenderer.invoke("desktop:get-minutes-payload"),
+  onCloseRequested: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on("desktop:close-requested", listener);
+    ipcRenderer.send("desktop:close-dialog-ready");
+    return () => ipcRenderer.removeListener("desktop:close-requested", listener);
+  },
   onWindowStateChange: (callback) => {
     const listener = (_, payload) => callback(payload);
     ipcRenderer.on("desktop:window-state", listener);
