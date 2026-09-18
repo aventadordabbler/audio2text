@@ -1,7 +1,19 @@
 const MAX_BUBBLES = 2;
+const DEFAULT_EXCERPT_CHARACTERS = 80;
 
 function summaryKey(summary) {
   return `${summary.start_seconds}:${summary.end_seconds}`;
+}
+
+export function summaryExcerpt(
+  text,
+  maxCharacters = DEFAULT_EXCERPT_CHARACTERS,
+) {
+  const normalized = String(text || "").replace(/\s+/g, " ").trim();
+  const characters = Array.from(normalized);
+  return characters.length > maxCharacters
+    ? `${characters.slice(0, maxCharacters).join("")}…`
+    : normalized;
 }
 
 export function createStageSummaryBubbleState() {

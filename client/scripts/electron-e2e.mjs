@@ -350,7 +350,31 @@ try {
     .getByLabel("阶段总结气泡")
     .getByText(/阶段总结 \d+-\d+ 秒/)
     .waitFor();
+  const latestStageBubble = page
+    .getByLabel("阶段总结气泡")
+    .locator("section.stage-summary-bubble")
+    .last();
+  const stageCopy = latestStageBubble.locator(".stage-summary-bubble-copy");
+  const collapsedStageText = await stageCopy.textContent();
+  assert.equal(Array.from(collapsedStageText).length, 81);
+  assert.equal(collapsedStageText.endsWith("…"), true);
   await screenshot("electron-stage-summary-bubbles.png");
+  await latestStageBubble
+    .getByRole("button", { name: "展开全文", exact: true })
+    .click();
+  assert.equal(Array.from(await stageCopy.textContent()).length > 80, true);
+  await latestStageBubble
+    .getByRole("button", { name: "收起", exact: true })
+    .click();
+  for (const removedText of [
+    "会议服务同步",
+    "转写与总结均由服务端保存",
+    "从讨论到行动",
+    "实时转写保留完整记录，会议总结帮你梳理重点与下一步。",
+    "管理模型设置",
+  ]) {
+    assert.equal(await page.getByText(removedText, { exact: true }).count(), 0);
+  }
   await page.getByRole("tab", { name: "会议总结", exact: true }).click();
   await page.getByRole("heading", { name: "核心结论", exact: true }).waitFor();
   const [recorded] = await api.list({ title: "桌面 PCM 录音验证" });

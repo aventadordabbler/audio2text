@@ -88,7 +88,10 @@ class TestMinutesGenerator:
 
 class TestStageSummaryGenerator:
     async def generate(self, title, transcript, start_seconds, end_seconds):
-        return f"阶段总结 {start_seconds:g}-{end_seconds:g} 秒：{transcript}"
+        return (
+            f"阶段总结 {start_seconds:g}-{end_seconds:g} 秒：{transcript} "
+            + "完整阶段内容。" * 20
+        )
 
 
 class TestRecordedStream(TestStream):

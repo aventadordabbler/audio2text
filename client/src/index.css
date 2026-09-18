@@ -418,22 +418,6 @@ button:disabled {
   margin-top: auto;
   padding: 28px 9px 0;
 }
-.workspace-note {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  color: #737373;
-  font-size: 10px;
-}
-.workspace-note svg {
-  margin-top: 1px;
-}
-.workspace-note small {
-  display: block;
-  margin-top: 5px;
-  color: #a3a3a3;
-  font-size: 10px;
-}
 .main-workspace {
   display: flex;
   flex-direction: column;
@@ -729,22 +713,28 @@ button:disabled {
 }
 .stage-summary-bubbles {
   position: absolute;
-  right: 18px;
+  right: 2.5%;
   bottom: 54px;
   z-index: 4;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
+  justify-content: flex-end;
   gap: 10px;
-  width: min(380px, calc(100% - 36px));
+  width: 42%;
+  height: 70%;
   pointer-events: none;
 }
 .stage-summary-bubble {
+  display: flex;
+  flex-direction: column;
   width: 100%;
+  min-height: 0;
+  max-height: calc((100% - 10px) / 2);
   overflow: hidden;
   border: 1px solid #dededb;
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.97);
+  background: rgba(255, 255, 255, 0.8);
   box-shadow: 0 12px 30px rgba(23, 23, 23, 0.12);
   pointer-events: auto;
   transform-origin: bottom right;
@@ -756,6 +746,7 @@ button:disabled {
 }
 .stage-summary-bubble > header {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -781,25 +772,34 @@ button:disabled {
   white-space: nowrap;
 }
 .stage-summary-bubble-body {
-  max-height: 150px;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
-.stage-summary-bubble .minutes-document {
+.stage-summary-bubble-body--expanded {
+  scroll-behavior: smooth;
+}
+.stage-summary-bubble-copy {
+  margin: 0;
   padding: 12px 14px;
+  overflow-wrap: anywhere;
   font-size: 12px;
   line-height: 1.65;
+  white-space: pre-wrap;
 }
-.stage-summary-bubble .minutes-document h1,
-.stage-summary-bubble .minutes-document h2,
-.stage-summary-bubble .minutes-document h3 {
-  margin: 10px 0 6px;
-  font-size: 12px;
+.stage-summary-bubble-toggle {
+  flex-shrink: 0;
+  width: 100%;
+  padding: 7px 14px;
+  border-top: 1px solid #eeeeec;
+  color: #737373;
+  background: #fafafa;
+  font-size: 10px;
+  text-align: right;
 }
-.stage-summary-bubble .minutes-document p,
-.stage-summary-bubble .minutes-document ul,
-.stage-summary-bubble .minutes-document ol {
-  margin: 6px 0;
+.stage-summary-bubble-toggle:hover {
+  color: #171717;
+  background: #f5f5f5;
 }
 .stage-summary-bubble-pending,
 .stage-summary-bubble-failure {
@@ -1010,33 +1010,6 @@ button:disabled {
 }
 .meeting-name-card .form-field > span {
   font-size: 11px;
-}
-.meeting-guide {
-  padding: 0 3px;
-}
-.meeting-guide > span {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 11px;
-  color: #737373;
-}
-.meeting-guide p {
-  font-size: 10px;
-  color: #a3a3a3;
-  line-height: 1.9;
-  margin-top: 8px;
-}
-.meeting-guide button {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 10px;
-  color: #737373;
-  margin-top: 9px;
-}
-.meeting-guide button:hover {
-  color: #171717;
 }
 .report-progress {
   padding: 14px;
@@ -1766,13 +1739,6 @@ button:disabled {
     order: 2;
     min-height: 200px;
   }
-  .stage-summary-bubbles {
-    right: 12px;
-    width: calc(100% - 24px);
-  }
-  .stage-summary-bubble-body {
-    max-height: 120px;
-  }
   .meeting-aside {
     order: 1;
     padding-top: 0;
@@ -1815,7 +1781,6 @@ button:disabled {
   .audio-wave,
   .recording-hint,
   .microphone-status,
-  .meeting-guide,
   .meeting-name-card {
     display: none;
   }
@@ -2205,9 +2170,6 @@ button:disabled {
   font-size: 12px;
   line-height: 1.7;
   color: #737373;
-}
-.sidebar-bottom > .nav-item {
-  margin: 0 0 16px;
 }
 .back-to-meetings {
   display: grid;

@@ -1134,12 +1134,6 @@ export function App() {
               <Settings size={16} />
               <span>模型设置</span>
             </button>
-            <div className="workspace-note">
-              <CheckCheck size={15} />
-              <span>
-                会议服务同步<small>转写与总结均由服务端保存</small>
-              </span>
-            </div>
           </div>
         </aside>
 
@@ -1597,17 +1591,6 @@ export function App() {
                       <p>转写与总结均保存在服务端，生成完成后会自动刷新。</p>
                     </Card>
                   )}
-                  <div className="meeting-guide">
-                    <span>
-                      <FileText size={15} />
-                      从讨论到行动
-                    </span>
-                    <p>实时转写保留完整记录，会议总结帮你梳理重点与下一步。</p>
-                    <button onClick={() => setActiveView("settings")}>
-                      管理模型设置
-                      <ChevronRight size={12} />
-                    </button>
-                  </div>
                 </div>
               </div>
             </section>

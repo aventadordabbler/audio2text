@@ -5,6 +5,7 @@ import {
   createStageSummaryBubbleState,
   removeStageSummaryBubble,
   reconcileStageSummaryBubbles,
+  summaryExcerpt,
 } from "../src/services/stage-summary-bubbles.js";
 
 function summary(start, status = "ready") {
@@ -15,6 +16,10 @@ function summary(start, status = "ready") {
     text: `第 ${start / 60 + 1} 阶段`,
   };
 }
+
+test("a stage summary bubble shows no more than 80 characters by default", () => {
+  assert.equal(summaryExcerpt("摘".repeat(81)), `${"摘".repeat(80)}…`);
+});
 
 test("an existing meeting opens with only its two latest stage summary bubbles", () => {
   const state = reconcileStageSummaryBubbles(
