@@ -5,8 +5,17 @@ import pytest
 
 from app.config import Settings
 from app.meetings import MeetingError, MeetingStore
+from app.minutes import SYSTEM_PROMPT
 from app.recordings import AudioArchive
-from app.stage_summaries import StageSummaryService
+from app.stage_summaries import STAGE_PROMPT, StageSummaryService
+
+
+def test_stage_prompt_requests_a_plain_conversation_summary():
+    assert "总结概括" in STAGE_PROMPT
+    assert "固定栏目" in STAGE_PROMPT
+    assert "按照用户指定的方式" in SYSTEM_PROMPT
+    for section in ("本阶段主题与进展", "已明确的结论或决策", "待办、风险"):
+        assert section not in STAGE_PROMPT
 
 
 async def until(check, timeout=2):

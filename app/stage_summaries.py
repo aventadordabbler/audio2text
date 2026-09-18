@@ -19,11 +19,10 @@ from .recordings import SAMPLE_RATE, read_audio_summary
 
 logger = logging.getLogger(__name__)
 
-STAGE_PROMPT = """请总结下面这一时间段的会议内容，使用简洁 Markdown，包含：
-- 本阶段主题与进展
-- 已明确的结论或决策
-- 待办、风险与尚未解决的问题
-没有依据的项目写“未提及”。不要重复会议名称或时间范围，不要添加开场说明。"""
+STAGE_PROMPT = """请对下面时间段内的聊天内容进行简洁、忠实的总结概括。
+只总结本阶段实际讨论的内容，不要按照预设目标、固定栏目或任务类型整理，
+也不要推断原文没有明确表达的信息。请使用自然连贯的中文段落，
+不要重复会议名称或时间范围，不要添加开场说明。"""
 
 
 def _timestamp() -> str:
