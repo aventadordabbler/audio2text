@@ -13,6 +13,9 @@ wheels/
 .agents
 data/archives/
 data/tokenizers/
+audio2text-data-*.tar.gz
+data.before-restore-*/
+.audio2text-restore.*/
 __pycache__/
 .pytest_cache/
 .venv/

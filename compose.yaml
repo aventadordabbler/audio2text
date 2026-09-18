@@ -3,12 +3,17 @@ services:
     build: .
     profiles: [app]
     container_name: audio2text-server
+    restart: unless-stopped
     environment:
       DATA_DIR: /app/data/archives
       ASR_TOKENIZER: ${ASR_TOKENIZER:-/app/data/tokenizers/qwen}
       ASR_SEND_CHAT_TEMPLATE: ${ASR_SEND_CHAT_TEMPLATE:-false}
       ASR_WINDOW_SECONDS: ${ASR_WINDOW_SECONDS:-5}
       ASR_STRIDE_SECONDS: ${ASR_STRIDE_SECONDS:-2}
+      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-16384}
+      LLM_CHUNK_CHARS: ${LLM_CHUNK_CHARS:-12000}
+      STAGE_SUMMARY_WINDOW_SECONDS: ${STAGE_SUMMARY_WINDOW_SECONDS:-300}
+      STAGE_SUMMARY_MAX_TOKENS: ${STAGE_SUMMARY_MAX_TOKENS:-1200}
       DIARIZATION_MODEL_DIR: /app/models/diarization
       DIARIZATION_SEGMENTATION_DIR: /app/models/pyannote/segmentation-3.0
       DIARIZATION_WORKERS: ${DIARIZATION_WORKERS:-1}
@@ -16,7 +21,7 @@ services:
       DIARIZATION_TIMEOUT_SECONDS: ${DIARIZATION_TIMEOUT_SECONDS:-120}
       DIARIZATION_FINAL_TIMEOUT_SECONDS: ${DIARIZATION_FINAL_TIMEOUT_SECONDS:-1800}
     ports:
-      - "8000:8000"
+      - "${APP_BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-8000}:8000"
     volumes:
       - ./data:/app/data
       - ${DIARIZATION_MODEL_DIR:-./models/diarization}:/app/models/diarization:ro
@@ -25,6 +30,7 @@ services:
     image: ${VLLM_IMAGE:-qwenllm/qwen3-asr:latest}
     container_name: audio2text-vllm
     profiles: [gpu]
+    restart: unless-stopped
     command:
       - qwen-asr-serve
       - ${VLLM_MODEL_PATH:-/models/qwen3-asr-1.7b}
@@ -40,7 +46,7 @@ services:
       - --max-model-len
       - ${VLLM_MAX_MODEL_LEN:-32768}
     ports:
-      - "8001:8001"
+      - "${VLLM_BIND_ADDRESS:-127.0.0.1}:${VLLM_PORT:-8001}:8001"
     volumes:
       - ./models:/models:ro
       - hf-cache:/root/.cache/huggingface

@@ -139,6 +139,8 @@ Qwen 模式在窗口内继续使用前缀回退；文件转写模式对相邻窗
 
 ## 部署方案
 
+生产环境的网络拓扑、HTTPS/WebSocket 代理、模型配置、备份恢复、升级回滚及客户端发布步骤见 [部署手册](docs/deployment.md)。
+
 ### 方案 A：应用服务 + 远程模型
 
 这是最简单的部署方式。应用运行在 CPU 服务器，ASR 和大语言模型地址填写可从该服务器访问的 OpenAI 兼容地址。
@@ -197,7 +199,7 @@ npm ci --prefix client
 npm run dev --prefix client
 ```
 
-Windows 标准版（Electron 35.7.5）安装包和便携版使用 `npm run dist:win --prefix client` 生成；Win7 64 位兼容版（Electron 22.3.27）使用 `npm run dist:win7 --prefix client`，输出到 `client/release/win7/`。同时生成两版可使用 `npm run dist:win:all --prefix client`。详见 [Windows 双版本构建说明](client/WINDOWS-BUILDS.md)。桌面客户端中的会议服务地址必须指向可访问的 FastAPI 服务。
+Windows 标准版（Electron 35.7.5）安装包和便携版使用 `npm run dist:win --prefix client` 生成；Win7 64 位兼容版（Electron 22.3.27）使用 `npm run dist:win7 --prefix client`，输出到 `client/release/win7/`。同时生成两版可使用 `npm run dist:win:all --prefix client`。详见 [部署手册](docs/deployment.md)。桌面客户端中的会议服务地址必须指向可访问的 FastAPI 服务。
 
 ## 配置
 
