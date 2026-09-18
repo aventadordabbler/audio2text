@@ -146,7 +146,20 @@ test("desktop shows delayed correction, retry, speaker replacements and stale mi
       await page.locator("tbody tr").filter({ hasText: "事件闭环" }).first().getByRole("button", { name: /^事件闭环/ }).click();
     };
     await open();
-    await page.getByLabel("说话人处理状态").getByText("正在校正说话人", { exact: true }).waitFor();
+    const speakerStatus = page.getByLabel("说话人处理状态");
+    const speakerStatusDotStyle = () =>
+      speakerStatus.locator(".speaker-status-dot").evaluate((element) => {
+        const style = getComputedStyle(element);
+        return {
+          animationName: style.animationName,
+          backgroundColor: style.backgroundColor,
+        };
+      });
+    await speakerStatus.getByText("正在校正说话人", { exact: true }).waitFor();
+    assert.deepEqual(
+      await speakerStatusDotStyle(),
+      { animationName: "live-pulse", backgroundColor: "rgb(34, 197, 94)" },
+    );
     await page.getByRole("tab", { name: "会议总结", exact: true }).click();
     await page.getByRole("heading", { name: "正在校正说话人", exact: true }).waitFor();
     assert.equal(await page.getByRole("button", { name: "生成总结", exact: true }).isDisabled(), true);
@@ -158,6 +171,14 @@ test("desktop shows delayed correction, retry, speaker replacements and stale mi
     await page.getByRole("heading", { name: "核心结论", exact: true }).waitFor();
     await page.getByRole("tab", { name: "实时转写", exact: true }).click();
     await page.getByRole("button", { name: "重试说话人校正", exact: true }).waitFor();
+    assert.match(
+      await speakerStatus.getAttribute("aria-label"),
+      /模拟校正失败，可重试/,
+    );
+    assert.deepEqual(
+      await speakerStatusDotStyle(),
+      { animationName: "none", backgroundColor: "rgb(245, 158, 11)" },
+    );
     const before = (await command(recorder, "stats")).minutes_calls;
     await command(recorder, "configure", {});
     await page.getByRole("button", { name: "重试说话人校正", exact: true }).click();

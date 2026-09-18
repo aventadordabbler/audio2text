@@ -973,6 +973,7 @@ export function App() {
   const correcting = ["queued", "running"].includes(session?.processing?.status);
   const summaryBusy =
     correcting || reportTask.running || session?.minutesStatus === "generating";
+  const processingStatus = session?.processing?.status;
   const processingText = {
     pending: "说话人标注中",
     queued: "等待校正说话人",
@@ -980,7 +981,26 @@ export function App() {
     ready: "说话人校正已完成",
     failed: "说话人校正未完成",
     unavailable: "说话人识别未就绪",
-  }[session?.processing?.status] || (diarizationReady?.available === false ? "说话人识别未就绪" : "");
+  }[processingStatus] ||
+    (diarizationReady?.available === false ? "说话人识别未就绪" : "");
+  const speakerStatusWarning =
+    ["failed", "unavailable"].includes(processingStatus) ||
+    (!processingStatus && diarizationReady?.available === false);
+  const speakerStatusActive = ["pending", "queued", "running"].includes(
+    processingStatus,
+  );
+  const speakerStatusError = speakerStatusWarning
+    ? session?.processing?.error || diarizationReady?.error || ""
+    : "";
+  const speakerStatusClassName =
+    `speaker-status${speakerStatusActive ? " active" : ""}` +
+    (speakerStatusWarning ? " warning" : "");
+  const speakerStatusLabel =
+    `说话人处理状态：${processingText}` +
+    (speakerStatusError ? `。${speakerStatusError}` : "");
+  const canRetryDiarization =
+    session?.remoteStatus === "ended" &&
+    ["failed", "unavailable"].includes(processingStatus);
   const tone = sectionTone(
     isRecording,
     paused,
@@ -1278,6 +1298,37 @@ export function App() {
                               实时
                             </span>
                           )}
+                          {processingText && (
+                            <span
+                              className={speakerStatusClassName}
+                              role="status"
+                              aria-label={speakerStatusLabel}
+                              title={speakerStatusError || processingText}
+                              tabIndex={speakerStatusError ? 0 : undefined}
+                            >
+                              <i className="speaker-status-dot" />
+                              <span>{processingText}</span>
+                              {canRetryDiarization && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon-xs"
+                                  disabled={retryingDiarization || correcting}
+                                  onClick={retryDiarization}
+                                  aria-label="重试说话人校正"
+                                  title="重试说话人校正"
+                                >
+                                  {retryingDiarization ? (
+                                    <LoaderCircle
+                                      size={12}
+                                      className="animate-spin"
+                                    />
+                                  ) : (
+                                    <RefreshCw size={12} />
+                                  )}
+                                </Button>
+                              )}
+                            </span>
+                          )}
                         </h2>
                         <label className="scroll-toggle">
                           <span>自动跟随</span>
@@ -1354,22 +1405,6 @@ export function App() {
                         </span>
                       </div>
                     </Card>
-                    {processingText && (
-                      <div className="processing-note" role="status" aria-label="说话人处理状态">
-                        <div>
-                          <strong>{processingText}</strong>
-                          {(session?.processing?.error || diarizationReady?.error) && (
-                            <p>{session?.processing?.error || diarizationReady?.error}</p>
-                          )}
-                        </div>
-                        {session?.remoteStatus === "ended" && ["failed", "unavailable"].includes(session?.processing?.status) && (
-                          <Button variant="outline" size="sm" disabled={retryingDiarization || correcting} onClick={retryDiarization}>
-                            {retryingDiarization && <LoaderCircle size={14} className="animate-spin" />}
-                            重试说话人校正
-                          </Button>
-                        )}
-                      </div>
-                    )}
                   </TabsContent>
                   <TabsContent value="minutes" className="meeting-panel">
                     <Card className="document-card">
@@ -1462,7 +1497,7 @@ export function App() {
                   </TabsContent>
                 </Tabs>
 
-                <div className="meeting-aside panel-scroll">
+                <div className="meeting-aside">
                   <Card className="recording-card">
                     <div className="recording-card-heading">
                       <h2>
@@ -1557,17 +1592,6 @@ export function App() {
                         </Button>
                       </div>
                     </div>
-                    <p className="recording-hint">
-                      {isStarting
-                        ? "正在连接服务并准备麦克风。"
-                        : paused && isRecording
-                          ? "麦克风已暂停，继续后会接着记录。"
-                          : recordingActive
-                            ? "安心交流，会议内容正在被记录。"
-                            : session
-                              ? "已保存的内容可以随时回看。"
-                              : "准备好后，开启麦克风。转写内容会实时显示。"}
-                    </p>
                     <div className="microphone-status">
                       {recordingActive ? (
                         <Mic size={13} />

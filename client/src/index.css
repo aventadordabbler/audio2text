@@ -567,6 +567,7 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
   color: #525252;
   font-size: 12px;
   font-weight: 500;
@@ -673,18 +674,51 @@ button:disabled {
   font-weight: 600;
   color: var(--foreground);
 }
-.processing-note {
+.speaker-status {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  flex-shrink: 0;
-  padding: 0.65rem 0.85rem;
-  border: 1px solid var(--border);
-  border-radius: 0.5rem;
-  font-size: 0.75rem;
+  gap: 5px;
+  min-width: 0;
+  padding: 3px 6px;
+  border: 1px solid #dcfce7;
+  border-radius: 5px;
+  background: #f0fdf4;
+  color: #3f6212;
+  font-size: 9px;
+  font-weight: 500;
+  line-height: 1;
 }
-.processing-note p { margin: 0.25rem 0 0; color: var(--muted-foreground); }
+.speaker-status-dot {
+  width: 5px;
+  height: 5px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.14);
+}
+.speaker-status.active .speaker-status-dot {
+  animation: live-pulse 1.4s ease-in-out infinite;
+}
+.speaker-status.warning {
+  border-color: #fde68a;
+  background: #fffbeb;
+  color: #92400e;
+}
+.speaker-status.warning .speaker-status-dot {
+  background: #f59e0b;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.14);
+  animation: none;
+}
+.speaker-status > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.speaker-status > button {
+  width: 18px;
+  height: 18px;
+  margin: -3px -4px -3px 0;
+  color: inherit;
+}
 .minutes-notice { padding: 0.75rem; border: 1px solid var(--border); border-radius: 0.5rem; font-size: 0.8rem; }
 .transcript-entry time {
   display: block;
@@ -853,17 +887,21 @@ button:disabled {
   padding: 0 5px;
 }
 .meeting-aside {
+  position: relative;
   min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 15px;
-  overflow-y: auto;
+  overflow: clip;
   padding-top: 47px;
 }
 .meeting-aside > * {
   flex-shrink: 0;
 }
 .recording-card {
+  position: relative;
+  height: 100%;
+  min-height: 0;
   padding: 19px;
 }
 .recording-card-heading {
@@ -891,13 +929,20 @@ button:disabled {
   color: #a3a3a3;
 }
 .recording-diagnostics {
+  position: absolute;
+  top: 48px;
+  right: 12px;
+  left: 12px;
+  z-index: 5;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px 12px;
-  margin-top: 12px;
+  margin-top: 0;
   padding: 10px;
+  border: 1px solid #e5e5e5;
   border-radius: 8px;
-  background: #fafafa;
+  background: rgba(250, 250, 250, 0.96);
+  box-shadow: 0 10px 24px rgba(23, 23, 23, 0.12);
   color: #a3a3a3;
   font-size: 9px;
 }
@@ -985,12 +1030,6 @@ button:disabled {
   font-size: 11px;
   gap: 5px;
 }
-.recording-hint {
-  margin: 16px 0;
-  color: #8c8c8c;
-  font-size: 10px;
-  line-height: 1.9;
-}
 .microphone-status {
   display: flex;
   align-items: center;
@@ -1012,6 +1051,11 @@ button:disabled {
   font-size: 11px;
 }
 .report-progress {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 4;
   padding: 14px;
 }
 .report-progress > div:first-child {
@@ -1756,8 +1800,10 @@ button:disabled {
     grid-column: 1 / -1;
   }
   .recording-diagnostics {
+    position: static;
     grid-column: 1 / -1;
     margin-top: 0;
+    box-shadow: none;
   }
   .recording-timer {
     padding: 0;
@@ -1779,7 +1825,6 @@ button:disabled {
     height: 28px;
   }
   .audio-wave,
-  .recording-hint,
   .microphone-status,
   .meeting-name-card {
     display: none;

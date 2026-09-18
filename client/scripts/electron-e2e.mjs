@@ -173,16 +173,19 @@ try {
     await page.getByRole("combobox", { name: label, exact: true }).click();
     await page.getByRole("option", { name: option, exact: true }).click();
   }
-  for (const [width, height] of [
-    [840, 700],
-    [1280, 720],
-  ]) {
+  async function resizeWindow(width, height) {
     await electronApp.evaluate(
       ({ BrowserWindow }, size) =>
         BrowserWindow.getAllWindows()[0].setSize(...size),
       [width, height],
     );
-    await page.waitForFunction((width) => innerWidth === width, width);
+    await page.waitForFunction((nextWidth) => innerWidth === nextWidth, width);
+  }
+  for (const [width, height] of [
+    [840, 700],
+    [1280, 720],
+  ]) {
+    await resizeWindow(width, height);
     assert.deepEqual(
       await page.evaluate(() =>
         [
@@ -313,12 +316,84 @@ try {
     .getByText(/浏览器 PCM16 录音已识别，共 16000 个采样。/)
     .first()
     .waitFor();
+  const speakerStatus = page.getByLabel("说话人处理状态");
+  await speakerStatus.waitFor();
+  assert.equal(
+    await speakerStatus.evaluate((element) =>
+      Boolean(element.closest(".document-heading")),
+    ),
+    true,
+  );
+  const speakerStatusDot = await speakerStatus
+    .locator(".speaker-status-dot")
+    .evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        animationName: style.animationName,
+        backgroundColor: style.backgroundColor,
+      };
+    });
+  assert.deepEqual(speakerStatusDot, {
+    animationName: "none",
+    backgroundColor: "rgb(245, 158, 11)",
+  });
   assert.equal(await page.getByLabel("ASR 运行诊断").count(), 0);
   await page.getByRole("button", { name: "显示运行诊断", exact: true }).click();
   await page
     .getByLabel("ASR 运行诊断")
     .getByText("文件转写", { exact: true })
     .waitFor();
+  for (const [width, height] of [
+    [840, 700],
+    [1280, 720],
+  ]) {
+    await resizeWindow(width, height);
+    const workspaceColumns = await page.evaluate(() => {
+      const transcript = document.querySelector(
+        '.meeting-panel[data-state="active"] .document-card',
+      );
+      const aside = document.querySelector(".meeting-aside");
+      const recording = aside?.querySelector(".recording-card");
+      const transcriptRect = transcript?.getBoundingClientRect();
+      const recordingRect = recording?.getBoundingClientRect();
+      return {
+        topDelta: recordingRect.top - transcriptRect.top,
+        bottomDelta: recordingRect.bottom - transcriptRect.bottom,
+        asideOverflowY: getComputedStyle(aside).overflowY,
+        contentFits: recording.scrollHeight <= recording.clientHeight + 1,
+        controlsVisible: [...recording.querySelectorAll("button")].every(
+          (button) => {
+            const rect = button.getBoundingClientRect();
+            return (
+              rect.top >= recordingRect.top - 1 &&
+              rect.bottom <= recordingRect.bottom + 1
+            );
+          },
+        ),
+      };
+    });
+    assert.equal(
+      Math.abs(workspaceColumns.topDelta) < 1,
+      true,
+      JSON.stringify(workspaceColumns),
+    );
+    assert.equal(
+      workspaceColumns.bottomDelta <= 1,
+      true,
+      JSON.stringify(workspaceColumns),
+    );
+    assert.equal(workspaceColumns.asideOverflowY, "clip");
+    assert.equal(
+      workspaceColumns.contentFits,
+      true,
+      JSON.stringify(workspaceColumns),
+    );
+    assert.equal(
+      workspaceColumns.controlsVisible,
+      true,
+      JSON.stringify(workspaceColumns),
+    );
+  }
   await page.getByRole("button", { name: "隐藏运行诊断", exact: true }).click();
   await page.getByLabel("ASR 运行诊断").waitFor({ state: "detached" });
   await page.waitForFunction(

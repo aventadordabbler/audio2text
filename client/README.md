@@ -9,6 +9,7 @@ The desktop follows the workspace design and frontend stack in `/root/project/py
 - React 19.3, shadcn/ui (`radix-nova`, neutral), Radix UI 1.6, Tailwind CSS 4.3, Vite 8.3.
 - Shared shadcn components in `src/components/ui/`, configured through `components.json`; TypeScript checks run before every build. Existing recording and service logic remains in JavaScript.
 - Geist typography, Lucide icons, a neutral sidebar, a transcript workspace with recording controls, searchable local history, and separate speech/model settings.
+- Speaker processing appears as a compact status badge beside the transcript heading with a pulsing green dot. The recording control column is capped to the transcript card height and does not introduce its own scrollbar; diagnostics open as an in-card overlay.
 - Meeting summaries render Markdown headings, lists and tables in both the workspace and the independent summary window.
 
 ## Testing Notes
