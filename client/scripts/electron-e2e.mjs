@@ -342,8 +342,15 @@ try {
     frozenClock,
   );
   await page.getByRole("button", { name: "结束会议", exact: true }).click();
-  await page.getByRole("tab", { name: "阶段总结", exact: true }).click();
-  await page.getByText(/阶段总结 \d+-\d+ 秒/).waitFor();
+  assert.equal(
+    await page.getByRole("tab", { name: "阶段总结", exact: true }).count(),
+    0,
+  );
+  await page
+    .getByLabel("阶段总结气泡")
+    .getByText(/阶段总结 \d+-\d+ 秒/)
+    .waitFor();
+  await screenshot("electron-stage-summary-bubbles.png");
   await page.getByRole("tab", { name: "会议总结", exact: true }).click();
   await page.getByRole("heading", { name: "核心结论", exact: true }).waitFor();
   const [recorded] = await api.list({ title: "桌面 PCM 录音验证" });

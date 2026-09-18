@@ -561,6 +561,7 @@ button:disabled {
   min-height: 0;
 }
 .document-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -726,18 +727,34 @@ button:disabled {
   line-height: 2;
   color: #404040;
 }
-.stage-summary-list {
-  display: grid;
-  gap: 14px;
-  padding: 20px;
+.stage-summary-bubbles {
+  position: absolute;
+  right: 18px;
+  bottom: 54px;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  width: min(380px, calc(100% - 36px));
+  pointer-events: none;
 }
-.stage-summary-entry {
+.stage-summary-bubble {
+  width: 100%;
   overflow: hidden;
-  border: 1px solid #e5e5e5;
-  border-radius: 10px;
-  background: #fff;
+  border: 1px solid #dededb;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 12px 30px rgba(23, 23, 23, 0.12);
+  pointer-events: auto;
+  transform-origin: bottom right;
+  animation: stage-summary-bubble-in 220ms ease-out both;
 }
-.stage-summary-entry > header {
+.stage-summary-bubble--exiting {
+  pointer-events: none;
+  animation: stage-summary-bubble-out 420ms ease-in both;
+}
+.stage-summary-bubble > header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -748,29 +765,70 @@ button:disabled {
   color: #737373;
   font-size: 10px;
 }
-.stage-summary-entry > header strong {
+.stage-summary-bubble > header strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   color: #525252;
   font-size: 11px;
   font-weight: 600;
 }
-.stage-summary-entry > header time {
+.stage-summary-bubble > header strong svg {
+  color: #737373;
+}
+.stage-summary-bubble > header time {
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
-.stage-summary-entry .minutes-document {
-  padding: 14px 16px;
+.stage-summary-bubble-body {
+  max-height: 150px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.stage-summary-bubble .minutes-document {
+  padding: 12px 14px;
   font-size: 12px;
-  line-height: 1.8;
+  line-height: 1.65;
 }
-.stage-summary-entry .management-error,
-.stage-summary-pending {
-  margin: 14px;
+.stage-summary-bubble .minutes-document h1,
+.stage-summary-bubble .minutes-document h2,
+.stage-summary-bubble .minutes-document h3 {
+  margin: 10px 0 6px;
+  font-size: 12px;
 }
-.stage-summary-pending {
+.stage-summary-bubble .minutes-document p,
+.stage-summary-bubble .minutes-document ul,
+.stage-summary-bubble .minutes-document ol {
+  margin: 6px 0;
+}
+.stage-summary-bubble-pending,
+.stage-summary-bubble-failure {
   display: flex;
   align-items: center;
   gap: 7px;
+  margin: 0;
+  padding: 13px 14px;
   color: #737373;
   font-size: 11px;
+}
+.stage-summary-bubble-failure {
+  justify-content: space-between;
+  color: #991b1b;
+}
+.stage-summary-bubble-failure p {
+  margin: 0;
+}
+.stage-summary-bubble-failure button {
+  flex-shrink: 0;
+}
+.stage-summary-bubble--error {
+  padding: 11px 14px;
+  border-color: #fecaca;
+  color: #991b1b;
+  font-size: 11px;
+}
+.stage-summary-bubble--error p {
+  margin: 0;
 }
 .document-footer {
   display: flex;
@@ -1517,6 +1575,26 @@ button:disabled {
     opacity: 0.35;
   }
 }
+@keyframes stage-summary-bubble-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes stage-summary-bubble-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
 @keyframes audio-wave {
   from {
     transform: scaleY(0.35);
@@ -1687,6 +1765,13 @@ button:disabled {
     flex: 1;
     order: 2;
     min-height: 200px;
+  }
+  .stage-summary-bubbles {
+    right: 12px;
+    width: calc(100% - 24px);
+  }
+  .stage-summary-bubble-body {
+    max-height: 120px;
   }
   .meeting-aside {
     order: 1;

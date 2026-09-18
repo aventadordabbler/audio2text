@@ -63,7 +63,7 @@ npm run dist:win
 - Pause: pause capture, flush buffered audio, send `pause`, and wait for confirmation. Resume waits for the `resume` confirmation before capturing again.
 - Heartbeats send `ping` every 15 seconds. `pong` keeps the WebSocket active and carries an in-memory ASR latency/backlog snapshot; the compact diagnostics panel remains hidden until opened.
 - The recording clock advances only when the server confirms committed archive samples, and reconnects restore the same sample-based duration.
-- Stage summaries use a separate read-only WebSocket. It restores a persisted snapshot on connect, receives incremental fixed-window updates, and keeps LLM work outside the recording socket.
+- Stage summaries use a separate read-only WebSocket. It restores a persisted snapshot on connect, receives incremental fixed-window updates, and keeps LLM work outside the recording socket. The transcript panel shows the two latest summaries as bottom-right bubbles; older bubbles fade out as new summaries arrive.
 - End: flush the last audio and send `end`. Completion depends on the `state` event with `action: "end"`; failed recognition can be retried. A disconnected meeting can be ended through `POST /api/meetings/{id}/end`.
 - `transcript.text` replaces the full transcript, including corrections to earlier words. No `is_final` or `archived` events are required. `no_speech` preserves existing text and allows empty meetings to end normally.
 - The desktop saves the backend meeting ID with its local session. During an active meeting, connection loss releases the microphone; click Continue to reconnect to the same meeting. Desktop history and generated summaries remain stored locally.
