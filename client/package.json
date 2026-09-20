@@ -18,7 +18,6 @@
     "icons": "node scripts/generate-icons.mjs",
     "test:integration": "node scripts/integration-check.mjs",
     "test:protocol": "node --test scripts/meeting-protocol.test.mjs scripts/meeting-events.test.mjs scripts/stage-summary-bubbles.test.mjs",
-    "test:ai": "node --test scripts/ai-client.test.mjs",
     "test:e2e": "node scripts/electron-e2e.mjs",
     "test:e2e:win7": "node scripts/electron-e2e.mjs --win7",
     "pack:win7": "npm run build:win7 && electron-builder --config electron-builder.win7.cjs --dir --x64 --publish never",
