@@ -430,6 +430,17 @@ try {
     .locator("section.stage-summary-bubble")
     .last();
   const stageCopy = latestStageBubble.locator(".stage-summary-bubble-copy");
+  const stageBodyLayout = await latestStageBubble
+    .locator(".stage-summary-bubble-body")
+    .evaluate((body) => ({
+      scrollHeight: body.scrollHeight,
+      clientHeight: body.clientHeight,
+    }));
+  assert.equal(
+    stageBodyLayout.scrollHeight <= stageBodyLayout.clientHeight + 1,
+    true,
+    JSON.stringify(stageBodyLayout),
+  );
   const collapsedStageText = await stageCopy.textContent();
   assert.equal(Array.from(collapsedStageText).length, 81);
   assert.equal(collapsedStageText.endsWith("…"), true);
@@ -568,8 +579,10 @@ try {
     .locator("tbody")
     .getByRole("button", { name: /^界面验证会议/ })
     .click();
+  await page.getByRole("tab", { name: "会议总结", exact: true }).click();
+  await page.getByRole("heading", { name: "核心结论", exact: true }).waitFor();
   const minutesReady = electronApp.waitForEvent("window");
-  await page.getByRole("button", { name: "查看会议总结", exact: true }).click();
+  await page.getByRole("button", { name: "独立窗口", exact: true }).click();
   const minutesPage = await minutesReady;
   await minutesPage
     .getByRole("heading", { name: "核心结论", exact: true })

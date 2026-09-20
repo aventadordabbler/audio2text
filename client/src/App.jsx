@@ -1216,7 +1216,21 @@ export function App() {
                     </Badge>
                     <span>{session ? "当前会议" : "专注交流，轻松记录"}</span>
                   </div>
-                  <h1 title={sessionTitle}>{sessionTitle}</h1>
+                  <div className="meeting-title-row">
+                    <h1 title={sessionTitle}>{sessionTitle}</h1>
+                    {session?.audioAvailable && meetingApi && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="meeting-title-export"
+                        disabled={exportingAudio}
+                        onClick={exportAudio}
+                      >
+                        <Download size={15} />
+                        {exportingAudio ? "正在准备…" : "导出录音（WAV）"}
+                      </Button>
+                    )}
+                  </div>
                   <div className="meeting-meta">
                     {session ? (
                       <>
@@ -1245,29 +1259,6 @@ export function App() {
                     )}
                   </div>
                 </div>
-                {session?.minutes && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="heading-action"
-                    onClick={openMinutesWindow}
-                  >
-                    <ArrowUpRight size={15} />
-                    查看会议总结
-                  </Button>
-                )}
-                {session?.audioAvailable && meetingApi && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="heading-action"
-                    disabled={exportingAudio}
-                    onClick={exportAudio}
-                  >
-                    <Download size={15} />
-                    {exportingAudio ? "正在准备…" : "导出录音（WAV）"}
-                  </Button>
-                )}
               </div>
 
               <div className="meeting-workspace">

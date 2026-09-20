@@ -488,6 +488,18 @@ button:disabled {
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
+.meeting-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.meeting-title-row h1 {
+  min-width: 0;
+}
+.meeting-title-export {
+  flex-shrink: 0;
+}
 .page-heading > div > p {
   margin-top: 8px;
   color: #8c8c8c;
@@ -756,14 +768,14 @@ button:disabled {
   justify-content: flex-end;
   gap: 10px;
   width: 42%;
-  height: 70%;
+  height: 90%;
   pointer-events: none;
 }
 .stage-summary-bubble {
   display: flex;
   flex-direction: column;
   width: 100%;
-  min-height: 0;
+  min-height: 152px;
   max-height: calc((100% - 10px) / 2);
   overflow: hidden;
   border: 1px solid #dededb;
@@ -1034,6 +1046,7 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 6px;
+  margin-top: 6px;
   padding-top: 12px;
   border-top: 1px solid #eee;
   color: #8c8c8c;
@@ -1701,11 +1714,6 @@ button:disabled {
   }
   .overview-item small {
     display: none;
-  }
-  .heading-action {
-    font-size: 11px;
-    padding-left: 9px;
-    padding-right: 9px;
   }
   .status-alert {
     margin-left: 20px;
