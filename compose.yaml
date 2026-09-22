@@ -1,6 +1,6 @@
 services:
   app:
-    build: .
+    image: quantitative.io/library/audio2text:latest
     profiles: [app]
     container_name: audio2text-server
     restart: unless-stopped
