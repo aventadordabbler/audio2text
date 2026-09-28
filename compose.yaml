@@ -21,14 +21,14 @@ services:
       DIARIZATION_TIMEOUT_SECONDS: ${DIARIZATION_TIMEOUT_SECONDS:-120}
       DIARIZATION_FINAL_TIMEOUT_SECONDS: ${DIARIZATION_FINAL_TIMEOUT_SECONDS:-1800}
     ports:
-      - "${APP_BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-8000}:8000"
+      - "${APP_BIND_ADDRESS:-0.0.0.0}:${APP_PORT:-8000}:8000"
     volumes:
       - ./data:/app/data
       - ${DIARIZATION_MODEL_DIR:-./models/diarization}:/app/models/diarization:ro
       - ${DIARIZATION_SEGMENTATION_DIR:-./models/pyannote/segmentation-3.0}:/app/models/pyannote/segmentation-3.0:ro
-  vllm:
+  asr:
     image: ${VLLM_IMAGE:-qwenllm/qwen3-asr:latest}
-    container_name: audio2text-vllm
+    container_name: audio2text-asr
     profiles: [gpu]
     restart: unless-stopped
     command:
@@ -42,7 +42,7 @@ services:
       - --port
       - "8001"
       - --gpu-memory-utilization
-      - ${VLLM_GPU_MEMORY_UTILIZATION:-0.8}
+      - ${VLLM_GPU_MEMORY_UTILIZATION:-0.3}
       - --max-model-len
       - ${VLLM_MAX_MODEL_LEN:-32768}
     ports:
@@ -63,5 +63,45 @@ services:
       interval: 10s
       timeout: 5s
       retries: 30
+  llm:
+    image: ${LLM_VLLM_IMAGE:-registry.neuro.com/vllm/vllm-openai:v0.30.0-aarch64-cu129}
+    container_name: audio2text-llm
+    profiles: [gpu]
+    restart: unless-stopped
+    command:
+      - --model
+      - ${LLM_VLLM_MODEL_PATH:-/models/llm}
+      - --served-model-name
+      - ${LLM_VLLM_MODEL:-local-llm}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8002"
+      - --gpu-memory-utilization
+      - ${LLM_VLLM_GPU_MEMORY_UTILIZATION:-0.6}
+      - --max-model-len
+      - ${LLM_VLLM_MAX_MODEL_LEN:-32768}
+    ports:
+      - "${LLM_VLLM_BIND_ADDRESS:-0.0.0.0}:${LLM_VLLM_PORT:-8002}:8002"
+    volumes:
+      - type: bind
+        source: ${LLM_VLLM_MODEL_DIR:-./models/llm}
+        target: ${LLM_VLLM_MODEL_PATH:-/models/llm}
+        read_only: true
+      - llm-vllm-cache:/root/.cache/vllm
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/v1/models')"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
 volumes:
   hf-cache:
+  llm-vllm-cache:

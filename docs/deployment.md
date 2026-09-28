@@ -185,7 +185,7 @@ ssh -N -L 8000:127.0.0.1:8000 deploy@meeting-server
 VLLM_IMAGE=qwenllm/qwen3-asr:latest
 VLLM_MODEL=qwen3-asr-1.7b
 VLLM_MODEL_PATH=/models/qwen3-asr-1.7b
-VLLM_GPU_MEMORY_UTILIZATION=0.8
+VLLM_GPU_MEMORY_UTILIZATION=0.3
 VLLM_MAX_MODEL_LEN=32768
 ASR_SEND_CHAT_TEMPLATE=true
 ```
@@ -206,6 +206,34 @@ docker compose --profile gpu --profile app ps
 ```
 
 宿主机访问该 ASR 时使用 `http://127.0.0.1:8001/v1`；覆盖 `VLLM_PORT` 后应替换为实际端口。LLM 仍按实际部署填写独立地址；项目不要求 ASR 和 LLM 位于同一 GPU 或同一服务器。
+
+如需在同一台 GPU 主机上运行本地 LLM，可使用 Compose 中独立的 `llm` 服务。它使用官方
+`vllm/vllm-openai` 镜像，将宿主机 `LLM_VLLM_MODEL_DIR` 以只读方式映射到
+`LLM_VLLM_MODEL_PATH`，并监听宿主机端口 `LLM_VLLM_PORT`（默认 8002）：
+
+```dotenv
+LLM_VLLM_IMAGE=vllm/vllm-openai:latest
+LLM_VLLM_MODEL_DIR=./models/llm
+LLM_VLLM_MODEL_PATH=/models/llm
+LLM_VLLM_MODEL=local-llm
+LLM_VLLM_PORT=8002
+LLM_VLLM_GPU_MEMORY_UTILIZATION=0.6
+```
+
+GB10 使用 128 GB 统一内存；两个服务共用同一张卡时，建议让
+`VLLM_GPU_MEMORY_UTILIZATION` 和 `LLM_VLLM_GPU_MEMORY_UTILIZATION` 的总和保持在 0.9 左右，
+为 CUDA、驱动和运行时开销预留余量。
+
+启动服务：
+
+```bash
+docker compose --profile gpu up -d llm
+curl --fail http://127.0.0.1:8002/v1/models
+```
+
+Audio2Text 的“大语言模型”配置填写 `http://127.0.0.1:8002/v1`（应用运行在宿主机时），
+或填写 `http://llm:8002/v1`（应用也作为 Compose 容器运行时），模型名称填写
+`LLM_VLLM_MODEL` 的值。
 
 ## 5. HTTPS 与 WebSocket 反向代理
 
