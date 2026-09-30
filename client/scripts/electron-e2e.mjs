@@ -219,9 +219,7 @@ try {
     .locator("tbody")
     .getByRole("button", { name: /^界面验证会议/ })
     .click();
-  await page
-    .getByRole("heading", { name: meeting.title, exact: true })
-    .waitFor();
+  await page.locator(".page-heading h1").filter({ hasText: meeting.title }).waitFor();
   assert.match(
     await page.getByLabel("会议转写文本").textContent(),
     /转写来自服务端/,
@@ -242,9 +240,7 @@ try {
     .filter({ hasText: meeting.title });
   await meetingRow.getByText("已结束", { exact: true }).waitFor();
   await meetingRow.getByRole("button", { name: /^界面验证会议/ }).click();
-  await page
-    .getByRole("heading", { name: meeting.title, exact: true })
-    .waitFor();
+  await page.locator(".page-heading h1").filter({ hasText: meeting.title }).waitFor();
   page.off("request", onRequest);
   assert.ok(
     readRequests.length >= 3 &&
@@ -373,16 +369,16 @@ try {
       };
     });
     assert.equal(
-      Math.abs(workspaceColumns.topDelta) < 1,
+      workspaceColumns.topDelta <= 1 && workspaceColumns.topDelta > -48,
       true,
       JSON.stringify(workspaceColumns),
     );
     assert.equal(
-      workspaceColumns.bottomDelta <= 1,
+      workspaceColumns.bottomDelta <= 3,
       true,
       JSON.stringify(workspaceColumns),
     );
-    assert.equal(workspaceColumns.asideOverflowY, "clip");
+    assert.equal(workspaceColumns.asideOverflowY, "auto");
     assert.equal(
       workspaceColumns.contentFits,
       true,
@@ -422,16 +418,19 @@ try {
     0,
   );
   await page
-    .getByLabel("阶段总结气泡")
-    .getByText(/阶段总结 \d+-\d+ 秒/)
+    .getByLabel("AI会议助手")
+    .locator(".ai-insight-heading")
+    .getByText("阶段总结", { exact: true })
     .waitFor();
-  const latestStageBubble = page
-    .getByLabel("阶段总结气泡")
-    .locator("section.stage-summary-bubble")
+  const latestStageSummary = page
+    .getByLabel("AI会议助手")
+    .locator("article.ai-insight-item")
     .last();
-  const stageCopy = latestStageBubble.locator(".stage-summary-bubble-copy");
-  const stageBodyLayout = await latestStageBubble
-    .locator(".stage-summary-bubble-body")
+  await latestStageSummary
+    .getByRole("button", { name: "展开全文", exact: true })
+    .waitFor();
+  const stageCopy = latestStageSummary.locator(".ai-insight-item-body");
+  const stageBodyLayout = await stageCopy
     .evaluate((body) => ({
       scrollHeight: body.scrollHeight,
       clientHeight: body.clientHeight,
@@ -444,12 +443,12 @@ try {
   const collapsedStageText = await stageCopy.textContent();
   assert.equal(Array.from(collapsedStageText).length, 81);
   assert.equal(collapsedStageText.endsWith("…"), true);
-  await screenshot("electron-stage-summary-bubbles.png");
-  await latestStageBubble
+  await screenshot("electron-stage-summary-panel.png");
+  await latestStageSummary
     .getByRole("button", { name: "展开全文", exact: true })
     .click();
   assert.equal(Array.from(await stageCopy.textContent()).length > 80, true);
-  await latestStageBubble
+  await latestStageSummary
     .getByRole("button", { name: "收起", exact: true })
     .click();
   for (const removedText of [

@@ -146,6 +146,7 @@ test("desktop shows delayed correction, retry, speaker replacements and stale mi
       await page.locator("tbody tr").filter({ hasText: "事件闭环" }).first().getByRole("button", { name: /^事件闭环/ }).click();
     };
     await open();
+    await page.getByRole("tab", { name: "实时转写", exact: true }).click();
     const speakerStatus = page.getByLabel("说话人处理状态");
     const speakerStatusDotStyle = () =>
       speakerStatus.locator(".speaker-status-dot").evaluate((element) => {
@@ -182,7 +183,7 @@ test("desktop shows delayed correction, retry, speaker replacements and stale mi
     const before = (await command(recorder, "stats")).minutes_calls;
     await command(recorder, "configure", {});
     await page.getByRole("button", { name: "重试说话人校正", exact: true }).click();
-    await page.getByText("说话人校正已完成", { exact: true }).waitFor();
+    await speakerStatus.getByText("说话人校正已完成", { exact: true }).waitFor();
     await page.locator(".speaker-label").filter({ hasText: "说话人 2" }).waitFor();
     assert.equal(await page.locator(".transcript-entry").count(), 2);
     assert.match(await page.getByLabel("会议转写文本").textContent(), /00:01:05/);
@@ -196,6 +197,7 @@ test("desktop shows delayed correction, retry, speaker replacements and stale mi
     // Reopening the same selected meeting must reattach after releasing its socket.
     await page.getByRole("navigation", { name: "主导航", exact: true }).getByRole("button", { name: "会议管理", exact: true }).click();
     await open();
+    await page.getByRole("tab", { name: "实时转写", exact: true }).click();
     await page.locator(".speaker-label").filter({ hasText: "说话人 2" }).waitFor();
     const latest = await recorder.api.get(recorder.meeting.id);
     await command(recorder, "revise", { segments: [{ ...latest.segments[1], speaker_status: "unknown" }] });
@@ -206,6 +208,7 @@ test("desktop shows delayed correction, retry, speaker replacements and stale mi
     }
     await page.reload();
     await open();
+    await page.getByRole("tab", { name: "实时转写", exact: true }).click();
     await page.locator(".speaker-label").filter({ hasText: "说话人待确认" }).waitFor();
     const remote = await recorder.api.get(recorder.meeting.id);
     await command(recorder, "revise", { segments: [{ ...remote.segments[0], speaker_status: "overlap" }] });

@@ -25,6 +25,7 @@ import {
   Sparkles,
   ArrowUpRight,
   Download,
+  Plus,
 } from "lucide-react";
 import {
   WorkspaceBrand,
@@ -74,7 +75,7 @@ import {
 } from "@/components/meeting-management.jsx";
 import { DepartmentManagement } from "@/components/department-management.jsx";
 import { MicrophoneLevelTest } from "@/components/microphone-level-test.jsx";
-import { StageSummaryBubbles } from "@/components/stage-summary-bubbles.jsx";
+import { StageSummaryPanel } from "@/components/stage-summary-panel.jsx";
 import {
   LLM_SETTINGS_FORM_ID,
   ServerModelSettings,
@@ -172,6 +173,7 @@ export function App() {
     }
   }, [config.stt.baseUrl, config.stt.language]);
   const [autoScroll, setAutoScroll] = useState(true);
+  const [transcriptFollowing, setTranscriptFollowing] = useState(true);
   const transcriptScrollRef = useRef(null);
   const [statusLine, setStatusLine] = useState("待命");
   const [settingsSavedAtLabel, setSettingsSavedAtLabel] = useState("");
@@ -259,7 +261,8 @@ export function App() {
       !autoScroll ||
       !isRecording ||
       activeView !== "overview" ||
-      activeFocusTab !== "transcript"
+      activeFocusTab !== "transcript" ||
+      !transcriptFollowing
     )
       return;
     const viewport = transcriptScrollRef.current;
@@ -271,7 +274,29 @@ export function App() {
     isRecording,
     activeView,
     activeFocusTab,
+    transcriptFollowing,
   ]);
+
+  useEffect(() => {
+    const viewport = transcriptScrollRef.current;
+    if (!viewport) return undefined;
+    const updateFollowing = () => {
+      const atLatest =
+        viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop < 48;
+      setTranscriptFollowing(atLatest);
+    };
+    viewport.addEventListener("scroll", updateFollowing, { passive: true });
+    updateFollowing();
+    return () => viewport.removeEventListener("scroll", updateFollowing);
+  }, [sessionSelection, activeView, activeFocusTab]);
+
+  function followTranscript() {
+    const viewport = transcriptScrollRef.current;
+    if (!viewport) return;
+    setAutoScroll(true);
+    viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
+    setTranscriptFollowing(true);
+  }
 
   useEffect(() => {
     sessionRef.current = session;
@@ -692,9 +717,11 @@ export function App() {
       ).toLocaleString();
       setIsRecording(false);
       recordingRef.current = false;
+      setTranscriptFollowing(true);
       syncTimer();
       await updateSession(currentSession);
       refreshCatalog();
+      setActiveFocusTab(currentSession.transcript.length ? "minutes" : "transcript");
       setStatusLine(
         currentSession.transcript.length
           ? "会议已结束，后台将校正说话人并生成会议总结"
@@ -785,6 +812,26 @@ export function App() {
     } finally {
       setRetryingStageSummaries(false);
     }
+  }
+
+  function jumpToStageSummary(summary) {
+    if (!summary) return;
+    setActiveFocusTab("transcript");
+    const startMs = Number(summary.start_seconds || 0) * 1000;
+    const target =
+      transcripts.find((item) => Number(item.start_ms || 0) >= startMs) ||
+      transcripts[transcripts.length - 1];
+    if (!target || target.segment_id === "archive") return;
+    window.requestAnimationFrame(() => {
+      const viewport = transcriptScrollRef.current;
+      const element = [...(viewport?.querySelectorAll("[data-segment-id]") || [])].find(
+        (item) => item.dataset.segmentId === String(target.segment_id),
+      );
+      if (!element) return;
+      element.scrollIntoView({ behavior: "smooth", block: "center" });
+      element.classList.add("transcript-entry--focus");
+      window.setTimeout(() => element.classList.remove("transcript-entry--focus"), 1600);
+    });
   }
 
   async function togglePause() {
@@ -927,7 +974,8 @@ export function App() {
     };
     setStartedAtMs(nextStartedAtMs);
     stopTimerLoop();
-    setActiveFocusTab("transcript");
+    setActiveFocusTab(nextSession.remoteStatus === "ended" ? "minutes" : "transcript");
+    setTranscriptFollowing(true);
     setLivePreview("");
     setAsrDiagnostics(null);
     setShowDiagnostics(false);
@@ -1034,6 +1082,52 @@ export function App() {
     stageSummaryActionError ||
     (stageSummaryState.status === "error" ? stageSummaryState.error : "");
   const statusError = /失败|错误|EOF|断开|超时/i.test(statusLine);
+  const processingStates = session
+    ? [
+        {
+          key: "recording",
+          label: recordingActive
+            ? "录音中"
+            : session.remoteStatus === "ended"
+              ? "录音完成"
+              : session.remoteStatus === "paused"
+                ? "已暂停"
+                : "准备中",
+          tone: recordingActive ? "active" : "ready",
+        },
+        {
+          key: "transcript",
+          label: transcripts.length
+            ? session.remoteStatus === "ended"
+              ? "转写完成"
+              : "实时转写"
+            : "等待转写",
+          tone: transcripts.length ? "ready" : "neutral",
+        },
+        {
+          key: "speaker",
+          label: processingText || "说话人识别待命",
+          tone: speakerStatusWarning
+            ? "warning"
+            : speakerStatusActive
+              ? "active"
+              : processingStatus === "ready"
+                ? "ready"
+                : "neutral",
+        },
+        {
+          key: "minutes",
+          label: summaryBusy
+            ? "纪要生成中"
+            : session.minutes
+              ? "纪要已保存"
+              : session.remoteStatus === "ended"
+                ? "等待纪要"
+                : "会后生成",
+          tone: summaryBusy ? "active" : session.minutes ? "ready" : "neutral",
+        },
+      ]
+    : [];
   const navigation = [
     { key: "history", label: "会议管理", icon: FolderClosed },
     { key: "departments", label: "部门管理", icon: Building2 },
@@ -1258,7 +1352,33 @@ export function App() {
                       <p>开启录音，实时记录讨论内容。结束后生成会议总结。</p>
                     )}
                   </div>
+                  {session && (
+                    <div
+                      className="meeting-processing-status"
+                      aria-label="会议处理状态"
+                    >
+                      {processingStates.map((item) => (
+                        <span
+                          key={item.key}
+                          className={`processing-chip processing-chip--${item.tone}`}
+                        >
+                          <i />
+                          {item.label}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
+                {!session && (
+                  <Button
+                    variant="outline"
+                    className="meeting-create-action"
+                    onClick={requestCreate}
+                  >
+                    <Plus size={15} />
+                    新建会议
+                  </Button>
+                )}
               </div>
 
               <div className="meeting-workspace">
@@ -1375,14 +1495,15 @@ export function App() {
                           </article>
                         )}
                       </div>
-                      <StageSummaryBubbles
-                        key={session?.remoteMeetingId || "no-meeting"}
-                        summaries={stageSummaries}
-                        formatTime={formatElapsed}
-                        error={stageSummaryBubbleError}
-                        retrying={retryingStageSummaries}
-                        onRetry={retryStageSummaries}
-                      />
+                      <button
+                        type="button"
+                        className="transcript-latest-button"
+                        onClick={followTranscript}
+                        hidden={transcriptFollowing || !transcripts.length}
+                      >
+                        回到最新
+                        <ChevronRight size={13} />
+                      </button>
                       <div className="document-footer">
                         <span>
                           <CheckCheck size={13} />
@@ -1537,52 +1658,52 @@ export function App() {
                       <span>会议录音时长</span>
                     </div>
                     <RecordingWave active={recordingActive} />
-                    <div className="recording-controls">
-                      <Button
-                        onClick={() =>
-                          session && session.status !== "completed"
-                            ? startMeeting()
-                            : requestCreate()
-                        }
-                        disabled={isStarting || isRecording}
-                        aria-busy={isStarting}
-                      >
-                        {isStarting ? (
-                          <LoaderCircle size={16} className="animate-spin" />
-                        ) : (
-                          <Mic size={16} />
-                        )}
-                        {isStarting
-                          ? "正在连接..."
-                          : session && session.status !== "completed"
-                            ? session.remoteStatus === "paused"
-                              ? "继续会议"
-                              : "开始会议"
-                            : "新建会议"}
-                      </Button>
-                      <div className="recording-secondary-actions">
+                    {session && session.status !== "completed" ? (
+                      <div className="recording-controls">
                         <Button
-                          variant="outline"
-                          onClick={togglePause}
-                          disabled={isStarting || isControlling || !isRecording}
+                          onClick={startMeeting}
+                          disabled={isStarting || isRecording}
+                          aria-busy={isStarting}
                         >
-                          {paused ? <Play size={15} /> : <Pause size={15} />}
-                          {paused ? "继续" : "暂停"}
-                        </Button>
-                        <Button
-                          variant="destructive"
-                          onClick={stopMeeting}
-                          disabled={isStarting || isControlling || !isRecording}
-                        >
-                          {isControlling ? (
-                            <LoaderCircle size={14} className="animate-spin" />
+                          {isStarting ? (
+                            <LoaderCircle size={16} className="animate-spin" />
                           ) : (
-                            <Square size={13} />
+                            <Mic size={16} />
                           )}
-                          结束会议
+                          {isStarting
+                            ? "正在连接..."
+                            : session.remoteStatus === "paused"
+                              ? "继续会议"
+                              : "开始会议"}
                         </Button>
+                        <div className="recording-secondary-actions">
+                          <Button
+                            variant="outline"
+                            onClick={togglePause}
+                            disabled={isStarting || isControlling || !isRecording}
+                          >
+                            {paused ? <Play size={15} /> : <Pause size={15} />}
+                            {paused ? "继续" : "暂停"}
+                          </Button>
+                          <Button
+                            variant="destructive"
+                            onClick={stopMeeting}
+                            disabled={isStarting || isControlling || !isRecording}
+                          >
+                            {isControlling ? (
+                              <LoaderCircle size={14} className="animate-spin" />
+                            ) : (
+                              <Square size={13} />
+                            )}
+                            结束会议
+                          </Button>
+                        </div>
                       </div>
-                    </div>
+                    ) : (
+                      <p className="recording-controls-note">
+                        从会议管理新建会议后开始录音。
+                      </p>
+                    )}
                     <div className="microphone-status">
                       {recordingActive ? (
                         <Mic size={13} />
@@ -1596,6 +1717,17 @@ export function App() {
                           : "麦克风未开启"}
                     </div>
                   </Card>
+                  <StageSummaryPanel
+                    key={session?.remoteMeetingId || "no-meeting"}
+                    summaries={stageSummaries}
+                    status={stageSummaryState.status}
+                    windowSeconds={stageSummaryState.windowSeconds}
+                    formatTime={formatElapsed}
+                    error={stageSummaryBubbleError}
+                    retrying={retryingStageSummaries}
+                    onRetry={retryStageSummaries}
+                    onJump={jumpToStageSummary}
+                  />
                   {summaryBusy && (
                     <Card className="report-progress" role="status">
                       <div>

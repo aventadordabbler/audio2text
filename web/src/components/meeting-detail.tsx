@@ -3,6 +3,7 @@ import {
   ArrowDown,
   ArrowLeft,
   AudioLines,
+  Building2,
   CalendarDays,
   Check,
   CheckCheck,
@@ -32,6 +33,31 @@ import { errorMessage, formatDate, formatDuration, languageLabels } from "@/lib/
 import { RecordingSession } from "@/lib/recording-session"
 import { downloadRecording } from "@/lib/recording-download"
 
+function speakerProcessingLabel(status: string) {
+  switch (status) {
+    case "running":
+      return "正在校正说话人"
+    case "queued":
+      return "等待校正说话人"
+    case "pending":
+      return "说话人标注中"
+    case "ready":
+      return "说话人已完成"
+    case "failed":
+    case "unavailable":
+      return "说话人需处理"
+    default:
+      return "说话人识别待命"
+  }
+}
+
+function speakerProcessingTone(status: string) {
+  if (status === "failed" || status === "unavailable") return "warning"
+  if (["pending", "queued", "running"].includes(status)) return "active"
+  if (status === "ready") return "ready"
+  return "neutral"
+}
+
 export function MeetingDetail({
   session,
   onError,
@@ -46,6 +72,7 @@ export function MeetingDetail({
   const state = useSyncExternalStore(session.subscribe, session.getSnapshot)
   const meeting = state.meeting!
   const [autoScroll, setAutoScroll] = useState(true)
+  const [showLatest, setShowLatest] = useState(false)
   const [copied, setCopied] = useState(false)
   const [exportingAudio, setExportingAudio] = useState(false)
   const [now, setNow] = useState(Date.now())
@@ -61,6 +88,44 @@ export function MeetingDetail({
   const seconds =
     meeting.duration_seconds +
     (status === "recording" ? Math.max(0, now - state.durationUpdatedAt) / 1000 : 0)
+  const processingStates = [
+    {
+      key: "recording",
+      label:
+        status === "recording"
+          ? "录音中"
+          : status === "ended"
+            ? "录音完成"
+            : status === "paused"
+              ? "已暂停"
+              : "准备中",
+      tone: status === "recording" ? "active" : "ready",
+    },
+    {
+      key: "transcript",
+      label: meeting.text
+        ? status === "ended"
+          ? "转写完成"
+          : "实时转写"
+        : "等待转写",
+      tone: meeting.text ? "ready" : "neutral",
+    },
+    {
+      key: "speaker",
+      label: speakerProcessingLabel(meeting.processing.status),
+      tone: speakerProcessingTone(meeting.processing.status),
+    },
+    {
+      key: "minutes",
+      label:
+        status === "ended"
+          ? meeting.minutes_version
+            ? "纪要已保存"
+            : "等待纪要"
+          : "会后生成",
+      tone: meeting.minutes_version ? "ready" : "neutral",
+    },
+  ]
 
   useEffect(() => {
     if (status === "ended" && previousStatus.current !== "ended") setActiveTab("minutes")
@@ -77,7 +142,11 @@ export function MeetingDetail({
 
   function scrollToBottom() {
     const viewport = scrollRoot.current?.querySelector("[data-slot='scroll-area-viewport']")
-    if (viewport) viewport.scrollTop = viewport.scrollHeight
+    if (viewport) {
+      viewport.scrollTop = viewport.scrollHeight
+      following.current = true
+      setShowLatest(false)
+    }
   }
 
   useEffect(() => {
@@ -89,7 +158,11 @@ export function MeetingDetail({
   useEffect(() => {
     const viewport = scrollRoot.current?.querySelector("[data-slot='scroll-area-viewport']")
     if (!viewport) return
-    const track = () => { following.current = viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop < 80 }
+    const track = () => {
+      const atLatest = viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop < 80
+      following.current = atLatest
+      setShowLatest(!atLatest)
+    }
     viewport.addEventListener("scroll", track, { passive: true })
     const observer = new ResizeObserver(() => { if (autoScroll && following.current && followLiveText) scrollToBottom() })
     observer.observe(viewport)
@@ -172,6 +245,24 @@ export function MeetingDetail({
                 <Languages />
                 {languageLabels[meeting.language || ""] || meeting.language || "自动识别语言"}
               </span>
+              <i />
+              <span>
+                <Building2 />
+                {meeting.department_name || "未分类"}
+              </span>
+              <i />
+              <span>
+                <Clock3 />
+                {formatDuration(seconds)}
+              </span>
+            </div>
+            <div className="meeting-processing-status" aria-label="会议处理状态">
+              {processingStates.map((item) => (
+                <span key={item.key} className={`processing-chip processing-chip--${item.tone}`}>
+                  <i />
+                  {item.label}
+                </span>
+              ))}
             </div>
           </div>
         </div>
@@ -225,7 +316,10 @@ export function MeetingDetail({
                     checked={autoScroll}
                     onCheckedChange={(checked) => {
                       setAutoScroll(checked)
-                      if (checked) following.current = true
+                      if (checked) {
+                        following.current = true
+                        setShowLatest(false)
+                      }
                       if (checked) requestAnimationFrame(scrollToBottom)
                     }}
                     size="sm"
@@ -282,6 +376,18 @@ export function MeetingDetail({
                   )}
                 </article>
               </ScrollArea>
+              {showLatest && meeting.segments.length > 0 && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="transcript-latest-button"
+                  onClick={scrollToBottom}
+                >
+                  回到最新
+                  <ArrowDown className="size-3.5" />
+                </Button>
+              )}
               <div className="transcript-footer">
                 <span id="transcript-state">
                   <span className={recording ? "saving-dot" : "saved-check"}>
