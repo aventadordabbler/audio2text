@@ -345,18 +345,23 @@ try {
   ]) {
     await resizeWindow(width, height);
     const workspaceColumns = await page.evaluate(() => {
-      const transcript = document.querySelector(
-        '.meeting-panel[data-state="active"] .document-card',
-      );
       const aside = document.querySelector(".meeting-aside");
-      const recording = aside?.querySelector(".recording-card");
-      const transcriptRect = transcript?.getBoundingClientRect();
+      const recording = document.querySelector(".recording-card--top");
       const recordingRect = recording?.getBoundingClientRect();
       return {
-        topDelta: recordingRect.top - transcriptRect.top,
-        bottomDelta: recordingRect.bottom - transcriptRect.bottom,
+        top: recordingRect?.top ?? -1,
+        bottom: recordingRect?.bottom ?? Number.POSITIVE_INFINITY,
         asideOverflowY: getComputedStyle(aside).overflowY,
-        contentFits: recording.scrollHeight <= recording.clientHeight + 1,
+        contentFits: [...recording.children]
+          .filter((child) => !child.classList.contains("recording-diagnostics"))
+          .every((child) => {
+            const rect = child.getBoundingClientRect();
+            return (
+              rect.height === 0 ||
+              (rect.top >= recordingRect.top - 1 &&
+                rect.bottom <= recordingRect.bottom + 1)
+            );
+          }),
         controlsVisible: [...recording.querySelectorAll("button")].every(
           (button) => {
             const rect = button.getBoundingClientRect();
@@ -368,13 +373,9 @@ try {
         ),
       };
     });
+    assert.equal(workspaceColumns.top >= 0, true, JSON.stringify(workspaceColumns));
     assert.equal(
-      workspaceColumns.topDelta <= 1 && workspaceColumns.topDelta > -48,
-      true,
-      JSON.stringify(workspaceColumns),
-    );
-    assert.equal(
-      workspaceColumns.bottomDelta <= 3,
+      workspaceColumns.bottom <= height,
       true,
       JSON.stringify(workspaceColumns),
     );
@@ -418,12 +419,16 @@ try {
     0,
   );
   await page
-    .getByLabel("AI会议助手")
+    .getByLabel("阶段总结")
     .locator(".ai-insight-heading")
     .getByText("阶段总结", { exact: true })
     .waitFor();
+  assert.equal(
+    await page.getByText("AI 会议助手", { exact: true }).count(),
+    0,
+  );
   const latestStageSummary = page
-    .getByLabel("AI会议助手")
+    .getByLabel("阶段总结")
     .locator("article.ai-insight-item")
     .last();
   await latestStageSummary

@@ -1145,6 +1145,107 @@ export function App() {
     weekday: "long",
   });
 
+  function renderRecordingControl() {
+    return (
+      <Card className="recording-card recording-card--top">
+        <div className="recording-card-heading">
+          <h2>
+            <Mic size={15} />
+            录音控制
+          </h2>
+          <div className="recording-heading-actions">
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label={showDiagnostics ? "隐藏运行诊断" : "显示运行诊断"}
+              aria-expanded={showDiagnostics}
+              onClick={() => setShowDiagnostics((value) => !value)}
+            >
+              <AudioLines size={13} />
+            </Button>
+            <i
+              className={`recording-indicator${recordingActive ? " active" : ""}`}
+            />
+          </div>
+        </div>
+        {showDiagnostics && (
+          <div className="recording-diagnostics" aria-label="ASR 运行诊断">
+            {asrDiagnostics ? (
+              <>
+                {diagnosticRows.map(([label, value]) => (
+                  <span key={label}>
+                    {label}
+                    <strong>{value}</strong>
+                  </span>
+                ))}
+                <small>最近心跳 {asrDiagnostics.updatedAt}</small>
+              </>
+            ) : (
+              <small>等待下一次心跳诊断…</small>
+            )}
+          </div>
+        )}
+        <div className="recording-timer">
+          <strong>{elapsedLabel}</strong>
+          <span>会议录音时长</span>
+        </div>
+        <RecordingWave active={recordingActive} />
+        {session && session.status !== "completed" ? (
+          <div className="recording-controls">
+            <Button
+              onClick={startMeeting}
+              disabled={isStarting || isRecording}
+              aria-busy={isStarting}
+            >
+              {isStarting ? (
+                <LoaderCircle size={16} className="animate-spin" />
+              ) : (
+                <Mic size={16} />
+              )}
+              {isStarting
+                ? "正在连接..."
+                : session.remoteStatus === "paused"
+                  ? "继续会议"
+                  : "开始会议"}
+            </Button>
+            <div className="recording-secondary-actions">
+              <Button
+                variant="outline"
+                onClick={togglePause}
+                disabled={isStarting || isControlling || !isRecording}
+              >
+                {paused ? <Play size={15} /> : <Pause size={15} />}
+                {paused ? "继续" : "暂停"}
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={stopMeeting}
+                disabled={isStarting || isControlling || !isRecording}
+              >
+                {isControlling ? (
+                  <LoaderCircle size={14} className="animate-spin" />
+                ) : (
+                  <Square size={13} />
+                )}
+                结束会议
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <p className="recording-controls-note">从会议管理新建会议后开始录音。</p>
+        )}
+        <div className="microphone-status">
+          {recordingActive ? <Mic size={13} /> : <MicOff size={13} />}
+          {recordingActive
+            ? "麦克风采集中"
+            : paused && isRecording
+              ? "麦克风已暂停"
+              : "麦克风未开启"}
+        </div>
+      </Card>
+    );
+  }
+
   if (!ready) {
     return (
       <main className="loading-screen">
@@ -1369,16 +1470,19 @@ export function App() {
                     </div>
                   )}
                 </div>
-                {!session && (
-                  <Button
-                    variant="outline"
-                    className="meeting-create-action"
-                    onClick={requestCreate}
-                  >
-                    <Plus size={15} />
-                    新建会议
-                  </Button>
-                )}
+                <div className="meeting-heading-actions">
+                  {renderRecordingControl()}
+                  {!session && (
+                    <Button
+                      variant="outline"
+                      className="meeting-create-action"
+                      onClick={requestCreate}
+                    >
+                      <Plus size={15} />
+                      新建会议
+                    </Button>
+                  )}
+                </div>
               </div>
 
               <div className="meeting-workspace">
@@ -1610,113 +1714,6 @@ export function App() {
                 </Tabs>
 
                 <div className="meeting-aside">
-                  <Card className="recording-card">
-                    <div className="recording-card-heading">
-                      <h2>
-                        <Mic size={15} />
-                        录音控制
-                      </h2>
-                      <div className="recording-heading-actions">
-                        <Button
-                          variant="ghost"
-                          size="icon-xs"
-                          aria-label={
-                            showDiagnostics ? "隐藏运行诊断" : "显示运行诊断"
-                          }
-                          aria-expanded={showDiagnostics}
-                          onClick={() => setShowDiagnostics((value) => !value)}
-                        >
-                          <AudioLines size={13} />
-                        </Button>
-                        <i
-                          className={`recording-indicator${recordingActive ? " active" : ""}`}
-                        />
-                      </div>
-                    </div>
-                    {showDiagnostics && (
-                      <div
-                        className="recording-diagnostics"
-                        aria-label="ASR 运行诊断"
-                      >
-                        {asrDiagnostics ? (
-                          <>
-                            {diagnosticRows.map(([label, value]) => (
-                              <span key={label}>
-                                {label}
-                                <strong>{value}</strong>
-                              </span>
-                            ))}
-                            <small>最近心跳 {asrDiagnostics.updatedAt}</small>
-                          </>
-                        ) : (
-                          <small>等待下一次心跳诊断…</small>
-                        )}
-                      </div>
-                    )}
-                    <div className="recording-timer">
-                      <strong>{elapsedLabel}</strong>
-                      <span>会议录音时长</span>
-                    </div>
-                    <RecordingWave active={recordingActive} />
-                    {session && session.status !== "completed" ? (
-                      <div className="recording-controls">
-                        <Button
-                          onClick={startMeeting}
-                          disabled={isStarting || isRecording}
-                          aria-busy={isStarting}
-                        >
-                          {isStarting ? (
-                            <LoaderCircle size={16} className="animate-spin" />
-                          ) : (
-                            <Mic size={16} />
-                          )}
-                          {isStarting
-                            ? "正在连接..."
-                            : session.remoteStatus === "paused"
-                              ? "继续会议"
-                              : "开始会议"}
-                        </Button>
-                        <div className="recording-secondary-actions">
-                          <Button
-                            variant="outline"
-                            onClick={togglePause}
-                            disabled={isStarting || isControlling || !isRecording}
-                          >
-                            {paused ? <Play size={15} /> : <Pause size={15} />}
-                            {paused ? "继续" : "暂停"}
-                          </Button>
-                          <Button
-                            variant="destructive"
-                            onClick={stopMeeting}
-                            disabled={isStarting || isControlling || !isRecording}
-                          >
-                            {isControlling ? (
-                              <LoaderCircle size={14} className="animate-spin" />
-                            ) : (
-                              <Square size={13} />
-                            )}
-                            结束会议
-                          </Button>
-                        </div>
-                      </div>
-                    ) : (
-                      <p className="recording-controls-note">
-                        从会议管理新建会议后开始录音。
-                      </p>
-                    )}
-                    <div className="microphone-status">
-                      {recordingActive ? (
-                        <Mic size={13} />
-                      ) : (
-                        <MicOff size={13} />
-                      )}
-                      {recordingActive
-                        ? "麦克风采集中"
-                        : paused && isRecording
-                          ? "麦克风已暂停"
-                          : "麦克风未开启"}
-                    </div>
-                  </Card>
                   <StageSummaryPanel
                     key={session?.remoteMeetingId || "no-meeting"}
                     summaries={stageSummaries}
@@ -1728,16 +1725,6 @@ export function App() {
                     onRetry={retryStageSummaries}
                     onJump={jumpToStageSummary}
                   />
-                  {summaryBusy && (
-                    <Card className="report-progress" role="status">
-                      <div>
-                        <Sparkles size={14} />
-                        <strong>正在生成总结</strong>
-                        <span>服务端处理中</span>
-                      </div>
-                      <p>转写与总结均保存在服务端，生成完成后会自动刷新。</p>
-                    </Card>
-                  )}
                 </div>
               </div>
             </section>

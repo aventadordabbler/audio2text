@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ArrowUpRight, LoaderCircle, RefreshCw, Sparkles } from "lucide-react";
+import { ArrowUpRight, FileText, LoaderCircle, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { summaryExcerpt } from "@/services/stage-summary-bubbles.js";
@@ -39,14 +39,14 @@ export function StageSummaryPanel({
   }
 
   return (
-    <aside className="ai-insight-panel" aria-label="AI会议助手">
+    <aside className="stage-summary-panel ai-insight-panel" aria-label="阶段总结">
       <header className="ai-insight-heading">
         <div>
           <h2>
-            <Sparkles size={14} />
-            AI 会议助手
+            <FileText size={14} />
+            阶段总结
           </h2>
-          <span>阶段总结</span>
+          <span>按时间整理</span>
         </div>
         <span className={`ai-insight-status ai-insight-status--${status}`}>
           <i />
@@ -83,7 +83,7 @@ export function StageSummaryPanel({
               </>
             ) : (
               <>
-                <Sparkles size={15} />
+                <FileText size={15} />
                 <span>会议开始后，阶段总结会显示在这里。</span>
               </>
             )}
@@ -103,7 +103,7 @@ export function StageSummaryPanel({
             >
               <header>
                 <strong>
-                  <Sparkles size={12} />
+                  <FileText size={12} />
                   阶段总结
                 </strong>
                 <time>
