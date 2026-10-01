@@ -29,9 +29,12 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { MeetingMinutes } from "./meeting-minutes"
 import { MeetingStatusBadge } from "./meeting-status"
-import { errorMessage, formatDate, formatDuration, languageLabels } from "@/lib/meetings"
+import { api, errorMessage, formatDate, formatDuration, languageLabels } from "@/lib/meetings"
 import { RecordingSession } from "@/lib/recording-session"
 import { downloadRecording } from "@/lib/recording-download"
+import { StageSummaryPanel } from "./stage-summary-panel"
+import { StageSummaryFeed } from "@/lib/stage-summary-feed"
+import type { StageSummary, StageSummaryStatus } from "@/lib/stage-summary"
 
 function speakerProcessingLabel(status: string) {
   switch (status) {
@@ -76,11 +79,19 @@ export function MeetingDetail({
   const [copied, setCopied] = useState(false)
   const [exportingAudio, setExportingAudio] = useState(false)
   const [now, setNow] = useState(Date.now())
+  const [stageSummaries, setStageSummaries] = useState<StageSummary[]>([])
+  const [stageSummaryState, setStageSummaryState] = useState<{
+    status: StageSummaryStatus
+    windowSeconds: number
+    error: string
+  }>({ status: "connecting", windowSeconds: 0, error: "" })
+  const [retryingStageSummaries, setRetryingStageSummaries] = useState(false)
   const [activeTab, setActiveTab] = useState(meeting.status === "ended" ? "minutes" : "transcript")
   const previousStatus = useRef(meeting.status)
   const scrollRoot = useRef<HTMLDivElement>(null)
   const copyTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
   const following = useRef(true)
+  const stageSummaryFeed = useRef(new StageSummaryFeed())
   const { status } = meeting
   const recording = status === "recording" && state.localRecording && !state.finishing
   const followLiveText = autoScroll && state.liveVersion > 0
@@ -131,6 +142,18 @@ export function MeetingDetail({
     if (status === "ended" && previousStatus.current !== "ended") setActiveTab("minutes")
     previousStatus.current = status
   }, [status])
+
+  useEffect(() => {
+    setStageSummaries([])
+    setStageSummaryState({ status: "connecting", windowSeconds: 0, error: "" })
+    stageSummaryFeed.current.connect(meeting.id, {
+      onSummaries: setStageSummaries,
+      onStatus: ({ status: feedStatus, error = "", windowSeconds = 0 }) => {
+        setStageSummaryState({ status: feedStatus, error, windowSeconds })
+      },
+    })
+    return () => stageSummaryFeed.current.disconnect()
+  }, [meeting.id])
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 250)
@@ -192,6 +215,29 @@ export function MeetingDetail({
     }
   }
 
+  async function retryStageSummaries() {
+    if (retryingStageSummaries) return
+    setRetryingStageSummaries(true)
+    try {
+      const summaries = await api<StageSummary[]>(`/api/meetings/${encodeURIComponent(meeting.id)}/stage-summaries/retry`, { method: "POST" })
+      setStageSummaries(summaries)
+      setStageSummaryState((current) => ({ ...current, error: "" }))
+    } catch (error) {
+      setStageSummaryState((current) => ({ ...current, status: "error", error: `阶段总结重试失败：${errorMessage(error)}` }))
+    } finally {
+      setRetryingStageSummaries(false)
+    }
+  }
+
+  function jumpToStageSummary(summary: StageSummary) {
+    setActiveTab("transcript")
+    requestAnimationFrame(() => {
+      const target = [...document.querySelectorAll<HTMLElement>(".transcript-segment")]
+        .find((element) => Number(element.dataset.startMs || 0) >= summary.start_seconds * 1000)
+      target?.scrollIntoView({ behavior: "smooth", block: "center" })
+    })
+  }
+
   const hints = {
     created: "准备好后，开启麦克风。转写内容会实时显示。",
     recording: state.localRecording
@@ -199,6 +245,99 @@ export function MeetingDetail({
       : "会议正在其他页面录音，关闭该页面后可重新进入继续。",
     paused: "麦克风已暂停。继续录音后，将接着记录这场会议。",
     ended: "会议已结束，已保存的内容可以随时回看。",
+  }
+
+  function renderRecordingControl() {
+    return (
+      <Card className="recording-card recording-card--top gap-0 rounded-xl shadow-none">
+        <div className="recording-card-heading">
+          <h2>
+            <Mic className="size-4" />
+            录音控制
+          </h2>
+          <span className={recording ? "recording-indicator active" : "recording-indicator"} />
+        </div>
+        <div className="recording-timer">
+          <strong id="recording-time">{formatDuration(seconds)}</strong>
+        </div>
+        <div className={`audio-wave ${recording ? "active" : ""}`} aria-hidden="true">
+          {Array.from({ length: 27 }, (_, i) => (
+            <i
+              key={i}
+              style={{
+                height: `${[12, 20, 32, 18, 42, 27, 48, 30, 38][i % 9]}px`,
+                animationDelay: `${i * -0.09}s`,
+              }}
+            />
+          ))}
+        </div>
+        <div className="recording-controls">
+          {status === "created" && (
+            <Button
+              id="start-button"
+              onClick={() => session.run("start")}
+              disabled={state.busy || state.finishing}
+              className="recording-primary-action gap-2"
+            >
+              {state.busy ? <LoaderCircle className="animate-spin" /> : <Mic />}开始录音
+            </Button>
+          )}
+          {status === "recording" && (
+            <Button
+              id="pause-button"
+              variant="secondary"
+              onClick={() => session.run("pause")}
+              disabled={state.busy || state.finishing || !state.localRecording}
+              className="gap-2"
+            >
+              {state.busy ? <LoaderCircle className="animate-spin" /> : <Pause />}暂停录音
+            </Button>
+          )}
+          {status === "paused" && (
+            <Button
+              id="resume-button"
+              onClick={() => session.run("resume")}
+              disabled={state.busy || state.finishing}
+              className="gap-2"
+            >
+              {state.busy ? <LoaderCircle className="animate-spin" /> : <Play />}继续录音
+            </Button>
+          )}
+          {status !== "ended" ? (
+            <Button
+              id="end-button"
+              variant="outline"
+              onClick={() => session.run("end")}
+              disabled={state.busy || (status === "recording" && !state.localRecording && !state.finishing)}
+              className="recording-end-action gap-2 border-neutral-200 bg-white text-muted-foreground hover:border-neutral-200 hover:bg-neutral-50 hover:text-neutral-600"
+            >
+              <Square className="size-3.5" />
+              {state.finishing ? "重试结束会议" : "结束会议"}
+            </Button>
+          ) : (
+            <div className="ended-note">
+              <CheckCheck />
+              会议已结束
+            </div>
+          )}
+        </div>
+        <p id="recording-hint" className="recording-hint">
+          {state.finishing ? "录音已停止，请重试结束会议，保存最后一段内容。" : hints[status]}
+        </p>
+        <div id="connection-status" className="microphone-status" role="status">
+          {recording ? <Mic /> : status === "ended" ? <Check /> : <MicOff />}
+          {state.busy
+            ? "正在处理，请稍候…"
+            : recording
+              ? "麦克风已开启"
+              : status === "ended"
+                ? "内容已自动保存"
+                : status === "paused"
+                  ? "麦克风已暂停"
+                  : "麦克风尚未开启"}
+        </div>
+      </Card>
+    )
   }
 
   return (
@@ -227,7 +366,8 @@ export function MeetingDetail({
         </a>
       </Button>
       <div className="detail-heading">
-        <div className="min-w-0">
+        <div className="detail-heading-main">
+          <div className="min-w-0">
           <div className="detail-status mb-3">
             <MeetingStatusBadge id="meeting-status" status={status} />
           </div>
@@ -264,6 +404,10 @@ export function MeetingDetail({
                 </span>
               ))}
             </div>
+          </div>
+          </div>
+          <div className="detail-heading-actions">
+            {renderRecordingControl()}
           </div>
         </div>
         <div className="detail-toolbar">
@@ -336,7 +480,7 @@ export function MeetingDetail({
                   {meeting.text || state.partialText ? (
                     <>
                       {meeting.segments?.length ? meeting.segments.map((segment) => (
-                        <section className="transcript-segment" key={segment.segment_id} data-segment-id={segment.segment_id}>
+                        <section className="transcript-segment" key={segment.segment_id} data-segment-id={segment.segment_id} data-start-ms={segment.start_ms}>
                           <div className="transcript-segment-meta">
                             <span>{segment.speaker_status === "overlap" ? "多人同时讲话" : segment.speaker_status === "multiple" ? "多位说话人" : ["unknown", "pending"].includes(segment.speaker_status) ? "说话人待确认" : segment.speaker_ids.map((id) => meeting.speakers[id]?.name || "未知说话人").join("、") || "说话人待确认"}</span>
                             <time>{formatDuration(segment.start_ms / 1000)}</time>
@@ -436,130 +580,15 @@ export function MeetingDetail({
         </div>
 
         <aside className="meeting-aside">
-          <Card className="recording-card gap-0 rounded-xl p-5 shadow-none">
-            <div className="recording-card-heading">
-              <h2>
-                <Mic className="size-4" />
-                录音控制
-              </h2>
-              <span className={recording ? "recording-indicator active" : "recording-indicator"} />
-            </div>
-            <div className="recording-timer">
-              <span id="recording-time">{formatDuration(seconds)}</span>
-              <p>累计录音时长</p>
-            </div>
-            <div className={`audio-wave ${recording ? "active" : ""}`} aria-hidden="true">
-              {Array.from({ length: 27 }, (_, i) => (
-                <i
-                  key={i}
-                  style={{
-                    height: `${[12, 20, 32, 18, 42, 27, 48, 30, 38][i % 9]}px`,
-                    animationDelay: `${i * -0.09}s`,
-                  }}
-                />
-              ))}
-            </div>
-            <div className="recording-controls">
-              {status === "created" && (
-                <Button
-                  id="start-button"
-                  onClick={() => session.run("start")}
-                  disabled={state.busy || state.finishing}
-                  className="h-10 w-full gap-2"
-                >
-                  {state.busy ? <LoaderCircle className="animate-spin" /> : <Mic />}开始录音
-                </Button>
-              )}
-              {status === "recording" && (
-                <Button
-                  id="pause-button"
-                  variant="secondary"
-                  onClick={() => session.run("pause")}
-                  disabled={state.busy || state.finishing || !state.localRecording}
-                  className="h-10 w-full gap-2"
-                >
-                  {state.busy ? <LoaderCircle className="animate-spin" /> : <Pause />}暂停录音
-                </Button>
-              )}
-              {status === "paused" && (
-                <Button
-                  id="resume-button"
-                  onClick={() => session.run("resume")}
-                  disabled={state.busy || state.finishing}
-                  className="h-10 w-full gap-2"
-                >
-                  {state.busy ? <LoaderCircle className="animate-spin" /> : <Play />}继续录音
-                </Button>
-              )}
-              {status !== "ended" ? (
-                <Button
-                  id="end-button"
-                  variant="outline"
-                  onClick={() => session.run("end")}
-                  disabled={
-                    state.busy ||
-                    (status === "recording" && !state.localRecording && !state.finishing)
-                  }
-                  className="h-10 w-full gap-2 border-neutral-200 bg-white text-muted-foreground hover:border-neutral-200 hover:bg-neutral-50 hover:text-neutral-600"
-                >
-                  <Square className="size-3.5" />
-                  {state.finishing ? "重试结束会议" : "结束会议"}
-                </Button>
-              ) : (
-                <div className="ended-note">
-                  <CheckCheck />
-                  会议已结束
-                </div>
-              )}
-            </div>
-            <p id="recording-hint" className="recording-hint">
-              {state.finishing ? "录音已停止，请重试结束会议，保存最后一段内容。" : hints[status]}
-            </p>
-            <div id="connection-status" className="microphone-status" role="status">
-              {recording ? <Mic /> : status === "ended" ? <Check /> : <MicOff />}
-              {state.busy
-                ? "正在处理，请稍候…"
-                : recording
-                  ? "麦克风已开启"
-                  : status === "ended"
-                    ? "内容已自动保存"
-                    : status === "paused"
-                      ? "麦克风已暂停"
-                      : "麦克风尚未开启"}
-            </div>
-          </Card>
-          <Card className="meeting-info gap-4 rounded-xl p-5 shadow-none">
-            <h2>会议信息</h2>
-            <dl>
-              <div>
-                <dt>创建日期</dt>
-                <dd>{formatDate(meeting.created_at, false)}</dd>
-              </div>
-              <div>
-                <dt>所属部门</dt>
-                <dd className="max-w-36 break-words">{meeting.department_name || "未分类"}</dd>
-              </div>
-              <div>
-                <dt>转写语言</dt>
-                <dd>{languageLabels[meeting.language || ""] || meeting.language || "自动识别"}</dd>
-              </div>
-              <div>
-                <dt>记录字数</dt>
-                <dd>{textLength.toLocaleString()} 字</dd>
-              </div>
-              <div>
-                <dt>保存方式</dt>
-                <dd className="inline-flex items-center gap-1">
-                  <Check className="size-3 text-neutral-600" />
-                  自动保存
-                </dd>
-              </div>
-            </dl>
-          </Card>
-          <p className="aside-note">
-            <Clock3 className="size-3.5 shrink-0" />
-            暂停时不会录音，继续后保留已有内容。
-          </p>
+          <StageSummaryPanel
+            summaries={stageSummaries}
+            status={stageSummaryState.status}
+            windowSeconds={stageSummaryState.windowSeconds}
+            error={stageSummaryState.error}
+            retrying={retryingStageSummaries}
+            onRetry={() => void retryStageSummaries()}
+            onJump={jumpToStageSummary}
+          />
         </aside>
       </div>
       <div className="detail-bottom-note">

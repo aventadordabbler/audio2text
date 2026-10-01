@@ -906,6 +906,19 @@ input {
   gap: 16px;
   margin-bottom: 20px;
 }
+.detail-heading-main {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  min-width: 0;
+}
+.detail-heading-actions {
+  display: flex;
+  flex-shrink: 0;
+  justify-content: flex-end;
+  min-width: 0;
+}
 .detail-title-row {
   display: flex;
   flex-wrap: wrap;
@@ -1024,12 +1037,16 @@ input {
 .meeting-content {
   display: flex;
   flex-direction: column;
+  gap: 12px;
   min-height: 0;
   min-width: 0;
-  padding: 1px;
+  padding: 0;
 }
 .meeting-tabs {
   flex-shrink: 0;
+}
+.meeting-content > .meeting-tabs {
+  height: 35px;
 }
 .meeting-tabs [data-slot="tabs-trigger"] {
   padding: 0 13px;
@@ -1067,6 +1084,187 @@ input {
   line-height: 1.9;
   color: #404040;
   overflow-wrap: anywhere;
+}
+.ai-insight-panel {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid #e5e5e5;
+  border-radius: 11px;
+  background: #fff;
+}
+.ai-insight-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 53px;
+  padding: 11px 14px;
+  border-bottom: 1px solid #eee;
+}
+.ai-insight-heading > div {
+  min-width: 0;
+}
+.ai-insight-heading h2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #404040;
+  font-size: 12px;
+  font-weight: 550;
+}
+.ai-insight-heading h2 svg {
+  color: #525252;
+}
+.ai-insight-heading > div > span {
+  display: block;
+  margin-top: 3px;
+  color: #a3a3a3;
+  font-size: 9px;
+}
+.ai-insight-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  color: #a3a3a3;
+  font-size: 9px;
+  white-space: nowrap;
+}
+.ai-insight-status i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.ai-insight-status--live {
+  color: #525252;
+}
+.ai-insight-status--connecting,
+.ai-insight-status--reconnecting {
+  color: #737373;
+}
+.ai-insight-status--error {
+  color: #dc2626;
+}
+.ai-insight-scroll {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 10px;
+}
+.ai-insight-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 100px;
+  padding: 15px;
+  color: #a3a3a3;
+  font-size: 10px;
+  line-height: 1.7;
+  text-align: center;
+}
+.ai-insight-error {
+  display: grid;
+  gap: 7px;
+  margin-bottom: 9px;
+  padding: 9px;
+  border: 1px solid #fecaca;
+  border-radius: 7px;
+  background: #fff7f7;
+  color: #991b1b;
+  font-size: 10px;
+  line-height: 1.6;
+}
+.ai-insight-error p,
+.ai-insight-item-body p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.ai-insight-error button,
+.ai-insight-item-failure button {
+  justify-self: start;
+  height: 24px;
+  padding: 0 5px;
+  color: inherit;
+  font-size: 10px;
+}
+.ai-insight-item {
+  overflow: hidden;
+  border: 1px solid #eee;
+  border-radius: 8px;
+  background: #fdfdfd;
+}
+.ai-insight-item + .ai-insight-item {
+  margin-top: 8px;
+}
+.ai-insight-item > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+  padding: 8px 9px;
+  border-bottom: 1px solid #f1f1f1;
+  color: #a3a3a3;
+  font-size: 9px;
+}
+.ai-insight-item > header strong {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #404040;
+  font-size: 10px;
+  font-weight: 550;
+}
+.ai-insight-item > header time {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ai-insight-item-body {
+  padding: 10px 9px 7px;
+  color: #525252;
+  font-size: 11px;
+  line-height: 1.75;
+}
+.ai-insight-item-pending {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #a3a3a3;
+}
+.ai-insight-item-failure {
+  display: grid;
+  gap: 6px;
+  color: #991b1b;
+}
+.ai-insight-item > footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 9px;
+  min-height: 27px;
+  padding: 0 9px 7px;
+}
+.ai-insight-toggle,
+.ai-insight-jump {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0;
+  color: #525252;
+  font-size: 9px;
+}
+.ai-insight-jump {
+  color: #737373;
+}
+.ai-insight-footnote {
+  margin: 10px 2px 1px;
+  color: #a3a3a3;
+  font-size: 9px;
+  line-height: 1.6;
 }
 .minutes-text h1,
 .minutes-text h2,
@@ -1315,14 +1513,17 @@ input {
   animation: live-pulse 1.5s infinite;
 }
 .meeting-aside {
-  display: grid;
-  grid-auto-rows: max-content;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
-  align-content: start;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 1px;
-  gap: 17px;
+  padding: 0;
+  gap: 15px;
+}
+.meeting-aside > .stage-summary-panel {
+  flex: 1 1 0;
+  min-height: 0;
 }
 .recording-card {
   background: #ffffff;
@@ -1628,6 +1829,9 @@ input {
   .meeting-workspace {
     grid-template-columns: minmax(0, 1fr) 235px;
     gap: 16px;
+  }
+  .recording-card--top {
+    width: 235px;
   }
   .search-field {
     width: 210px;
@@ -2034,5 +2238,133 @@ input {
     animation: none !important;
     transition: none !important;
     scroll-behavior: auto !important;
+  }
+}
+
+/* Keep the meeting detail controls compact and consistent with the desktop client. */
+.detail-heading-main {
+  align-items: flex-start;
+}
+.recording-card--top {
+  display: grid;
+  grid-template-columns: minmax(0, auto) auto minmax(32px, 1fr);
+  grid-template-areas:
+    "heading timer wave"
+    "controls controls controls";
+  align-items: center;
+  gap: 6px 8px;
+  width: 264px;
+  min-width: 0;
+  padding: 10px 12px;
+  overflow: visible;
+}
+.recording-card--top .recording-card-heading {
+  grid-area: heading;
+  min-width: 0;
+}
+.recording-card--top .recording-timer {
+  grid-area: timer;
+  margin: 0;
+  padding: 0;
+  text-align: right;
+}
+.recording-card--top .recording-timer > strong {
+  display: block;
+  font-size: 23px;
+  line-height: 1.3;
+}
+.recording-card--top .recording-timer > span {
+  display: block;
+  margin-top: 2px;
+  color: #a3a3a3;
+  font-size: 9px;
+  white-space: nowrap;
+}
+.recording-card--top .audio-wave {
+  display: flex;
+  grid-area: wave;
+  min-width: 0;
+  height: 42px;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  justify-content: space-between;
+}
+.recording-card--top .audio-wave i {
+  width: 2px;
+  min-width: 0;
+  flex-shrink: 1;
+}
+.recording-card--top .recording-hint,
+.recording-card--top .microphone-status {
+  display: none;
+}
+.recording-card--top .recording-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+  grid-area: controls;
+  width: 100%;
+  min-width: 0;
+  gap: 8px;
+}
+.recording-card--top .recording-primary-action {
+  grid-column: 1 / -1;
+}
+.recording-card--top .recording-controls button,
+.recording-card--top .recording-controls .ended-note {
+  width: 100%;
+  min-width: 0;
+  flex: none;
+  height: 30px;
+  min-height: 0;
+  padding: 0 8px;
+  font-size: 11px;
+}
+.recording-card--top .recording-primary-action ~ .recording-end-action {
+  grid-column: 1 / -1;
+}
+.recording-card--top .recording-controls .ended-note {
+  grid-column: 1 / -1;
+}
+.recording-card--top .recording-controls button svg {
+  width: 14px;
+  height: 14px;
+}
+.meeting-aside > .stage-summary-panel {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+@media (max-width: 760px) {
+  .detail-heading-main {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .detail-heading-actions {
+    justify-content: stretch;
+  }
+  .recording-card--top {
+    width: 100%;
+    min-width: 0;
+  }
+  .meeting-aside {
+    max-height: 220px;
+    padding-top: 0;
+  }
+  .ai-insight-panel {
+    flex: none;
+    max-height: 220px;
+  }
+  .meeting-aside > .stage-summary-panel {
+    flex: 0 0 220px;
+    max-height: 220px;
+  }
+}
+
+@media (min-width: 761px) and (max-width: 1200px) {
+  .recording-card--top {
+    width: 235px;
   }
 }

@@ -1187,12 +1187,12 @@ export function App() {
         )}
         <div className="recording-timer">
           <strong>{elapsedLabel}</strong>
-          <span>会议录音时长</span>
         </div>
         <RecordingWave active={recordingActive} />
         {session && session.status !== "completed" ? (
           <div className="recording-controls">
             <Button
+              className="recording-primary-action"
               onClick={startMeeting}
               disabled={isStarting || isRecording}
               aria-busy={isStarting}

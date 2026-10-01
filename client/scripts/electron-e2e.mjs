@@ -346,11 +346,19 @@ try {
     await resizeWindow(width, height);
     const workspaceColumns = await page.evaluate(() => {
       const aside = document.querySelector(".meeting-aside");
+      const transcript = document.querySelector(
+        '.meeting-panel[data-state="active"] .document-card',
+      );
+      const stageSummary = document.querySelector(".stage-summary-panel");
       const recording = document.querySelector(".recording-card--top");
       const recordingRect = recording?.getBoundingClientRect();
+      const transcriptRect = transcript?.getBoundingClientRect();
+      const stageSummaryRect = stageSummary?.getBoundingClientRect();
       return {
         top: recordingRect?.top ?? -1,
         bottom: recordingRect?.bottom ?? Number.POSITIVE_INFINITY,
+        stageTop: stageSummaryRect?.top ?? -1,
+        transcriptTop: transcriptRect?.top ?? -1,
         asideOverflowY: getComputedStyle(aside).overflowY,
         contentFits: [...recording.children]
           .filter((child) => !child.classList.contains("recording-diagnostics"))
@@ -380,6 +388,11 @@ try {
       JSON.stringify(workspaceColumns),
     );
     assert.equal(workspaceColumns.asideOverflowY, "auto");
+    assert.equal(
+      Math.abs(workspaceColumns.stageTop - workspaceColumns.transcriptTop) <= 2,
+      true,
+      JSON.stringify(workspaceColumns),
+    );
     assert.equal(
       workspaceColumns.contentFits,
       true,
