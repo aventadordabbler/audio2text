@@ -224,12 +224,19 @@ def create_app(
             headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(meeting['title'] + '-会议纪要.md', safe='')}"},
         )
 
+    @app.head("/api/meetings/{meeting_id}/download")
     @app.get("/api/meetings/{meeting_id}/download")
-    def download_meeting(meeting_id: str) -> Response:
+    def download_meeting(meeting_id: str, request: Request) -> Response:
         meeting = get_meeting(meeting_id)
+        content = (meeting["text"] + "\n").encode("utf-8")
         return Response(
-            meeting["text"] + "\n", media_type="text/plain; charset=utf-8",
-            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(meeting['title'] + '.txt', safe='')}"},
+            content if request.method != "HEAD" else None,
+            media_type="text/plain; charset=utf-8",
+            headers={
+                "Content-Disposition": f"attachment; filename*=UTF-8''{quote(meeting['title'] + '.txt', safe='')}",
+                "Content-Length": str(len(content)),
+                "Cache-Control": "no-store",
+            },
         )
 
     @app.head("/api/meetings/{meeting_id}/audio/download")

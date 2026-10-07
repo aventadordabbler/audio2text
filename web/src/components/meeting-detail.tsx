@@ -199,7 +199,7 @@ export function MeetingDetail({
       if (copyTimeout.current) clearTimeout(copyTimeout.current)
       copyTimeout.current = setTimeout(() => setCopied(false), 2000)
     } catch (error) {
-      onError(`复制失败，请使用下载文本：${errorMessage(error)}`)
+      onError(`复制失败，请使用导出文本：${errorMessage(error)}`)
     }
   }
 
@@ -419,7 +419,7 @@ export function MeetingDetail({
             <Button variant="outline" className="download-heading shrink-0 gap-2 bg-white" asChild>
               <a id="download-link" href={`/api/meetings/${meeting.id}/download`}>
                 <Download className="size-4" />
-                下载文本
+                导出文本（TXT）
               </a>
             </Button>
           )}

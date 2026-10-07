@@ -70,6 +70,35 @@ async function writeServerTranscript(meeting) {
     socket.close();
   }
 }
+
+async function checkTranscriptDownload(page, meeting) {
+  const current = await api.get(meeting.id);
+  const expected = `${current.text}\n`;
+  const url = api.url(`/api/meetings/${meeting.id}/download`);
+  const head = await fetch(url, { method: "HEAD" });
+  assert.equal(head.status, 200);
+  assert.equal(head.headers.get("cache-control"), "no-store");
+  assert.equal(Number(head.headers.get("content-length")), Buffer.byteLength(expected));
+  assert.equal(await head.text(), "");
+
+  const textPath = path.join(profileDir, `${meeting.id}.txt`);
+  await electronApp.evaluate(({ BrowserWindow }, downloadPath) => {
+    globalThis.transcriptDownload = null;
+    BrowserWindow.getAllWindows()[0].webContents.session.once("will-download", (_, item) => {
+      item.setSavePath(downloadPath);
+      item.once("done", (_, state) => {
+        globalThis.transcriptDownload = { state, filename: item.getFilename() };
+      });
+    });
+  }, textPath);
+  await page.getByRole("button", { name: "导出文本（TXT）", exact: true }).click();
+  await until(() => electronApp.evaluate(() => Boolean(globalThis.transcriptDownload)));
+  assert.deepEqual(await electronApp.evaluate(() => globalThis.transcriptDownload), {
+    state: "completed", filename: `${meeting.title}.txt`,
+  });
+  assert.equal(await fs.readFile(textPath, "utf8"), expected);
+}
+
 try {
   const department = await api.saveDepartment("产品研发部");
   const meeting = await api.create("界面验证会议", department.id);
@@ -220,6 +249,7 @@ try {
     .getByRole("button", { name: /^界面验证会议/ })
     .click();
   await page.locator(".page-heading h1").filter({ hasText: meeting.title }).waitFor();
+  await checkTranscriptDownload(page, meeting);
   assert.match(
     await page.getByLabel("会议转写文本").textContent(),
     /转写来自服务端/,
@@ -483,6 +513,7 @@ try {
   const [recorded] = await api.list({ title: "桌面 PCM 录音验证" });
   assert.equal(recorded.department_name, "研发中心");
   assert.equal(recorded.status, "ended");
+  await checkTranscriptDownload(page, recorded);
   const wavPath = path.join(profileDir, "recording.wav");
   // Electron 22 lacks CDP download context management; observe the native API.
   await electronApp.evaluate(({ BrowserWindow }, downloadPath) => {
@@ -698,6 +729,7 @@ try {
       "Socket interruption resumes the sample-based recording clock",
       "Hidden heartbeat and ASR diagnostics panel",
       "Independent live stage-summary feed and persisted tail window",
+      "Native TXT download matches saved transcripts before and after meeting end",
       "Native WAV download and renderer request cancellation",
       "Department CRUD and meeting assignment",
       "Combined department/date/status/title filters",

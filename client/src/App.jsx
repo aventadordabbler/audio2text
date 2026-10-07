@@ -199,6 +199,7 @@ export function App() {
   const [diarizationReady, setDiarizationReady] = useState(null);
   const [retryingDiarization, setRetryingDiarization] = useState(false);
   const [exportingAudio, setExportingAudio] = useState(false);
+  const [exportingText, setExportingText] = useState(false);
   const [startedAtMs, setStartedAtMs] = useState(0);
   const [elapsedLabel, setElapsedLabel] = useState("00:00:00");
   const [reportTask, setReportTask] = useState({
@@ -628,6 +629,20 @@ export function App() {
 
     if (event.type === "error" && event.text) {
       appendError(event.text);
+    }
+  }
+
+  async function exportText() {
+    const target = sessionRef.current;
+    if (!meetingApi || !target?.remoteMeetingId || exportingText) return;
+    setExportingText(true);
+    try {
+      await meetingApi.downloadTranscript(target.remoteMeetingId);
+      setStatusLine("已发起文本下载，请在保存窗口中选择位置");
+    } catch (error) {
+      setStatusLine(`导出文本失败：${error.message}`);
+    } finally {
+      setExportingText(false);
     }
   }
 
@@ -1413,6 +1428,18 @@ export function App() {
                   </div>
                   <div className="meeting-title-row">
                     <h1 title={sessionTitle}>{sessionTitle}</h1>
+                    {session?.transcript?.some((row) => row.text?.trim()) && meetingApi && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="meeting-title-export"
+                        disabled={exportingText}
+                        onClick={exportText}
+                      >
+                        <Download size={15} />
+                        {exportingText ? "正在准备…" : "导出文本（TXT）"}
+                      </Button>
+                    )}
                     {session?.audioAvailable && meetingApi && (
                       <Button
                         variant="outline"

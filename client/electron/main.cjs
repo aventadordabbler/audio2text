@@ -270,10 +270,10 @@ function registerIpc() {
     }
     return { ok: true };
   });
-  ipcMain.handle("desktop:download-audio", ({ sender }, value) => {
+  ipcMain.handle("desktop:download-file", ({ sender }, value) => {
     const url = new URL(value);
     if (!["http:", "https:"].includes(url.protocol)) {
-      throw new Error("录音下载地址必须使用 HTTP 或 HTTPS");
+      throw new Error("文件下载地址必须使用 HTTP 或 HTTPS");
     }
     sender.downloadURL(url.href);
     return { ok: true };

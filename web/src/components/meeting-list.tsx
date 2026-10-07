@@ -314,7 +314,7 @@ export function MeetingList({
                         <DropdownMenuItem asChild>
                           <a href={`/api/meetings/${meeting.id}/download`}>
                             <FileText />
-                            下载转写文本
+                            导出文本（TXT）
                           </a>
                         </DropdownMenuItem>
                       )}

@@ -183,28 +183,38 @@ export class MeetingApi {
     return this.url(`/api/meetings/${encodeURIComponent(id)}/audio/download`);
   }
 
-  async downloadAudio(id) {
-    const url = this.audioDownloadUrl(id);
+  downloadTranscript(id) {
+    return this.downloadFile(
+      this.url(`/api/meetings/${encodeURIComponent(id)}/download`),
+      "转写文本",
+    );
+  }
+
+  downloadAudio(id) {
+    return this.downloadFile(this.audioDownloadUrl(id), "录音");
+  }
+
+  async downloadFile(url, label) {
     const response = await fetch(url, {
       method: "HEAD", cache: "no-store", signal: AbortSignal.timeout(15000),
     });
     if (!response.ok) {
       throw new Error(response.status === 404
-        ? "会议暂无可导出的录音，请刷新后重试"
-        : `录音归档无法导出（HTTP ${response.status}）`);
+        ? `会议暂无可导出的${label}，请刷新后重试`
+        : `${label}无法导出（HTTP ${response.status}）`);
     }
     // Electron's CSP blocks remote iframes. Use its native download manager.
-    if (globalThis.window?.meetingDesktop?.downloadAudio) {
-      await window.meetingDesktop.downloadAudio(url);
+    if (globalThis.window?.meetingDesktop?.downloadFile) {
+      await window.meetingDesktop.downloadFile(url);
       return;
     }
     // Browser downloads stream to disk; a failed GET must not navigate the app.
-    let frame = document.getElementById("recording-download-frame");
+    let frame = document.getElementById("meeting-download-frame");
     if (!frame) {
       frame = document.createElement("iframe");
-      frame.id = "recording-download-frame";
+      frame.id = "meeting-download-frame";
       frame.hidden = true;
-      frame.title = "录音下载";
+      frame.title = "会议文件下载";
       document.body.appendChild(frame);
     }
     frame.src = url;
