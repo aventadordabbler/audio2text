@@ -139,6 +139,30 @@ Qwen 模式在窗口内继续使用前缀回退；文件转写模式对相邻窗
 
 阶段总结使用独立的 `/ws/meetings/{id}/stage-summaries`。连接后首先返回 `stage_summaries.snapshot`，随后按窗口推送 `stage_summary.update`；该连接只接受 `ping`，不接收音频或会议控制。历史结果也可通过 `GET /api/meetings/{id}/stage-summaries` 获取，失败窗口可通过 `POST /api/meetings/{id}/stage-summaries/retry` 重试。
 
+## 导入已有 WAV 创建会议
+
+客户端和 Web 的新建会议弹窗均支持选择“导入 WAV 音频”。上传时携带会议名称、可选部门和识别语言，服务端用 FFmpeg 校验并转换为单声道 16 kHz PCM，按实际采样数计算会议时长（包含静音）。原始文件保留为该会议目录下的 `source.wav`，导出录音使用统一归档生成 WAV。
+
+`app/audio_imports.py` 使用独立的 HTTP 导入任务：
+
+| 接口 | 用途 |
+| --- | --- |
+| `POST /api/meetings/import` | `multipart/form-data`：`file`（WAV）、`title`，可选 `language`、`department_id`；校验和音频归档完成后返回 `202` 和会议记录 |
+| `GET /api/meetings/{id}` | 查看转写及 `import_job` 的阶段、状态、错误和采样进度 |
+| `POST /api/meetings/{id}/import/retry` | 重试失败任务，返回 `202`，沿用同一会议和已保存内容 |
+| `GET /api/meetings/{id}/minutes` | 查看自动生成的会议纪要 |
+| `GET /api/meetings/{id}/download` | 导出已保存的转写正文 TXT |
+
+导入会议的 `source=wav`、会议状态为 `ended`；独立的 `import_job.status` 表示 `queued/running/ready/failed`，`stage` 依次为 `transcribing/diarizing/summarizing`。录音创建的会议保持原有状态流转，`source=recording`、`import_job=null`。导入详情通过 HTTP 轮询更新，不连接录音或阶段总结 WebSocket，也不产生实时阶段总结。
+
+后台顺序读取音频，复用已配置的 ASR 模型适配器、说话人校正与纪要服务；不受实时接收队列的积压限制。任务和转写检查点持久化，重启后自动续处理；多次中断后标记失败，可手动重试。ASR 失败从最后保存的句段继续，总结失败仅重试总结。处理中的导入会议暂不允许删除或手动生成纪要，上传完成后离开页面不影响后台处理。
+
+导入前需配置 ASR 和大语言模型。说话人模型缺失或校正失败时保留转写并继续生成纪要，页面明确显示说话人处理状态，模型就绪后可重试校正。说话人是会议内的匿名编号；重叠讲话沿用现有多说话人标注能力，不提供音源分离或实名声纹匹配。
+
+使用反向代理时，应同步配置上传大小和请求超时；上传请求包含音频校验和归档时间。
+
+默认一次处理一个导入任务。导入与实时录音仍会共享配置的模型服务和说话人工作者，长音频场景的实际吞吐与实时延迟需要按部署资源验收。
+
 ## 部署方案
 
 生产环境的网络拓扑、HTTPS/WebSocket 代理、模型配置、备份恢复、升级回滚及客户端发布步骤见 [部署手册](docs/deployment.md)。
@@ -219,6 +243,10 @@ Windows 标准版（Electron 35.7.5）安装包和便携版使用 `npm run dist:
 | `DIARIZATION_SEGMENTATION_DIR` | `models/pyannote/segmentation-3.0` | segmentation 权重目录 |
 | `DIARIZATION_WORKERS` | `1` | 说话人后台工作者数量 |
 | `DIARIZATION_THREADS` | `2` | 每个工作者的推理线程数 |
+| `AUDIO_IMPORT_MAX_BYTES` | `1073741824` | 单个 WAV 上传大小上限（1 GiB） |
+| `AUDIO_IMPORT_MAX_SECONDS` | `28800` | 导入音频时长上限（8 小时） |
+| `AUDIO_IMPORT_WORKERS` | `1` | 同时处理的导入任务数 |
+| `AUDIO_IMPORT_DECODE_TIMEOUT_SECONDS` | `600` | 上传后音频校验和归档的超时秒数 |
 | `LLM_MAX_TOKENS` | `16384` | 纪要模型最大输出 token |
 | `LLM_CHUNK_CHARS` | `12000` | 长会议纪要分段字符数 |
 | `STAGE_SUMMARY_WINDOW_SECONDS` | `300` | 阶段总结的归档录音窗口长度 |
@@ -234,6 +262,7 @@ Compose 会将 `data/`、说话人模型目录和 tokenizer 目录挂载到应�
 data/archives/
   meetings.sqlite3
   meetings/<meeting-id>/
+    source.wav  # 仅导入会议保存原始文件
     audio/*.pcm
     audio/manifest.json
     events.jsonl
@@ -254,6 +283,7 @@ data/archives/
 UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q
 npm run build --prefix web
 npm run build --prefix client
+npm run test:protocol --prefix client
 docker compose --profile app config --quiet
 ```
 

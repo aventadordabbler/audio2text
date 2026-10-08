@@ -36,10 +36,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { EmptyDocument } from "@/components/workspace-ui";
+import { STT_LANGUAGE_OPTIONS } from "@/shared/defaults.js";
 import {
   EMPTY_FILTERS,
   MEETING_STATUS_LABELS,
   meetingQuery,
+  importStatusLabel,
 } from "@/services/meeting-catalog";
 
 export function DepartmentSelect({
@@ -87,27 +89,36 @@ export function CreateMeetingDialog({
   onRefresh,
   onCreate,
   initialTitle = "",
+  initialLanguage = "auto",
 }) {
   const [title, setTitle] = useState("");
+  const [source, setSource] = useState("recording");
+  const [file, setFile] = useState(null);
+  const [language, setLanguage] = useState(initialLanguage);
   const [departmentId, setDepartmentId] = useState("unassigned");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => {
     if (open) {
       setTitle(initialTitle);
+      setSource("recording");
+      setFile(null);
+      setLanguage(initialLanguage);
       setDepartmentId("unassigned");
       setError("");
     }
-  }, [open, initialTitle]);
+  }, [open, initialTitle, initialLanguage]);
   async function submit(event) {
     event.preventDefault();
-    if (!title.trim() || busy) return;
+    if (!title.trim() || busy || (source === "wav" && !file)) return;
     setBusy(true);
     setError("");
     try {
       await onCreate(
         title.trim(),
         departmentId === "unassigned" ? null : departmentId,
+        source === "wav" ? file : null,
+        language,
       );
       onOpenChange(false);
     } catch (error) {
@@ -128,9 +139,44 @@ export function CreateMeetingDialog({
           <DialogHeader>
             <DialogTitle>新建会议</DialogTitle>
             <DialogDescription>
-              填写会议名称并选择部门，创建后可开始录音。
+              选择实时录音或导入已有 WAV，自动整理会议内容。
             </DialogDescription>
           </DialogHeader>
+          <Label className="form-field">
+            <span>创建方式</span>
+            <Select value={source} onValueChange={setSource} disabled={busy}>
+              <SelectTrigger aria-label="创建方式"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="recording">实时录音</SelectItem>
+                <SelectItem value="wav">导入 WAV 音频</SelectItem>
+              </SelectContent>
+            </Select>
+          </Label>
+          {source === "wav" && (
+            <>
+              <Label className="form-field">
+                <span>WAV 文件</span>
+                <Input type="file" accept=".wav,audio/wav,audio/x-wav" required disabled={busy}
+                  onChange={(event) => {
+                    const selected = event.target.files?.[0] || null;
+                    setFile(selected);
+                    if (selected && !title.trim()) setTitle(selected.name.replace(/\.wav$/i, "").slice(0, 80));
+                  }} />
+              </Label>
+              <Label className="form-field">
+                <span>转写语言</span>
+                <Select value={language} onValueChange={setLanguage} disabled={busy}>
+                  <SelectTrigger aria-label="转写语言"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {STT_LANGUAGE_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Label>
+              <p className="management-help">上传后自动转写、标注说话人并生成纪要，时长按音频计算。上传完成后可离开页面。</p>
+            </>
+          )}
           <Label className="form-field">
             <span>会议名称</span>
             <Input
@@ -177,9 +223,9 @@ export function CreateMeetingDialog({
             >
               取消
             </Button>
-            <Button type="submit" disabled={busy || !title.trim()}>
+            <Button type="submit" disabled={busy || !title.trim() || (source === "wav" && !file)}>
               {busy && <LoaderCircle className="animate-spin" size={15} />}
-              创建并进入
+              {source === "wav" ? (busy ? "正在上传并解析" : "上传并创建") : "创建并进入"}
             </Button>
           </DialogFooter>
         </form>
@@ -424,8 +470,7 @@ export function MeetingManagement({
                           meeting.status === "recording" ? "default" : "outline"
                         }
                       >
-                        {MEETING_STATUS_LABELS[meeting.status] ||
-                          meeting.status}
+                        {meeting.import_job && meeting.import_job.status !== "ready" ? importStatusLabel(meeting.import_job) : MEETING_STATUS_LABELS[meeting.status] || meeting.status}
                       </Badge>
                     </TableCell>
                   </TableRow>

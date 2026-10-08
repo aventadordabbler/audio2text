@@ -28,7 +28,7 @@ export class MeetingApi {
       cache: "no-store",
       ...init,
       headers: {
-        ...(options.body ? { "Content-Type": "application/json" } : {}),
+        ...(options.body && !(options.body instanceof FormData) ? { "Content-Type": "application/json" } : {}),
         ...options.headers,
       },
       signal: options.signal || AbortSignal.timeout(150000),
@@ -144,8 +144,23 @@ export class MeetingApi {
     });
   }
 
-  get(id) {
-    return this.request(`/api/meetings/${encodeURIComponent(id)}`);
+  importWav(title, departmentId, file, language = this.config.language) {
+    const body = new FormData();
+    body.set("title", title);
+    body.set("file", file);
+    if (departmentId) body.set("department_id", departmentId);
+    if (language && language !== "auto") body.set("language", language);
+    return this.request("/api/meetings/import", {
+      method: "POST", body, signal: AbortSignal.timeout(900000),
+    });
+  }
+
+  retryImport(id) {
+    return this.request(`/api/meetings/${encodeURIComponent(id)}/import/retry`, { method: "POST" });
+  }
+
+  get(id, options = {}) {
+    return this.request(`/api/meetings/${encodeURIComponent(id)}`, options);
   }
 
   end(id) {

@@ -68,6 +68,7 @@ import {
   sessionFromMeeting,
   sessionWithMinutes,
   MEETING_STATUS_LABELS,
+  importStatusLabel,
 } from "@/services/meeting-catalog.js";
 import {
   MeetingManagement,
@@ -198,6 +199,8 @@ export function App() {
   const [isRecording, setIsRecording] = useState(false);
   const [diarizationReady, setDiarizationReady] = useState(null);
   const [retryingDiarization, setRetryingDiarization] = useState(false);
+  const [retryingImport, setRetryingImport] = useState(false);
+  const [importPollRevision, setImportPollRevision] = useState(0);
   const [exportingAudio, setExportingAudio] = useState(false);
   const [exportingText, setExportingText] = useState(false);
   const [startedAtMs, setStartedAtMs] = useState(0);
@@ -340,7 +343,7 @@ export function App() {
     const meetingId = session?.remoteMeetingId;
     const baseUrl = session?.remoteBaseUrl;
     setStageSummaryActionError("");
-    if (!ready || !meetingId || !baseUrl) {
+    if (!ready || !meetingId || !baseUrl || session?.source === "wav") {
       stageSummaryFeed.disconnect();
       setStageSummaries([]);
       setStageSummaryState({ status: "idle", windowSeconds: 0, error: "" });
@@ -356,7 +359,7 @@ export function App() {
         setStageSummaryState((current) => ({ ...current, error: "", ...next })),
     });
     return () => stageSummaryFeed.disconnect();
-  }, [ready, session?.remoteMeetingId, session?.remoteBaseUrl]);
+  }, [ready, session?.remoteMeetingId, session?.remoteBaseUrl, session?.source]);
 
   useEffect(() => {
     let disposed = false;
@@ -762,7 +765,7 @@ export function App() {
   }, [meetingApi]);
 
   useEffect(() => {
-    if (!meetingApi || !session?.remoteMeetingId || session.remoteStatus !== "ended") return;
+    if (!meetingApi || !session?.remoteMeetingId || session.remoteStatus !== "ended" || session.source === "wav") return;
     const id = session.remoteMeetingId;
     let disposed = false;
     async function observe() {
@@ -779,13 +782,60 @@ export function App() {
       disposed = true;
       if (recorder.meeting?.id === id && recorder.meeting?.status === "ended") recorder.disconnect();
     };
-  }, [meetingApi, session?.remoteMeetingId, session?.remoteStatus, sessionSelection]);
+  }, [meetingApi, session?.remoteMeetingId, session?.remoteStatus, session?.source, sessionSelection]);
+
+  useEffect(() => {
+    if (!meetingApi || session?.source !== "wav" || !session.remoteMeetingId) return;
+    const id = session.remoteMeetingId;
+    const controller = new AbortController();
+    let timer;
+    async function poll() {
+      try {
+        const [remote, minutes] = await Promise.all([
+          meetingApi.get(id, { signal: controller.signal }),
+          meetingApi.minutes(id, { signal: controller.signal }),
+        ]);
+        if (controller.signal.aborted || sessionRef.current?.remoteMeetingId !== id) return;
+        const next = sessionWithMinutes(sessionFromMeeting(remote, meetingApi.config.baseUrl, sessionRef.current), minutes);
+        await updateSession(next);
+        if (["queued", "running"].includes(remote.import_job?.status) ||
+            ["queued", "running"].includes(remote.processing?.status) || minutes.status === "generating") {
+          timer = setTimeout(poll, 1500);
+        }
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setStatusLine(`导入状态同步失败：${error.message}`);
+        timer = setTimeout(poll, 3000);
+      }
+    }
+    void poll();
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [meetingApi, session?.remoteMeetingId, session?.source, sessionSelection, importPollRevision]);
+
+  async function retryImport() {
+    const target = sessionRef.current;
+    if (!meetingApi || !target?.remoteMeetingId || retryingImport) return;
+    setRetryingImport(true);
+    try {
+      const remote = await meetingApi.retryImport(target.remoteMeetingId);
+      await updateSession(sessionFromMeeting(remote, meetingApi.config.baseUrl, target));
+      setImportPollRevision((value) => value + 1);
+    } catch (error) {
+      setStatusLine(`重试导入失败：${error.message}`);
+    } finally {
+      setRetryingImport(false);
+    }
+  }
 
   async function retryDiarization() {
-    if (retryingDiarization || recorder.meeting?.id !== sessionRef.current?.remoteMeetingId) return;
+    const target = sessionRef.current;
+    if (retryingDiarization || !target?.remoteMeetingId || (target.source !== "wav" && recorder.meeting?.id !== target.remoteMeetingId)) return;
     setRetryingDiarization(true);
     try {
-      await recorder.retryDiarization();
+      if (target.source === "wav") {
+        await meetingApi.retryDiarization(target.remoteMeetingId);
+        setImportPollRevision((value) => value + 1);
+      } else await recorder.retryDiarization();
       const result = await meetingApi.diarizationStatus();
       setDiarizationReady(result);
     } catch (error) {
@@ -800,8 +850,14 @@ export function App() {
     if (!meetingApi || !target?.remoteMeetingId || reportTask.running) return;
     setReportTask({ running: true, text: "正在提交总结任务" });
     try {
-      if (recorder.meeting?.id !== target.remoteMeetingId) throw new Error("正在连接会议，请稍后重试");
-      await recorder.generateMinutes();
+      if (target.source === "wav") {
+        const minutes = await meetingApi.generateMinutes(target.remoteMeetingId);
+        await updateSession(sessionWithMinutes(target, minutes));
+        setImportPollRevision((value) => value + 1);
+      } else {
+        if (recorder.meeting?.id !== target.remoteMeetingId) throw new Error("正在连接会议，请稍后重试");
+        await recorder.generateMinutes();
+      }
       refreshCatalog();
       setStatusLine("总结任务已提交到服务端");
     } catch (error) {
@@ -915,20 +971,22 @@ export function App() {
     setCreateOpen(true);
   }
 
-  async function createMeeting(title, departmentId) {
+  async function createMeeting(title, departmentId, file = null, language) {
     if (startingRef.current || recordingRef.current || controllingRef.current)
       throw new Error("请先结束当前会议");
     const loadId = ++sessionLoadRef.current;
     let next;
     if (meetingApi) {
-      const remote = await meetingApi.create(title, departmentId);
+      const remote = file
+        ? await meetingApi.importWav(title, departmentId, file, language)
+        : await meetingApi.create(title, departmentId);
       next = sessionFromMeeting(remote, meetingApi.config.baseUrl);
     } else throw new Error("请先在模型设置中配置有效的会议服务地址");
     if (loadId !== sessionLoadRef.current) return;
     await updateSession(next, { syncView: false });
     showSession(next);
     refreshCatalog();
-    setStatusLine("会议已创建，可以开始录音");
+    setStatusLine(file ? "音频已上传，后台正在生成转写和会议纪要" : "会议已创建，可以开始录音");
   }
 
   async function openRemoteMeeting(item) {
@@ -1032,6 +1090,10 @@ export function App() {
     await window.meetingDesktop?.closeWindow?.();
   }
 
+  const imported = session?.source === "wav";
+  const importJob = session?.importJob;
+  const importBusy = ["queued", "running"].includes(importJob?.status);
+  const importPending = !!importJob && importJob.status !== "ready";
   const paused = recorder.isPaused();
   const correcting = ["queued", "running"].includes(session?.processing?.status);
   const summaryBusy =
@@ -1062,7 +1124,7 @@ export function App() {
     `说话人处理状态：${processingText}` +
     (speakerStatusError ? `。${speakerStatusError}` : "");
   const canRetryDiarization =
-    session?.remoteStatus === "ended" &&
+    session?.remoteStatus === "ended" && (!imported || importJob?.status === "ready") &&
     ["failed", "unavailable"].includes(processingStatus);
   const tone = sectionTone(
     isRecording,
@@ -1101,7 +1163,7 @@ export function App() {
     ? [
         {
           key: "recording",
-          label: recordingActive
+          label: imported ? "音频已导入" : recordingActive
             ? "录音中"
             : session.remoteStatus === "ended"
               ? "录音完成"
@@ -1112,12 +1174,12 @@ export function App() {
         },
         {
           key: "transcript",
-          label: transcripts.length
+          label: importJob?.stage === "transcribing" && importPending ? importStatusLabel(importJob) : transcripts.length
             ? session.remoteStatus === "ended"
               ? "转写完成"
               : "实时转写"
             : "等待转写",
-          tone: transcripts.length ? "ready" : "neutral",
+          tone: importBusy && importJob?.stage === "transcribing" ? "active" : transcripts.length ? "ready" : "neutral",
         },
         {
           key: "speaker",
@@ -1132,14 +1194,14 @@ export function App() {
         },
         {
           key: "minutes",
-          label: summaryBusy
+          label: imported && importJob?.stage !== "summarizing" && importPending ? "等待纪要" : summaryBusy
             ? "纪要生成中"
             : session.minutes
               ? "纪要已保存"
               : session.remoteStatus === "ended"
                 ? "等待纪要"
                 : "会后生成",
-          tone: summaryBusy ? "active" : session.minutes ? "ready" : "neutral",
+          tone: imported && importJob?.stage !== "summarizing" && importPending ? "neutral" : summaryBusy ? "active" : session.minutes ? "ready" : "neutral",
         },
       ]
     : [];
@@ -1161,6 +1223,20 @@ export function App() {
   });
 
   function renderRecordingControl() {
+    if (imported) return (
+      <Card className="recording-card recording-card--top">
+        <div className="recording-card-heading"><h2><FileText size={15} />导入音频</h2></div>
+        <div className="recording-timer"><strong>{formatElapsed((session.durationSeconds || 0) * 1000)}</strong></div>
+        <div className="import-progress" role="status">
+          <p className="import-filename" title={importJob?.filename}>{importJob?.filename}</p>
+          <p>{importBusy && <LoaderCircle size={15} className="animate-spin" />}{importStatusLabel(importJob)}</p>
+          {importBusy && importJob?.stage === "transcribing" && <progress aria-label="音频转写进度" max={importJob.total_samples || 1} value={importJob.processed_samples} />}
+          {importJob?.error && <p role="alert">{importJob.error}</p>}
+          {importJob?.status === "failed" && <Button variant="outline" disabled={retryingImport} onClick={retryImport}>重试处理</Button>}
+          {importBusy && <small>可离开页面，后台会继续处理。</small>}
+        </div>
+      </Card>
+    );
     return (
       <Card className="recording-card recording-card--top">
         <div className="recording-card-heading">
@@ -1319,6 +1395,7 @@ export function App() {
         onRefresh={refreshCatalog}
         onCreate={createMeeting}
         initialTitle={""}
+        initialLanguage={config.stt.language}
       />
       <div className="app-layout">
         <aside className="workspace-sidebar">
@@ -1512,7 +1589,7 @@ export function App() {
                 </div>
               </div>
 
-              <div className="meeting-workspace">
+              <div className={`meeting-workspace${imported ? " meeting-workspace--import" : ""}`}>
                 <Tabs
                   value={activeFocusTab}
                   onValueChange={setActiveFocusTab}
@@ -1599,7 +1676,7 @@ export function App() {
                             description={
                               recordingActive
                                 ? "说点什么，文字会在这里慢慢展开。"
-                                : "开启录音后，每一个想法都会在这里留下痕迹。"
+                                : imported ? "正在处理导入音频，转写完成后会在这里显示。" : "开启录音后，每一个想法都会在这里留下痕迹。"
                             }
                           />
                         ) : (
@@ -1640,7 +1717,7 @@ export function App() {
                           <CheckCheck size={13} />
                           {transcripts.length
                             ? "转写内容已保存"
-                            : "等待会议开始"}
+                            : imported ? "等待音频转写" : "等待会议开始"}
                         </span>
                         <span>
                           {textCount.toLocaleString()} 字 · {transcripts.length}{" "}
@@ -1661,7 +1738,7 @@ export function App() {
                             size="sm"
                             variant="ghost"
                             disabled={
-                              summaryBusy ||
+                              summaryBusy || importPending ||
                               session?.remoteStatus !== "ended" ||
                               !transcripts.length
                             }
@@ -1698,14 +1775,14 @@ export function App() {
                           <EmptyDocument
                             icon={summaryBusy ? LoaderCircle : Sparkles}
                             title={
-                              correcting
+                              importPending ? importStatusLabel(importJob) : correcting
                                 ? "正在校正说话人"
                                 : summaryBusy
                                 ? "正在整理会议内容"
                                 : "让会议有清晰的下一步"
                             }
                             description={
-                              correcting
+                              importPending ? (importJob.status === "failed" ? "请点击音频卡片中的重试处理，已保存的内容会保留。" : "后台处理完成后将自动展示会议总结。") : correcting
                                 ? "校正完成后将生成会议总结。"
                                 : summaryBusy
                                 ? "正在提炼核心结论、决策与待办，请稍候。"
@@ -1717,7 +1794,7 @@ export function App() {
                       <div className="document-footer">
                         <span>
                           <CheckCheck size={13} />
-                          {correcting
+                          {importPending ? importStatusLabel(importJob) : correcting
                             ? "正在校正说话人"
                             : summaryBusy
                             ? "正在生成总结"
@@ -1740,7 +1817,7 @@ export function App() {
                   </TabsContent>
                 </Tabs>
 
-                <div className="meeting-aside">
+                {!imported && <div className="meeting-aside">
                   <StageSummaryPanel
                     key={session?.remoteMeetingId || "no-meeting"}
                     summaries={stageSummaries}
@@ -1752,7 +1829,7 @@ export function App() {
                     onRetry={retryStageSummaries}
                     onJump={jumpToStageSummary}
                   />
-                </div>
+                </div>}
               </div>
             </section>
           )}

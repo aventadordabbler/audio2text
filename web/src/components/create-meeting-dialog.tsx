@@ -32,6 +32,8 @@ export function CreateMeetingDialog({
   departments: Department[]
 }) {
   const [title, setTitle] = useState("")
+  const [source, setSource] = useState("recording")
+  const [file, setFile] = useState<File | null>(null)
   const [language, setLanguage] = useState("auto")
   const [departmentId, setDepartmentId] = useState("unassigned")
   const [submitting, setSubmitting] = useState(false)
@@ -39,6 +41,8 @@ export function CreateMeetingDialog({
   useEffect(() => {
     if (open) {
       setTitle("")
+      setSource("recording")
+      setFile(null)
       setLanguage("auto")
       setDepartmentId("unassigned")
       setError("")
@@ -51,10 +55,20 @@ export function CreateMeetingDialog({
       setError("请为这场会议起个名字。")
       return
     }
+    if (source === "wav" && !file) return
     setSubmitting(true)
     setError("")
     try {
-      const meeting = await api<Meeting>("/api/meetings", {
+      const body = new FormData()
+      if (source === "wav" && file) {
+        body.set("file", file)
+        body.set("title", title.trim())
+        if (language !== "auto") body.set("language", language)
+        if (departmentId !== "unassigned") body.set("department_id", departmentId)
+      }
+      const meeting = source === "wav"
+        ? await api<Meeting>("/api/meetings/import", { method: "POST", body })
+        : await api<Meeting>("/api/meetings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -81,7 +95,7 @@ export function CreateMeetingDialog({
     >
       <DialogContent
         id="create-dialog"
-        className="create-dialog gap-0 overflow-hidden p-0 sm:max-w-[460px]"
+        className="create-dialog max-h-[90vh] gap-0 overflow-y-auto p-0 sm:max-w-[460px]"
       >
         <form id="create-form" onSubmit={submit}>
           <div className="create-dialog-body px-7 pb-7 pt-8">
@@ -97,6 +111,26 @@ export function CreateMeetingDialog({
               </DialogDescription>
             </DialogHeader>
             <div className="mt-7 space-y-5">
+              <div className="space-y-2.5">
+                <Label htmlFor="source-input">创建方式</Label>
+                <Select value={source} onValueChange={setSource} disabled={submitting}>
+                  <SelectTrigger id="source-input" className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="recording">实时录音</SelectItem>
+                    <SelectItem value="wav">导入 WAV 音频</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {source === "wav" && <div className="space-y-2.5">
+                <Label htmlFor="wav-input">WAV 文件</Label>
+                <Input id="wav-input" type="file" accept=".wav,audio/wav,audio/x-wav" required disabled={submitting}
+                  onChange={(event) => {
+                    const selected = event.target.files?.[0] || null
+                    setFile(selected)
+                    if (selected && !title.trim()) setTitle(selected.name.replace(/\.wav$/i, "").slice(0, 80))
+                  }} />
+              </div>}
+
               <div className="space-y-2.5">
                 <Label htmlFor="title-input">
                   会议名称 <span className="text-muted-foreground">*</span>
@@ -162,7 +196,7 @@ export function CreateMeetingDialog({
             )}
             <div className="mt-6 flex items-start gap-2.5 rounded-lg bg-muted/60 px-3.5 py-3 text-xs leading-5 text-muted-foreground">
               <Mic className="mt-0.5 size-3.5 shrink-0" />
-              <p>创建后进入会议，点击「开始录音」才会开启麦克风。</p>
+              <p>{source === "wav" ? "上传后自动转写、标注说话人并生成纪要，时长按音频计算。上传完成后可离开页面。" : "创建后进入会议，点击「开始录音」才会开启麦克风。"}</p>
             </div>
           </div>
           <DialogFooter className="m-0 border-t bg-muted/30 px-7 py-5 sm:justify-between">
@@ -175,8 +209,8 @@ export function CreateMeetingDialog({
             >
               取消
             </Button>
-            <Button id="submit-create" type="submit" disabled={submitting} className="gap-2 px-5">
-              {submitting ? <LoaderCircle className="size-4 animate-spin" /> : null}创建并进入
+            <Button id="submit-create" type="submit" disabled={submitting || (source === "wav" && !file)} className="gap-2 px-5">
+              {submitting ? <LoaderCircle className="size-4 animate-spin" /> : null}{source === "wav" ? (submitting ? "正在上传并解析" : "上传并创建") : "创建并进入"}
               <ArrowRight className="size-4" />
             </Button>
           </DialogFooter>

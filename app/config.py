@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     diarization_threads: int = Field(default=2, ge=1, le=32)
     diarization_timeout_seconds: float = Field(default=120, ge=5, le=1800)
     diarization_final_timeout_seconds: float = Field(default=1800, ge=10, le=14400)
+    audio_import_max_bytes: int = Field(default=1024 * 1024 * 1024, ge=1024)
+    audio_import_max_seconds: int = Field(default=8 * 3600, ge=1)
+    audio_import_workers: int = Field(default=1, ge=1, le=8)
+    audio_import_decode_timeout_seconds: float = Field(default=600, ge=5, le=7200)
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="", extra="ignore")
 

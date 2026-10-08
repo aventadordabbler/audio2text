@@ -34,7 +34,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { MeetingStatusBadge } from "./meeting-status"
 import { downloadRecording } from "@/lib/recording-download"
-import { api, emptyMeetingFilters, errorMessage, formatDate, formatDuration, statusLabels, type Department, type Meeting, type MeetingFilters, type MeetingStatus } from "@/lib/meetings"
+import { api, emptyMeetingFilters, errorMessage, formatDate, formatDuration, statusLabels, importStatusLabel, type Department, type Meeting, type MeetingFilters, type MeetingStatus } from "@/lib/meetings"
 
 interface Props {
   meetings: Meeting[]
@@ -294,7 +294,9 @@ export function MeetingList({
                   </span>
                 </TableCell>
                 <TableCell>
-                  <MeetingStatusBadge status={meeting.status} />
+                  {meeting.import_job && meeting.import_job.status !== "ready"
+                    ? <span className="text-xs text-muted-foreground">{importStatusLabel(meeting.import_job)}</span>
+                    : <MeetingStatusBadge status={meeting.status} />}
                 </TableCell>
                 <TableCell className="pr-4">
                   <DropdownMenu>

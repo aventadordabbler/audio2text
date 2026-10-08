@@ -34,5 +34,6 @@ class ProcessingJobs:
             # Recover an interruption between committing 'ended' and enqueueing its job.
             db.execute("""INSERT OR IGNORE INTO diarization_jobs(meeting_id, status, updated_at)
                 SELECT id, 'queued', updated_at FROM meetings
-                WHERE status = 'ended' AND text_path LIKE 'meetings/%'""")
+                WHERE status = 'ended' AND text_path LIKE 'meetings/%'
+                AND NOT EXISTS (SELECT 1 FROM meeting_imports WHERE meeting_imports.meeting_id = meetings.id)""")
             return [dict(row) for row in db.execute("SELECT * FROM diarization_jobs")]

@@ -251,6 +251,23 @@ class DiarizationService:
         finally:
             await corrector.close()
 
+    async def correct_import(self, meeting_id):
+        """The import job owns persistence and summary scheduling for uploaded audio."""
+        await self._status(meeting_id, "queued")
+        try:
+            async with self.final_slots:
+                await self._status(meeting_id, "running")
+                if error := self.workers[0].readiness():
+                    await self._status(meeting_id, "unavailable", error)
+                    return
+                async with asyncio.timeout(self.settings.diarization_final_timeout_seconds):
+                    await self._correct(meeting_id)
+            await self._status(meeting_id, "ready")
+        except Exception as exc:
+            logger.exception("Imported audio speaker correction failed for %s", meeting_id)
+            await self._status(meeting_id, "failed", str(exc) if isinstance(exc, WorkerError)
+                               else "说话人校正未完成，已保留转写，可重试。")
+
     async def close(self):
         self.closed = True
         for timer in self.timers.values():

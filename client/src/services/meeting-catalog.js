@@ -41,6 +41,8 @@ export function sessionFromMeeting(meeting, baseUrl, previous = {}) {
     remoteMeetingId: meeting.id,
     remoteBaseUrl: baseUrl,
     remoteStatus: meeting.status,
+    source: meeting.source || "recording",
+    importJob: meeting.import_job || null,
     departmentId: meeting.department_id,
     departmentName: meeting.department_name,
     language: meeting.language,
@@ -76,4 +78,12 @@ export function sessionWithMinutes(session, minutes) {
     minutesStale: minutes.stale,
     minutesFileRevision: minutes.file_revision,
   };
+}
+
+export function importStatusLabel(job) {
+  if (!job) return "";
+  if (job.status === "ready") return "导入处理完成";
+  if (job.status === "failed") return "导入处理失败";
+  if (job.status === "queued") return "等待处理音频";
+  return { transcribing: "正在转写音频", diarizing: "正在校正说话人", summarizing: "正在生成会议纪要" }[job.stage] || "正在处理音频";
 }

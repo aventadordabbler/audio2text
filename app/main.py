@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import quote
 
-from fastapi import FastAPI, HTTPException, Query, Request, WebSocket
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile, WebSocket
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -22,6 +22,7 @@ from .model_configs import ModelConfigInput, ModelConfigStore, ModelKind
 from .model_probe import ModelProbeResult, probe_model
 from .meeting_events import MeetingEvents
 from .diarization.service import DiarizationService
+from .audio_imports import AudioImportService
 from .recordings import (
     AudioExportInvalid,
     AudioExportUnavailable,
@@ -64,6 +65,7 @@ def create_app(
     minutes_generator: MinutesGenerator | None = None,
     diarization_worker_factory=None,
     stage_summary_generator: StageSummaryGenerator | None = None,
+    import_decoder_factory=None,
 ) -> FastAPI:
     app_settings = settings or get_settings()
     store = MeetingStore(app_settings.database_path or app_settings.data_dir / "meetings.sqlite3", app_settings.data_dir)
@@ -72,15 +74,18 @@ def create_app(
     minutes = MinutesService(store, models, app_settings, minutes_generator, events=events)
     stage_summaries = StageSummaryService(store, models, app_settings, stage_summary_generator)
     diarization = DiarizationService(store, models, minutes, app_settings, events, diarization_worker_factory)
+    audio_imports = AudioImportService(store, models, app_settings, diarization, minutes, import_decoder_factory)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         await asyncio.to_thread(store.recover)
         await stage_summaries.start()
         await diarization.start()
+        await audio_imports.start()
         try:
             yield
         finally:
+            await audio_imports.close()
             await diarization.close()
             await stage_summaries.close()
             await minutes.close()
@@ -93,6 +98,7 @@ def create_app(
     app.state.meeting_events = events
     app.state.stage_summaries = stage_summaries
     app.state.diarization_service = diarization
+    app.state.audio_import_service = audio_imports
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
 
     @app.exception_handler(MeetingError)
@@ -140,6 +146,24 @@ def create_app(
     def create_meeting(payload: MeetingCreate) -> dict[str, Any]:
         return store.create(payload.title, payload.language, payload.department_id)
 
+    @app.post("/api/meetings/import", status_code=202)
+    async def import_meeting(
+        file: UploadFile = File(...),
+        title: str = Form(..., min_length=1, max_length=80),
+        language: str | None = Form(default=None, max_length=40),
+        department_id: str | None = Form(default=None, pattern=r"^[a-f0-9]{32}$"),
+    ) -> dict[str, Any]:
+        try:
+            if not title.strip():
+                raise MeetingError("请输入会议名称", 422)
+            return await audio_imports.create(file, title.strip(), language, department_id)
+        finally:
+            await file.close()
+
+    @app.post("/api/meetings/{meeting_id}/import/retry", status_code=202)
+    async def retry_import(meeting_id: str) -> dict[str, Any]:
+        return await audio_imports.retry(meeting_id)
+
     @app.get("/api/departments")
     def list_departments() -> list[dict[str, Any]]:
         return store.list_departments()
@@ -175,12 +199,15 @@ def create_app(
 
     @app.post("/api/meetings/{meeting_id}/diarization", status_code=202)
     async def retry_diarization(meeting_id: str):
+        meeting = get_meeting(meeting_id)
+        if meeting.get("import_job") and meeting["import_job"]["status"] != "ready":
+            raise MeetingError("请先完成导入处理，失败时请重试导入任务")
         await diarization.finish(meeting_id, retry=True)
         return await asyncio.to_thread(store.get, meeting_id)
 
     @app.delete("/api/meetings/{meeting_id}", status_code=204)
     async def delete_meeting(meeting_id: str):
-        async with diarization.finish_lock, minutes._lock:
+        async with audio_imports.lock, diarization.finish_lock, minutes._lock:
             if meeting_id in diarization.live or meeting_id in diarization.finalizers:
                 raise MeetingError("正在处理说话人，请完成后再删除")
             await asyncio.to_thread(store.delete, meeting_id)

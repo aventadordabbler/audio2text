@@ -1,4 +1,4 @@
-import { api, errorMessage, type Meeting, type TranscriptSegment, type ProcessingState } from "./meetings"
+import { api, ApiError, importStatusLabel, errorMessage, type Meeting, type TranscriptSegment, type ProcessingState } from "./meetings"
 import { PcmRecorder } from "./pcm-recorder"
 
 type Action = "start" | "pause" | "resume" | "end"
@@ -50,6 +50,8 @@ export class RecordingSession {
   private operation = Promise.resolve()
   private reconnectTimer?: ReturnType<typeof setTimeout>
   private reconnectAttempts = 0
+  private importTimer?: ReturnType<typeof setTimeout>
+  private importController?: AbortController
   private pending: {
     action: Action
     resolve: () => void
@@ -75,7 +77,7 @@ export class RecordingSession {
   }
 
   private setMeeting(meeting: Meeting, preservePartial = false) {
-    const notice = {
+    const notice = meeting.source === "wav" ? importStatusLabel(meeting.import_job) : {
       created: "等待录音",
       recording: "正在聆听，实时转写中",
       paused: "录音已暂停，内容已保存",
@@ -117,7 +119,48 @@ export class RecordingSession {
     this.reconnectAttempts = 0
     this.update({ error: "", finishing: false, liveVersion: 0 })
     this.setMeeting(meeting)
-    if (meeting.status === "ended") void this.openSocket(meeting.id).catch((error) => this.update({ error: errorMessage(error) }))
+    if (meeting.source === "wav") this.pollImport(meeting.id)
+    else if (meeting.status === "ended") void this.openSocket(meeting.id).catch((error) => this.update({ error: errorMessage(error) }))
+  }
+
+  private pollImport(id: string) {
+    clearTimeout(this.importTimer)
+    this.importController?.abort()
+    const controller = new AbortController()
+    this.importController = controller
+    const poll = async () => {
+      try {
+        const meeting = await api<Meeting>(`/api/meetings/${id}`, { signal: controller.signal })
+        if (controller.signal.aborted || this.snapshot.meeting?.id !== id) return
+        this.setMeeting(meeting)
+        if (["queued", "running"].includes(meeting.import_job?.status || "") ||
+            ["queued", "running"].includes(meeting.processing.status)) {
+          this.importTimer = setTimeout(() => void poll(), 1500)
+        }
+      } catch (error) {
+        if (controller.signal.aborted || this.snapshot.meeting?.id !== id) return
+        this.update({ error: `导入状态同步失败：${errorMessage(error)}` })
+        if (!(error instanceof ApiError && error.status === 404))
+          this.importTimer = setTimeout(() => void poll(), 3000)
+      }
+    }
+    void poll()
+  }
+
+  async retryImport() {
+    const id = this.snapshot.meeting?.id
+    if (!id || this.snapshot.busy) return
+    this.update({ busy: true, error: "" })
+    try {
+      const meeting = await api<Meeting>(`/api/meetings/${id}/import/retry`, { method: "POST" })
+      if (this.snapshot.meeting?.id !== id) return
+      this.setMeeting(meeting)
+      this.pollImport(id)
+    } catch (error) {
+      if (this.snapshot.meeting?.id === id) this.update({ error: errorMessage(error) })
+    } finally {
+      this.update({ busy: false })
+    }
   }
 
   dismissError = () => this.update({ error: "" })
@@ -129,6 +172,7 @@ export class RecordingSession {
       const meeting = await api<Meeting>(`/api/meetings/${id}/diarization`, { method: "POST" })
       if (this.snapshot.meeting?.id === id && meeting.transcript_revision >= this.snapshot.meeting.transcript_revision)
         this.setMeeting(meeting)
+      if (this.snapshot.meeting?.id === id && meeting.source === "wav") this.pollImport(id)
     } catch (error) {
       this.update({ error: errorMessage(error) })
     } finally {
@@ -150,6 +194,8 @@ export class RecordingSession {
   }
 
   disconnect() {
+    clearTimeout(this.importTimer)
+    this.importController?.abort()
     clearTimeout(this.reconnectTimer)
     this.disposeRecorder()
     this.rejectCommand(new Error("会议连接已关闭"))

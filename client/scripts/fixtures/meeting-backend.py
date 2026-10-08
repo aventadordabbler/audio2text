@@ -141,9 +141,47 @@ class TestUnavailableWorker(TestWorker):
         return "桌面录音测试不加载说话人模型"
 
 
+class TestImportDecoder:
+    async def prepare(self):
+        await asyncio.sleep(2)
+
+    def new_state(self, *_args):
+        return object()
+
+    async def feed(self, _audio, _state):
+        return "导入音频讨论了项目进度和下一步安排。"
+
+    async def finish(self, _state):
+        return "导入音频讨论了项目进度和下一步安排。"
+
+    async def close(self):
+        pass
+
+
+import_audio = os.environ.get("DESKTOP_TEST_IMPORT") == "1"
+if import_audio:
+    from app.minutes import MinutesGenerationError
+
+    class TestImportMinutes(TestMinutesGenerator):
+        failed_titles = set()
+
+        async def generate(self, title, transcript):
+            if title.endswith("重试") and title not in self.failed_titles:
+                self.failed_titles.add(title)
+                raise MinutesGenerationError("模拟总结失败")
+            return await super().generate(title, transcript)
+
+    generator = TestImportMinutes()
+
+
+
 app = create_app(settings, TestRecordedStream if archive_audio else TestStream, generator,
                  TestWorker if controlled else TestUnavailableWorker if archive_audio else None,
-                 TestStageSummaryGenerator())
+                 TestStageSummaryGenerator(),
+                 import_decoder_factory=(lambda _config: TestImportDecoder()) if import_audio else None)
+if import_audio:
+    from app.model_configs import ModelConfigInput
+    app.state.model_configs.save("asr", ModelConfigInput(base_url="http://asr.invalid/v1", model="fixture"))
 if controlled:
     # Only this localhost test process exposes controls. Real routes, durable
     # revisions, job scheduling and minutes generation still run unchanged.

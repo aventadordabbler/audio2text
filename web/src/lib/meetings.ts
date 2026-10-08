@@ -15,7 +15,26 @@ export interface ProcessingState {
   error: string
 }
 
+export interface ImportJob {
+  status: "queued" | "running" | "ready" | "failed"
+  stage: "transcribing" | "diarizing" | "summarizing"
+  filename: string
+  error: string
+  processed_samples: number
+  total_samples: number
+}
+
+export function importStatusLabel(job?: ImportJob | null) {
+  if (!job) return ""
+  if (job.status === "ready") return "导入处理完成"
+  if (job.status === "failed") return "导入处理失败"
+  if (job.status === "queued") return "等待处理音频"
+  return { transcribing: "正在转写音频", diarizing: "正在校正说话人", summarizing: "正在生成会议纪要" }[job.stage]
+}
+
 export interface Meeting {
+  source?: "recording" | "wav"
+  import_job?: ImportJob | null
   id: string
   title: string
   language: string | null

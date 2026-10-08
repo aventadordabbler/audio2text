@@ -18,8 +18,13 @@ from .transcripts import TranscriptStore, plain_text
 
 logger = logging.getLogger(__name__)
 MEETING_ID = re.compile(r"^[0-9a-f]{32}$")
-MEETING_SELECT = """SELECT meetings.*, departments.name AS department_name
-    FROM meetings LEFT JOIN departments ON departments.id = meetings.department_id"""
+MEETING_SELECT = """SELECT meetings.*, departments.name AS department_name,
+    meeting_imports.status AS import_status, meeting_imports.stage AS import_stage,
+    meeting_imports.filename AS import_filename, meeting_imports.error AS import_error,
+    meeting_imports.processed_samples AS import_processed_samples,
+    meeting_imports.total_samples AS import_total_samples
+    FROM meetings LEFT JOIN departments ON departments.id = meetings.department_id
+    LEFT JOIN meeting_imports ON meeting_imports.meeting_id = meetings.id"""
 
 
 class MeetingError(Exception):
@@ -78,6 +83,13 @@ class MeetingStore:
                 meeting_id TEXT PRIMARY KEY REFERENCES meetings(id), status TEXT NOT NULL,
                 attempts INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL
             )""")
+            db.execute("""CREATE TABLE IF NOT EXISTS meeting_imports (
+                meeting_id TEXT PRIMARY KEY REFERENCES meetings(id),
+                filename TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'queued',
+                stage TEXT NOT NULL DEFAULT 'transcribing', error TEXT NOT NULL DEFAULT '',
+                processed_samples INTEGER NOT NULL DEFAULT 0, total_samples INTEGER NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL
+            )""")
         if legacy_directory is not None:
             self._import_archives(legacy_directory)
 
@@ -98,6 +110,10 @@ class MeetingStore:
 
     def _record(self, row: sqlite3.Row) -> dict[str, Any]:
         result = dict(row)
+        imported = {key.removeprefix("import_"): result.pop(key)
+                    for key in tuple(result) if key.startswith("import_")}
+        result["source"] = "wav" if imported.get("status") else "recording"
+        result["import_job"] = imported if imported.get("status") else None
         archived_duration = None
         try:
             directory = self.path.parent / "meetings" / row["id"]
@@ -169,19 +185,36 @@ class MeetingStore:
             raise MeetingError("会议已在其他页面打开，请先关闭该页面的录音")
         return row
 
-    def create(self, title: str, language: str | None = None, department_id: str | None = None) -> dict[str, Any]:
+    def create(self, title: str, language: str | None = None, department_id: str | None = None,
+               *, imported_audio: Path | None = None, filename: str = "") -> dict[str, Any]:
         meeting_id, now = uuid4().hex, _timestamp()
         text_path = f"meetings/{meeting_id}/transcript.txt"
         with self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
             if department_id and not db.execute("SELECT 1 FROM departments WHERE id = ?", (department_id,)).fetchone():
                 raise MeetingError("部门不存在，请重新选择", 422)
-            self.transcript(meeting_id).read()
-            db.execute(
-                """INSERT INTO meetings (id, title, language, status, text_path, created_at, updated_at, department_id)
-                   VALUES (?, ?, ?, 'created', ?, ?, ?, ?)""",
-                (meeting_id, title.strip(), language or None, text_path, now, now, department_id),
-            )
+            audio = read_audio_summary(imported_audio) if imported_audio else None
+            directory = self.directory(meeting_id)
+            if imported_audio:
+                if not audio or not audio.samples:
+                    raise MeetingError("WAV 文件没有有效音频", 422)
+                directory.parent.mkdir(parents=True, exist_ok=True)
+                imported_audio.replace(directory)
+            try:
+                self.transcript(meeting_id).read()
+                db.execute(
+                    """INSERT INTO meetings (id, title, language, status, text_path, created_at, updated_at,
+                       department_id, ended_at, duration_seconds) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (meeting_id, title.strip(), language or None, "ended" if audio else "created", text_path,
+                     now, now, department_id, now if audio else None, audio.duration_seconds if audio else 0),
+                )
+                if audio:
+                    db.execute("""INSERT INTO meeting_imports (meeting_id, filename, total_samples, updated_at)
+                        VALUES (?, ?, ?, ?)""", (meeting_id, filename, audio.samples, now))
+            except BaseException:
+                if imported_audio:
+                    shutil.rmtree(directory)
+                raise
             return self._record(db.execute(MEETING_SELECT + " WHERE meetings.id = ?", (meeting_id,)).fetchone())
 
     def list(self, *, title: str = "", department_id: str | None = None, status: str | None = None,
@@ -341,6 +374,8 @@ class MeetingStore:
                 row = self._require(db, meeting_id, None)
                 if row["status"] == "recording":
                     raise MeetingError("请先停止录音，再删除会议")
+                if db.execute("SELECT 1 FROM meeting_imports WHERE meeting_id = ? AND status IN ('queued', 'running')", (meeting_id,)).fetchone():
+                    raise MeetingError("正在处理导入音频，请完成后再删除会议")
                 if db.execute("SELECT 1 FROM meeting_minutes WHERE meeting_id = ? AND status = 'generating'", (meeting_id,)).fetchone():
                     raise MeetingError("纪要正在生成，请完成后再删除")
                 if db.execute("SELECT 1 FROM diarization_jobs WHERE meeting_id = ? AND status IN ('queued', 'running')", (meeting_id,)).fetchone():
@@ -360,6 +395,7 @@ class MeetingStore:
                     moved = True
                 db.execute("DELETE FROM diarization_jobs WHERE meeting_id = ?", (meeting_id,))
                 db.execute("DELETE FROM meeting_minutes WHERE meeting_id = ?", (meeting_id,))
+                db.execute("DELETE FROM meeting_imports WHERE meeting_id = ?", (meeting_id,))
                 db.execute("DELETE FROM meetings WHERE id = ?", (meeting_id,))
         except BaseException:
             if moved:

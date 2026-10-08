@@ -8,6 +8,7 @@ import path from "node:path";
 export async function startBackend({
   controlledDiarization = false,
   archiveAudio = false,
+  importAudio = false,
   stageWindowSeconds = 10,
 } = {}) {
   const root = path.resolve(import.meta.dirname, "../..");
@@ -38,6 +39,7 @@ export async function startBackend({
         DATABASE_PATH: path.join(directory, "meetings.sqlite3"),
         DESKTOP_TEST_DIARIZATION: controlledDiarization ? "1" : "0",
         DESKTOP_TEST_ARCHIVE: archiveAudio ? "1" : "0",
+        DESKTOP_TEST_IMPORT: importAudio ? "1" : "0",
         STAGE_SUMMARY_WINDOW_SECONDS: String(stageWindowSeconds),
       },
       stdio: ["ignore", "pipe", "pipe"],

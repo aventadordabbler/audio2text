@@ -150,6 +150,9 @@ class MinutesService:
                 raise MeetingError("会议不存在", 404)
             if meeting["status"] != "ended":
                 raise MeetingError("请先结束会议，再生成完整会议纪要")
+            imported = meeting.get("import_job")
+            if imported and imported["status"] != "ready" and imported["stage"] != "summarizing":
+                raise MeetingError("导入音频尚未完成转写和说话人处理，完成后将自动生成纪要")
             if await asyncio.to_thread(self.store.processing_active, meeting_id):
                 raise MeetingError("正在校正说话人，完成后将生成纪要")
             if automatic and (await self.get(meeting_id))["status"] != "not_started":
@@ -215,6 +218,11 @@ class MinutesService:
                     await close()
             if self.events:
                 self.events.publish(meeting["id"], {"type": "minutes", "minutes": await self.get(meeting["id"])})
+
+    async def wait(self, meeting_id: str) -> dict[str, Any]:
+        if task := self.tasks.get(meeting_id):
+            await asyncio.shield(task)
+        return await self.get(meeting_id)
 
     async def close(self) -> None:
         tasks = list(self.tasks.values())

@@ -12,7 +12,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { api, ApiError, errorMessage, formatDate, type Meeting } from "@/lib/meetings"
+import { api, ApiError, errorMessage, formatDate, importStatusLabel, type Meeting } from "@/lib/meetings"
 
 const MinutesMarkdown = lazy(() => import("./minutes-markdown"))
 
@@ -52,10 +52,12 @@ export const MeetingMinutes = memo(function MeetingMinutes({
   const generating = submitting || minutes?.status === "generating"
   const ended = meeting.status === "ended"
   const hasTranscript = !!meeting.text.trim()
+  const importPending = !!meeting.import_job && meeting.import_job.status !== "ready"
   const correcting = ["queued", "running"].includes(meeting.processing?.status)
 
   useEffect(() => {
     const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
     async function load() {
       try {
         const result = await api<Minutes>(`/api/meetings/${meeting.id}/minutes`, {
@@ -64,17 +66,20 @@ export const MeetingMinutes = memo(function MeetingMinutes({
         if (controller.signal.aborted) return
         setMinutes(result)
         setError("")
+        if (meeting.source === "wav" && result.status === "generating") timer = setTimeout(() => void load(), 1500)
       } catch (error) {
         if (!controller.signal.aborted) {
           setError(minutesErrorMessage(error))
+          if (meeting.source === "wav") timer = setTimeout(() => void load(), 3000)
         }
       }
     }
     void load()
     return () => {
+      clearTimeout(timer)
       controller.abort()
     }
-  }, [meeting.id, meeting.status, meeting.minutes_version, meeting.processing?.status, revision, modelsVersion])
+  }, [meeting.id, meeting.source, meeting.status, meeting.minutes_version, meeting.processing?.status, revision, modelsVersion])
 
   useEffect(
     () => () => {
@@ -84,7 +89,7 @@ export const MeetingMinutes = memo(function MeetingMinutes({
   )
 
   async function generate() {
-    if (generating || correcting) return
+    if (generating || correcting || importPending) return
     setSubmitting(true)
     setError("")
     try {
@@ -109,7 +114,7 @@ export const MeetingMinutes = memo(function MeetingMinutes({
     }
   }
 
-  const hint = correcting
+  const hint = importPending ? (meeting.import_job?.status === "failed" ? "导入处理失败，请点击音频卡片中的重试处理。" : `${importStatusLabel(meeting.import_job)}，完成后将自动展示纪要。`) : correcting
     ? "正在校正说话人，完成后将自动整理纪要。"
     : generating
     ? "正在整理核心结论、决策与待办，离开页面后仍会继续生成。"
@@ -136,7 +141,7 @@ export const MeetingMinutes = memo(function MeetingMinutes({
             id="generate-minutes"
             variant="outline"
             size="sm"
-            disabled={generating || correcting}
+            disabled={generating || correcting || importPending}
             onClick={generate}
             className="gap-1.5 text-xs"
           >
@@ -147,7 +152,7 @@ export const MeetingMinutes = memo(function MeetingMinutes({
             ) : (
               <Sparkles />
             )}
-            {correcting ? "等待校正" : generating
+            {importPending ? "等待导入完成" : correcting ? "等待校正" : generating
               ? "生成中"
               : minutes.status === "failed"
                 ? "重试生成"
@@ -219,7 +224,7 @@ export const MeetingMinutes = memo(function MeetingMinutes({
           ) : minutes?.text ? (
             <CheckCheck className="size-3.5 shrink-0" />
           ) : null}
-          {correcting ? "等待说话人校正" : generating
+          {importPending ? importStatusLabel(meeting.import_job) : correcting ? "等待说话人校正" : generating
             ? "后台生成中"
             : minutes?.status === "failed"
               ? "生成失败，可重试"

@@ -22,6 +22,7 @@ __pycache__/
 .idea
 tests
 checks/*
+!checks/test_audio_imports.py
 !checks/test_audio_export.py
 !checks/test_recording_timing.py
 

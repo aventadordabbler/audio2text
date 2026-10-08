@@ -29,7 +29,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { MeetingMinutes } from "./meeting-minutes"
 import { MeetingStatusBadge } from "./meeting-status"
-import { api, errorMessage, formatDate, formatDuration, languageLabels } from "@/lib/meetings"
+import { api, errorMessage, formatDate, formatDuration, languageLabels, importStatusLabel } from "@/lib/meetings"
 import { RecordingSession } from "@/lib/recording-session"
 import { downloadRecording } from "@/lib/recording-download"
 import { StageSummaryPanel } from "./stage-summary-panel"
@@ -93,6 +93,9 @@ export function MeetingDetail({
   const following = useRef(true)
   const stageSummaryFeed = useRef(new StageSummaryFeed())
   const { status } = meeting
+  const imported = meeting.source === "wav"
+  const importJob = meeting.import_job
+  const importBusy = ["queued", "running"].includes(importJob?.status || "")
   const recording = status === "recording" && state.localRecording && !state.finishing
   const followLiveText = autoScroll && state.liveVersion > 0
   const textLength = Array.from(meeting.text).length
@@ -103,7 +106,7 @@ export function MeetingDetail({
     {
       key: "recording",
       label:
-        status === "recording"
+        imported ? "音频已导入" : status === "recording"
           ? "录音中"
           : status === "ended"
             ? "录音完成"
@@ -114,12 +117,12 @@ export function MeetingDetail({
     },
     {
       key: "transcript",
-      label: meeting.text
+      label: importJob?.stage === "transcribing" && importJob.status !== "ready" ? importStatusLabel(importJob) : meeting.text
         ? status === "ended"
           ? "转写完成"
           : "实时转写"
         : "等待转写",
-      tone: meeting.text ? "ready" : "neutral",
+      tone: importBusy && importJob?.stage === "transcribing" ? "active" : meeting.text ? "ready" : "neutral",
     },
     {
       key: "speaker",
@@ -129,12 +132,12 @@ export function MeetingDetail({
     {
       key: "minutes",
       label:
-        status === "ended"
+        imported ? (importJob?.status === "ready" ? "纪要已保存" : importJob?.stage === "summarizing" ? importStatusLabel(importJob) : "等待纪要") : status === "ended"
           ? meeting.minutes_version
             ? "纪要已保存"
             : "等待纪要"
           : "会后生成",
-      tone: meeting.minutes_version ? "ready" : "neutral",
+      tone: imported ? (importJob?.status === "ready" ? "ready" : importBusy && importJob?.stage === "summarizing" ? "active" : "neutral") : meeting.minutes_version ? "ready" : "neutral",
     },
   ]
 
@@ -145,6 +148,11 @@ export function MeetingDetail({
 
   useEffect(() => {
     setStageSummaries([])
+    if (imported) {
+      stageSummaryFeed.current.disconnect()
+      setStageSummaryState({ status: "idle", windowSeconds: 0, error: "" })
+      return
+    }
     setStageSummaryState({ status: "connecting", windowSeconds: 0, error: "" })
     stageSummaryFeed.current.connect(meeting.id, {
       onSummaries: setStageSummaries,
@@ -153,7 +161,7 @@ export function MeetingDetail({
       },
     })
     return () => stageSummaryFeed.current.disconnect()
-  }, [meeting.id])
+  }, [meeting.id, imported])
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 250)
@@ -248,6 +256,20 @@ export function MeetingDetail({
   }
 
   function renderRecordingControl() {
+    if (imported) return (
+      <Card className="recording-card recording-card--top gap-0 rounded-xl shadow-none">
+        <div className="recording-card-heading"><h2><FileText className="size-4" />导入音频</h2></div>
+        <div className="recording-timer"><strong id="recording-time">{formatDuration(seconds)}</strong></div>
+        <div className="import-progress" role="status">
+          <p className="import-filename" title={importJob?.filename}>{importJob?.filename}</p>
+          <p>{importBusy && <LoaderCircle className="size-4 animate-spin" />}{importStatusLabel(importJob)}</p>
+          {importBusy && importJob?.stage === "transcribing" && <progress aria-label="音频转写进度" max={importJob.total_samples || 1} value={importJob.processed_samples} />}
+          {importJob?.error && <p role="alert">{importJob.error}</p>}
+          {importJob?.status === "failed" && <Button variant="outline" disabled={state.busy} onClick={() => void session.retryImport()}>重试处理</Button>}
+          {importBusy && <small>可离开页面，后台会继续处理。</small>}
+        </div>
+      </Card>
+    )
     return (
       <Card className="recording-card recording-card--top gap-0 rounded-xl shadow-none">
         <div className="recording-card-heading">
@@ -433,7 +455,7 @@ export function MeetingDetail({
         </div>
       </div>
 
-      <div className="meeting-workspace">
+      <div className={`meeting-workspace${imported ? " meeting-workspace--import" : ""}`}>
         <div className="meeting-content">
           <TabsContent value="transcript" forceMount className="meeting-panel">
             <Card className="transcript-card gap-0 overflow-hidden rounded-xl py-0 shadow-none">
@@ -496,7 +518,7 @@ export function MeetingDetail({
                         <AudioLines className="size-7" />
                       </div>
                       <h3>
-                        {status === "ended"
+                        {imported ? importStatusLabel(importJob) : status === "ended"
                           ? "这场会议暂无转写内容"
                           : recording
                             ? "正在聆听你的声音"
@@ -505,7 +527,7 @@ export function MeetingDetail({
                               : "让讨论自然发生"}
                       </h3>
                       <p>
-                        {status === "ended"
+                        {imported ? (importJob?.status === "failed" ? "请点击音频卡片中的重试处理。" : "后台正在处理导入音频，转写完成后会在这里显示。") : status === "ended"
                           ? "录音期间未检测到语音内容。"
                           : recording
                             ? "说点什么，文字会在这里慢慢展开。"
@@ -544,7 +566,7 @@ export function MeetingDetail({
                   {meeting.processing?.status === "pending" && <span> · 说话人标注中</span>}
                 </span>
                 <div>
-                  {status === "ended" && ["failed", "unavailable"].includes(meeting.processing?.status) && (
+                  {status === "ended" && (!imported || importJob?.status === "ready") && ["failed", "unavailable"].includes(meeting.processing?.status) && (
                     <Button variant="ghost" size="sm" disabled={state.busy} onClick={() => void session.retryDiarization()}>重试说话人校正</Button>
                   )}
                   <span id="text-count">{textLength.toLocaleString()} 字</span>
@@ -579,7 +601,7 @@ export function MeetingDetail({
           </TabsContent>
         </div>
 
-        <aside className="meeting-aside">
+        {!imported && <aside className="meeting-aside">
           <StageSummaryPanel
             summaries={stageSummaries}
             status={stageSummaryState.status}
@@ -589,7 +611,7 @@ export function MeetingDetail({
             onRetry={() => void retryStageSummaries()}
             onJump={jumpToStageSummary}
           />
-        </aside>
+        </aside>}
       </div>
       <div className="detail-bottom-note">
         <ArrowDown className="size-3.5" />

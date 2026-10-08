@@ -132,6 +132,7 @@ class StageSummaryStore:
                     FROM stage_summary_sessions JOIN meetings
                     ON meetings.id = stage_summary_sessions.meeting_id
                     WHERE meetings.status IN ('paused', 'ended')
+                    AND NOT EXISTS (SELECT 1 FROM meeting_imports WHERE meeting_imports.meeting_id = meetings.id)
                     AND meetings.updated_at != stage_summary_sessions.reconciled_updated_at""")
             ]
 
