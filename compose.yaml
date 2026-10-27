@@ -1,6 +1,6 @@
 services:
   app:
-    image: quantitative.io/library/audio2text:latest
+    image: registry.neuro.com/library/audio2text:latest
     profiles: [app]
     container_name: audio2text-server
     restart: unless-stopped
@@ -27,9 +27,9 @@ services:
       - ${DIARIZATION_MODEL_DIR:-./models/diarization}:/app/models/diarization:ro
       - ${DIARIZATION_SEGMENTATION_DIR:-./models/pyannote/segmentation-3.0}:/app/models/pyannote/segmentation-3.0:ro
   asr:
-    image: ${VLLM_IMAGE:-qwenllm/qwen3-asr:latest}
+    image: ${VLLM_IMAGE:-registry.neuro.com/library/qwenllm-qwen3-asr:latest}
     container_name: audio2text-asr
-    profiles: [gpu]
+    profiles: [asr]
     restart: unless-stopped
     command:
       - qwen-asr-serve
@@ -42,9 +42,9 @@ services:
       - --port
       - "8001"
       - --gpu-memory-utilization
-      - ${VLLM_GPU_MEMORY_UTILIZATION:-0.3}
+      - ${VLLM_GPU_MEMORY_UTILIZATION:-0.8}
       - --max-model-len
-      - ${VLLM_MAX_MODEL_LEN:-32768}
+      - ${VLLM_MAX_MODEL_LEN:-16384}
     ports:
       - "${VLLM_BIND_ADDRESS:-127.0.0.1}:${VLLM_PORT:-8001}:8001"
     volumes:
@@ -66,7 +66,7 @@ services:
   llm:
     image: ${LLM_VLLM_IMAGE:-registry.neuro.com/vllm/vllm-openai:v0.30.0-aarch64-cu129}
     container_name: audio2text-llm
-    profiles: [gpu]
+    profiles: [llm]
     restart: unless-stopped
     command:
       - --model

@@ -1,6 +1,6 @@
-FROM astral/uv:0.11.26 AS uv
+FROM registry.neuro.com/library/uv:0.11.26 AS uv
 
-FROM node:24-slim AS frontend
+FROM registry.neuro.com/library/node:24-slim AS frontend
 WORKDIR /frontend
 ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
 COPY web/package.json web/package-lock.json ./
@@ -8,7 +8,7 @@ RUN npm ci --no-audit --no-fund
 COPY web ./
 RUN npm run build
 
-FROM python:3.12-slim
+FROM registry.neuro.com/library/python:3.12-slim
 WORKDIR /app
 RUN set -eux; \
     for sources in /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources; do \
