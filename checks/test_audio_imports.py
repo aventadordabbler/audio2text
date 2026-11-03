@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 from io import BytesIO
+import subprocess
 import threading
 import wave
 
@@ -24,6 +25,14 @@ def wav_bytes(seconds=3.25, rate=44100, channels=2):
         audio.setframerate(rate)
         audio.writeframes(np.repeat(samples[:, None], channels, axis=1).tobytes())
     return output.getvalue()
+
+
+def mp3_bytes():
+    result = subprocess.run(
+        ["ffmpeg", "-nostdin", "-v", "error", "-f", "wav", "-i", "pipe:0", "-f", "mp3", "pipe:1"],
+        input=wav_bytes(), capture_output=True, check=True,
+    )
+    return result.stdout
 
 
 class Decoder:
@@ -140,6 +149,18 @@ async def test_import_transcribes_labels_summarizes_and_exports_with_audio_durat
             assert archive.getnframes() / archive.getframerate() == 3.25
         assert (await client.post(prefix + "/import/retry")).status_code == 409
         assert (await client.delete(prefix)).status_code == 204
+
+
+async def test_mp3_import_is_decoded_by_ffmpeg_and_processed(tmp_path):
+    app = build(tmp_path)
+    async with app.router.lifespan_context(app), httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
+        await login(client)
+        response = await client.post("/api/meetings/import", data={"title": "MP3 导入"},
+                                     files={"file": ("讨论.mp3", mp3_bytes(), "audio/mpeg")})
+        assert response.status_code == 202, response.text
+        meeting = await settled(client, response.json()["id"])
+        assert meeting["import_job"]["status"] == "ready", meeting
+        assert 3.2 <= meeting["duration_seconds"] <= 3.5
 
 
 async def test_import_guards_incomplete_results_and_recovers_after_restart(tmp_path):
@@ -270,6 +291,25 @@ async def test_chunked_import_checks_integrity_and_reassembles_in_order(tmp_path
         assert meeting["title"] == "分片导入"
         assert meeting["import_job"]["status"] == "ready"
         assert not list((tmp_path / ".audio-uploads").glob("chunked-*"))
+
+
+async def test_chunked_mp3_import_uses_the_same_decode_pipeline(tmp_path):
+    app = build(tmp_path)
+    content = mp3_bytes()
+    async with app.router.lifespan_context(app), httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
+        await login(client)
+        started = await client.post("/api/meetings/import/chunked", json={
+            "title": "分片 MP3", "filename": "chunked.mp3", "file_size": len(content),
+            "total_chunks": 1, "chunk_size": 1024 * 1024,
+        })
+        upload_id = started.json()["upload_id"]
+        response = await client.put(f"/api/meetings/import/chunked/{upload_id}/0", content=content,
+                                     headers={"X-Chunk-SHA256": hashlib.sha256(content).hexdigest()})
+        assert response.status_code == 200, response.text
+        completed = await client.post(f"/api/meetings/import/chunked/{upload_id}/complete")
+        assert completed.status_code == 202, completed.text
+        meeting = await settled(client, completed.json()["id"])
+        assert meeting["import_job"]["status"] == "ready", meeting
 
 
 async def test_missing_speaker_models_preserves_transcription_and_summary(tmp_path):

@@ -55,8 +55,8 @@ for (const frontend of ["client", "web"]) {
       await page.goto(frontend === "web" ? backend.baseUrl : `http://127.0.0.1:${server.httpServer.address().port}`);
       await page.getByRole("button", { name: /新建会议|创建会议/ }).first().click();
       await page.getByRole("combobox", { name: "创建方式" }).click();
-      await page.getByRole("option", { name: "导入 WAV 音频" }).click();
-      await page.getByLabel("WAV 文件").setInputFiles(wav());
+      await page.getByRole("option", { name: "导入音频（WAV/MP3）" }).click();
+      await page.getByLabel("音频文件").setInputFiles(wav());
       await page.getByRole("dialog").getByLabel("会议名称").fill(title);
       const uploaded = page.waitForResponse((response) => response.url().endsWith("/api/meetings/import") && response.request().method() === "POST");
       await page.getByRole("button", { name: "上传并创建", exact: true }).click();

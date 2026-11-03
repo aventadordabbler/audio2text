@@ -60,10 +60,16 @@ class AudioImportService:
             db.execute(f"UPDATE meeting_imports SET {', '.join(key + ' = ?' for key in values)} WHERE meeting_id = ?",
                        (*values.values(), meeting_id))
 
+    @staticmethod
+    def _source_name(filename):
+        suffix = Path(filename).suffix.lower()
+        if suffix not in {".wav", ".mp3"}:
+            raise MeetingError("请选择 WAV 或 MP3 音频文件", 422)
+        return f"source{suffix}"
+
     async def create(self, upload, title, language, department_id, user_id=None):
         filename = (upload.filename or "").replace("\\", "/").rsplit("/", 1)[-1]
-        if not filename.lower().endswith(".wav"):
-            raise MeetingError("请选择 WAV 音频文件", 422)
+        source_name = self._source_name(filename)
         if self.decoder_factory is None:
             await _disk(self.models.require, "asr")
         if not self.minutes.available:
@@ -73,19 +79,20 @@ class AudioImportService:
         async with self.upload_slots:
             with TemporaryDirectory(prefix="wav-", dir=uploads) as temporary:
                 directory = Path(temporary)
-                source = directory / "source.wav"
+                source = directory / source_name
                 size = 0
                 with source.open("wb") as output:
                     while chunk := await upload.read(1024 * 1024):
                         size += len(chunk)
                         if size > self.settings.audio_import_max_bytes:
-                            raise MeetingError("WAV 文件超过服务端允许的大小", 413)
+                            raise MeetingError("音频文件超过服务端允许的大小", 413)
                         await _disk(output.write, chunk)
-                with source.open("rb") as audio:
-                    header = audio.read(12)
-                if len(header) < 12 or header[:4] not in {b"RIFF", b"RF64"} or header[8:] != b"WAVE":
-                    raise MeetingError("文件不是有效的 WAV 音频", 422)
-                await self._decode(directory)
+                if source_name.endswith(".wav"):
+                    with source.open("rb") as audio:
+                        header = audio.read(12)
+                    if len(header) < 12 or header[:4] not in {b"RIFF", b"RF64"} or header[8:] != b"WAVE":
+                        raise MeetingError("文件不是有效的 WAV 音频", 422)
+                await self._decode(directory, source_name)
                 # Publish the meeting only after its complete archive and exact duration exist.
                 publishing = asyncio.create_task(self._publish(directory, title, language, department_id, filename, user_id))
                 try:
@@ -112,10 +119,9 @@ class AudioImportService:
 
     async def start_chunked(self, title, language, filename, file_size, total_chunks, chunk_size, user_id=None):
         filename = (filename or "").replace("\\", "/").rsplit("/", 1)[-1]
-        if not filename.lower().endswith(".wav"):
-            raise MeetingError("请选择 WAV 音频文件", 422)
+        source_name = self._source_name(filename)
         if type(file_size) is not int or file_size <= 0 or file_size > self.settings.audio_import_max_bytes:
-            raise MeetingError("WAV 文件超过服务端允许的大小", 413)
+            raise MeetingError("音频文件超过服务端允许的大小", 413)
         if type(chunk_size) is not int or not 1024 * 1024 <= chunk_size <= 32 * 1024 * 1024:
             raise MeetingError("分片大小必须在 1–32 MiB 之间", 422)
         expected_chunks = (file_size + chunk_size - 1) // chunk_size
@@ -132,7 +138,7 @@ class AudioImportService:
         directory.mkdir()
         meta = {
             "upload_id": upload_id, "title": title.strip(), "language": language,
-            "filename": filename, "file_size": file_size, "chunk_size": chunk_size,
+            "filename": filename, "source_name": source_name, "file_size": file_size, "chunk_size": chunk_size,
             "total_chunks": total_chunks, "user_id": user_id, "received": {},
         }
         (directory / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
@@ -177,7 +183,8 @@ class AudioImportService:
             directory, meta = self._read_chunk_meta(upload_id, user_id)
             if len(meta["received"]) != meta["total_chunks"]:
                 raise MeetingError("仍有分片未上传完成", 409)
-            source = directory / "source.wav"
+            source_name = meta.get("source_name", self._source_name(meta["filename"]))
+            source = directory / source_name
             size = 0
             try:
                 with source.open("wb") as output:
@@ -196,14 +203,15 @@ class AudioImportService:
                                 raise MeetingError("分片文件完整性校验失败", 422)
                 if size != meta["file_size"]:
                     raise MeetingError("合并后的文件大小不一致", 422)
-                with source.open("rb") as audio:
-                    header = audio.read(12)
-                if len(header) < 12 or header[:4] not in {b"RIFF", b"RF64"} or header[8:] != b"WAVE":
-                    raise MeetingError("文件不是有效的 WAV 音频", 422)
+                if source_name.endswith(".wav"):
+                    with source.open("rb") as audio:
+                        header = audio.read(12)
+                    if len(header) < 12 or header[:4] not in {b"RIFF", b"RF64"} or header[8:] != b"WAVE":
+                        raise MeetingError("文件不是有效的 WAV 音频", 422)
                 for chunk_path in directory.glob("chunk-*.part"):
                     chunk_path.unlink()
                 (directory / "metadata.json").unlink(missing_ok=True)
-                await self._decode(directory)
+                await self._decode(directory, source_name)
                 return await self._publish(directory, meta["title"], meta["language"], None, meta["filename"], user_id)
             except BaseException:
                 if directory.exists():
@@ -217,12 +225,13 @@ class AudioImportService:
             self._schedule(meeting["id"])
             return meeting
 
-    async def _decode(self, directory):
+    async def _decode(self, directory, source_name="source.wav"):
         archive = await _disk(AudioArchive, directory)
         await _disk(archive.begin)
         try:
+            input_format = ["-f", "wav"] if source_name.endswith(".wav") else []
             process = await asyncio.create_subprocess_exec(
-                "ffmpeg", "-nostdin", "-v", "error", "-xerror", "-f", "wav", "-i", str(directory / "source.wav"),
+                "ffmpeg", "-nostdin", "-v", "error", "-xerror", *input_format, "-i", str(directory / source_name),
                 "-map", "0:a:0", "-vn", "-ac", "1", "-ar", str(SAMPLE_RATE), "-f", "s16le", "pipe:1",
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
             )
@@ -243,13 +252,13 @@ class AudioImportService:
                     remainder = block[length:]
                     samples = np.frombuffer(block[:length], dtype="<i2").astype(np.float32) / 32768
                     if archive.samples + len(samples) > self.settings.audio_import_max_seconds * SAMPLE_RATE:
-                        raise MeetingError("WAV 时长超过服务端允许的范围", 413)
+                        raise MeetingError("音频时长超过服务端允许的范围", 413)
                     await _disk(archive.append, samples)
                 if await process.wait() or remainder or not archive.samples:
-                    raise MeetingError("WAV 解码失败或没有有效音频，请检查文件是否完整", 422)
+                    raise MeetingError("音频解码失败或没有有效音频，请检查文件是否完整", 422)
                 await _disk(archive.end)
         except TimeoutError as exc:
-            raise MeetingError("WAV 解析超时，请检查文件或调整服务端导入超时设置", 422) from exc
+            raise MeetingError("音频解析超时，请检查文件或调整服务端导入超时设置", 422) from exc
         finally:
             if process.returncode is None:
                 try:

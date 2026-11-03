@@ -138,7 +138,7 @@ export function CreateMeetingDialog({
           <DialogHeader>
             <DialogTitle>新建会议</DialogTitle>
             <DialogDescription>
-              选择实时录音或导入已有 WAV，自动整理会议内容。
+              选择实时录音或导入已有 WAV/MP3，自动整理会议内容。
             </DialogDescription>
           </DialogHeader>
           <Label className="form-field">
@@ -147,19 +147,19 @@ export function CreateMeetingDialog({
               <SelectTrigger aria-label="创建方式"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="recording">实时录音</SelectItem>
-                <SelectItem value="wav">导入 WAV 音频</SelectItem>
+                <SelectItem value="wav">导入音频（WAV/MP3）</SelectItem>
               </SelectContent>
             </Select>
           </Label>
           {source === "wav" && (
             <>
               <Label className="form-field">
-                <span>WAV 文件</span>
-                <Input type="file" accept=".wav,audio/wav,audio/x-wav" required disabled={busy}
+                <span>音频文件</span>
+                <Input type="file" accept=".wav,.mp3,audio/wav,audio/x-wav,audio/mpeg" required disabled={busy}
                   onChange={(event) => {
                     const selected = event.target.files?.[0] || null;
                     setFile(selected);
-                    if (selected && !title.trim()) setTitle(selected.name.replace(/\.wav$/i, "").slice(0, 80));
+                    if (selected && !title.trim()) setTitle(selected.name.replace(/\.(wav|mp3)$/i, "").slice(0, 80));
                   }} />
               </Label>
               <Label className="form-field">

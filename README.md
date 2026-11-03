@@ -139,15 +139,15 @@ Qwen 模式在窗口内继续使用前缀回退；文件转写模式对相邻窗
 
 阶段总结使用独立的 `/ws/meetings/{id}/stage-summaries`。连接后首先返回 `stage_summaries.snapshot`，随后按窗口推送 `stage_summary.update`；该连接只接受 `ping`，不接收音频或会议控制。历史结果也可通过 `GET /api/meetings/{id}/stage-summaries` 获取，失败窗口可通过 `POST /api/meetings/{id}/stage-summaries/retry` 重试。
 
-## 导入已有 WAV 创建会议
+## 导入已有 WAV/MP3 创建会议
 
-客户端和 Web 的新建会议弹窗均支持选择“导入 WAV 音频”。上传时携带会议名称、可选部门和识别语言，服务端用 FFmpeg 校验并转换为单声道 16 kHz PCM，按实际采样数计算会议时长（包含静音）。原始文件保留为该会议目录下的 `source.wav`，导出录音使用统一归档生成 WAV。
+客户端和 Web 的新建会议弹窗均支持选择“导入音频（WAV/MP3）”。上传时携带会议名称、可选部门和识别语言，服务端用 FFmpeg 解码并转换为单声道 16 kHz PCM，按实际采样数计算会议时长（包含静音）。原始文件保留为该会议目录下的源音频文件，导出录音使用统一归档生成 WAV。
 
 `app/audio_imports.py` 使用独立的 HTTP 导入任务：
 
 | 接口 | 用途 |
 | --- | --- |
-| `POST /api/meetings/import` | `multipart/form-data`：`file`（WAV）、`title`，可选 `language`、`department_id`；校验和音频归档完成后返回 `202` 和会议记录 |
+| `POST /api/meetings/import` | `multipart/form-data`：`file`（WAV/MP3）、`title`，可选 `language`、`department_id`；校验和音频归档完成后返回 `202` 和会议记录 |
 | `GET /api/meetings/{id}` | 查看转写及 `import_job` 的阶段、状态、错误和采样进度 |
 | `POST /api/meetings/{id}/import/retry` | 重试失败任务，返回 `202`，沿用同一会议和已保存内容 |
 | `GET /api/meetings/{id}/minutes` | 查看自动生成的会议纪要 |
@@ -243,7 +243,7 @@ Windows 标准版（Electron 35.7.5）安装包和便携版使用 `npm run dist:
 | `DIARIZATION_SEGMENTATION_DIR` | `models/pyannote/segmentation-3.0` | segmentation 权重目录 |
 | `DIARIZATION_WORKERS` | `1` | 说话人后台工作者数量 |
 | `DIARIZATION_THREADS` | `2` | 每个工作者的推理线程数 |
-| `AUDIO_IMPORT_MAX_BYTES` | `5368709120` | 单个 WAV 上传大小上限（5 GiB） |
+| `AUDIO_IMPORT_MAX_BYTES` | `5368709120` | 单个 WAV/MP3 上传大小上限（5 GiB） |
 | `AUDIO_IMPORT_MAX_SECONDS` | `28800` | 导入音频时长上限（8 小时） |
 | `AUDIO_IMPORT_WORKERS` | `1` | 同时处理的导入任务数 |
 | `AUDIO_IMPORT_DECODE_TIMEOUT_SECONDS` | `600` | 上传后音频校验和归档的超时秒数 |
@@ -262,7 +262,7 @@ Compose 会将 `data/`、说话人模型目录和 tokenizer 目录挂载到应�
 data/archives/
   meetings.sqlite3
   meetings/<meeting-id>/
-    source.wav  # 仅导入会议保存原始文件
+    source.wav 或 source.mp3  # 仅导入会议保存原始文件
     audio/*.pcm
     audio/manifest.json
     events.jsonl

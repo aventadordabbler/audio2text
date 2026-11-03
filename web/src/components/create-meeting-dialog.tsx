@@ -108,17 +108,17 @@ export function CreateMeetingDialog({
                   <SelectTrigger id="source-input" className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="recording">实时录音</SelectItem>
-                    <SelectItem value="wav">导入 WAV 音频</SelectItem>
+                    <SelectItem value="wav">导入音频（WAV/MP3）</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               {source === "wav" && <div className="space-y-2.5">
-                <Label htmlFor="wav-input">WAV 文件</Label>
-                <Input id="wav-input" type="file" accept=".wav,audio/wav,audio/x-wav" required disabled={submitting}
+                <Label htmlFor="wav-input">音频文件</Label>
+                <Input id="wav-input" type="file" accept=".wav,.mp3,audio/wav,audio/x-wav,audio/mpeg" required disabled={submitting}
                   onChange={(event) => {
                     const selected = event.target.files?.[0] || null
                     setFile(selected)
-                    if (selected && !title.trim()) setTitle(selected.name.replace(/\.wav$/i, "").slice(0, 80))
+                    if (selected && !title.trim()) setTitle(selected.name.replace(/\.(wav|mp3)$/i, "").slice(0, 80))
                   }} />
               </div>}
 

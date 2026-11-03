@@ -220,7 +220,7 @@ class MeetingStore:
             directory = self.directory(meeting_id)
             if imported_audio:
                 if not audio or not audio.samples:
-                    raise MeetingError("WAV 文件没有有效音频", 422)
+                    raise MeetingError("音频文件没有有效音频", 422)
                 directory.parent.mkdir(parents=True, exist_ok=True)
                 imported_audio.replace(directory)
             try:
