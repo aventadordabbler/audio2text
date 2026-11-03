@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 from io import BytesIO
+import json
 import subprocess
 import threading
 import wave
@@ -163,6 +164,24 @@ async def test_mp3_import_is_decoded_by_ffmpeg_and_processed(tmp_path):
         assert 3.2 <= meeting["duration_seconds"] <= 3.5
 
 
+async def test_multiple_audio_files_create_one_combined_meeting(tmp_path):
+    app = build(tmp_path)
+    first, second = wav_bytes(2, 16000, 1), wav_bytes(3, 16000, 1)
+    async with app.router.lifespan_context(app), httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
+        await login(client)
+        response = await client.post("/api/meetings/import", data={"title": "多文件导入"}, files=[
+            ("file", ("第一段.wav", first, "audio/wav")),
+            ("file", ("第二段.wav", second, "audio/wav")),
+        ])
+        assert response.status_code == 202, response.text
+        meeting = await settled(client, response.json()["id"])
+        assert meeting["import_job"]["status"] == "ready", meeting
+        assert meeting["duration_seconds"] == pytest.approx(5, abs=0.01)
+        manifest = json.loads((tmp_path / "meetings" / meeting["id"] / "audio" / "manifest.json").read_text())
+        assert len(manifest["captures"]) == 1
+        assert len((await client.get("/api/meetings")).json()) == 1
+
+
 async def test_import_guards_incomplete_results_and_recovers_after_restart(tmp_path):
     app = build(tmp_path, decoder=Decoder(gate=asyncio.Event()))
     async with app.router.lifespan_context(app), httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
@@ -310,6 +329,32 @@ async def test_chunked_mp3_import_uses_the_same_decode_pipeline(tmp_path):
         assert completed.status_code == 202, completed.text
         meeting = await settled(client, completed.json()["id"])
         assert meeting["import_job"]["status"] == "ready", meeting
+
+
+async def test_chunked_multiple_audio_files_create_one_combined_meeting(tmp_path):
+    app = build(tmp_path)
+    contents = [wav_bytes(2, 16000, 1), wav_bytes(3, 16000, 1)]
+    chunk_size = 1024 * 1024
+    files = [{"filename": f"part-{index}.wav", "file_size": len(content),
+              "total_chunks": (len(content) + chunk_size - 1) // chunk_size,
+              "chunk_size": chunk_size} for index, content in enumerate(contents)]
+    async with app.router.lifespan_context(app), httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
+        await login(client)
+        started = await client.post("/api/meetings/import/chunked", json={"title": "分片多文件", "files": files})
+        assert started.status_code == 200, started.text
+        upload_id = started.json()["upload_id"]
+        for file_index, content in enumerate(contents):
+            response = await client.put(
+                f"/api/meetings/import/chunked/{upload_id}/file/{file_index}/0", content=content,
+                headers={"X-Chunk-SHA256": hashlib.sha256(content).hexdigest()},
+            )
+            assert response.status_code == 200, response.text
+        completed = await client.post(f"/api/meetings/import/chunked/{upload_id}/complete")
+        assert completed.status_code == 202, completed.text
+        meeting = await settled(client, completed.json()["id"])
+        assert meeting["import_job"]["status"] == "ready", meeting
+        assert meeting["duration_seconds"] == pytest.approx(5, abs=0.01)
+        assert len((await client.get("/api/meetings")).json()) == 1
 
 
 async def test_missing_speaker_models_preserves_transcription_and_summary(tmp_path):

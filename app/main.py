@@ -12,7 +12,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import AwareDatetime, BaseModel, Field, field_validator
+from pydantic import AwareDatetime, BaseModel, Field, field_validator, model_validator
 
 from .realtime import meeting_socket
 from .auth import AuthStore
@@ -72,12 +72,20 @@ class LoginInput(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 
-class ChunkedImportStart(BaseModel):
-    title: str = Field(min_length=1, max_length=80)
-    language: str | None = Field(default=None, max_length=40)
+class ChunkedImportFile(BaseModel):
     filename: str = Field(min_length=1, max_length=255)
     file_size: int = Field(gt=0)
     total_chunks: int = Field(gt=0)
+    chunk_size: int = Field(default=DEFAULT_CHUNK_SIZE, ge=1024 * 1024, le=32 * 1024 * 1024)
+
+
+class ChunkedImportStart(BaseModel):
+    title: str = Field(min_length=1, max_length=80)
+    language: str | None = Field(default=None, max_length=40)
+    files: list[ChunkedImportFile] | None = Field(default=None, min_length=1)
+    filename: str | None = Field(default=None, min_length=1, max_length=255)
+    file_size: int | None = Field(default=None, gt=0)
+    total_chunks: int | None = Field(default=None, gt=0)
     chunk_size: int = Field(default=DEFAULT_CHUNK_SIZE, ge=1024 * 1024, le=32 * 1024 * 1024)
 
     @field_validator("title")
@@ -86,6 +94,12 @@ class ChunkedImportStart(BaseModel):
         if not value.strip():
             raise ValueError("请输入会议名称")
         return value.strip()
+
+    @model_validator(mode="after")
+    def require_files(self):
+        if self.files is None and None in (self.filename, self.file_size, self.total_chunks):
+            raise ValueError("请提供音频文件分片信息")
+        return self
 
 
 def create_app(
@@ -216,7 +230,7 @@ def create_app(
     @app.post("/api/meetings/import", status_code=202)
     async def import_meeting(
         request: Request,
-        file: UploadFile = File(...),
+        file: list[UploadFile] = File(...),
         title: str = Form(..., min_length=1, max_length=80),
         language: str | None = Form(default=None, max_length=40),
         department_id: str | None = Form(default=None, pattern=r"^[a-f0-9]{32}$"),
@@ -226,19 +240,32 @@ def create_app(
                 raise MeetingError("请输入会议名称", 422)
             return await audio_imports.create(file, title.strip(), language, department_id, request.state.user["id"])
         finally:
-            await file.close()
+            for item in file:
+                await item.close()
 
     @app.post("/api/meetings/import/chunked")
     async def start_chunked_import(payload: ChunkedImportStart, request: Request) -> dict[str, Any]:
+        files = [item.model_dump() for item in payload.files] if payload.files else [{
+            "filename": payload.filename,
+            "file_size": payload.file_size,
+            "total_chunks": payload.total_chunks,
+            "chunk_size": payload.chunk_size,
+        }]
         return await audio_imports.start_chunked(
-            payload.title, payload.language, payload.filename, payload.file_size,
-            payload.total_chunks, payload.chunk_size, request.state.user["id"],
+            payload.title, payload.language, files, request.state.user["id"],
         )
 
     @app.put("/api/meetings/import/chunked/{upload_id}/{index}")
     async def upload_import_chunk(upload_id: str, index: int, request: Request) -> dict[str, Any]:
         return await audio_imports.upload_chunk(
-            upload_id, index, request.stream(), request.headers.get("X-Chunk-SHA256", ""),
+            upload_id, 0, index, request.stream(), request.headers.get("X-Chunk-SHA256", ""),
+            request.state.user["id"],
+        )
+
+    @app.put("/api/meetings/import/chunked/{upload_id}/file/{file_index}/{index}")
+    async def upload_import_file_chunk(upload_id: str, file_index: int, index: int, request: Request) -> dict[str, Any]:
+        return await audio_imports.upload_chunk(
+            upload_id, file_index, index, request.stream(), request.headers.get("X-Chunk-SHA256", ""),
             request.state.user["id"],
         )
 

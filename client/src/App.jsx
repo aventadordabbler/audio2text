@@ -1017,7 +1017,7 @@ export function App() {
     setCreateOpen(true);
   }
 
-  async function createMeeting(title, departmentId, file = null, language) {
+  async function createMeeting(title, departmentId, files = [], language) {
     if (startingRef.current || recordingRef.current || controllingRef.current)
       throw new Error("请先结束当前会议");
     setUploadProgress(null);
@@ -1025,8 +1025,8 @@ export function App() {
     try {
       let next;
       if (meetingApi) {
-        const remote = file
-          ? await meetingApi.importWav(title, departmentId, file, language, (completed, total) => setUploadProgress({ completed, total }))
+        const remote = files.length
+          ? await meetingApi.importWav(title, departmentId, files, language, (completed, total) => setUploadProgress({ completed, total }))
           : await meetingApi.create(title, departmentId);
         next = sessionFromMeeting(remote, meetingApi.config.baseUrl);
       } else throw new Error("请先在模型设置中配置有效的会议服务地址");
@@ -1034,7 +1034,7 @@ export function App() {
       await updateSession(next, { syncView: false });
       showSession(next);
       refreshCatalog();
-      setStatusLine(file ? "音频已上传，后台正在生成转写和会议纪要" : "会议已创建，可以开始录音");
+      setStatusLine(files.length ? "音频已上传，后台正在生成转写和会议纪要" : "会议已创建，可以开始录音");
     } finally {
       setUploadProgress(null);
     }

@@ -31,7 +31,7 @@ export function CreateMeetingDialog({
 }) {
   const [title, setTitle] = useState("")
   const [source, setSource] = useState("recording")
-  const [file, setFile] = useState<File | null>(null)
+  const [files, setFiles] = useState<File[]>([])
   const [language, setLanguage] = useState("auto")
   const [submitting, setSubmitting] = useState(false)
   const [uploadProgress, setUploadProgress] = useState<{ completed: number; total: number } | null>(null)
@@ -40,7 +40,7 @@ export function CreateMeetingDialog({
     if (open) {
       setTitle("")
       setSource("recording")
-      setFile(null)
+      setFiles([])
       setLanguage("auto")
       setUploadProgress(null)
       setError("")
@@ -53,12 +53,12 @@ export function CreateMeetingDialog({
       setError("请为这场会议起个名字。")
       return
     }
-    if (source === "wav" && !file) return
+    if (source === "wav" && !files.length) return
     setSubmitting(true)
     setError("")
     try {
       const meeting = source === "wav"
-        ? await importWav(file!, title.trim(), language, (completed, total) => setUploadProgress({ completed, total }))
+        ? await importWav(files, title.trim(), language, (completed, total) => setUploadProgress({ completed, total }))
         : await api<Meeting>("/api/meetings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -114,11 +114,11 @@ export function CreateMeetingDialog({
               </div>
               {source === "wav" && <div className="space-y-2.5">
                 <Label htmlFor="wav-input">音频文件</Label>
-                <Input id="wav-input" type="file" accept=".wav,.mp3,audio/wav,audio/x-wav,audio/mpeg" required disabled={submitting}
+                <Input id="wav-input" type="file" multiple accept=".wav,.mp3,audio/wav,audio/x-wav,audio/mpeg" required disabled={submitting}
                   onChange={(event) => {
-                    const selected = event.target.files?.[0] || null
-                    setFile(selected)
-                    if (selected && !title.trim()) setTitle(selected.name.replace(/\.(wav|mp3)$/i, "").slice(0, 80))
+                    const selected = Array.from(event.target.files || [])
+                    setFiles(selected)
+                    if (selected[0] && !title.trim()) setTitle(selected[0].name.replace(/\.(wav|mp3)$/i, "").slice(0, 80))
                   }} />
               </div>}
 
@@ -178,7 +178,7 @@ export function CreateMeetingDialog({
             >
               取消
             </Button>
-            <Button id="submit-create" type="submit" disabled={submitting || (source === "wav" && !file)} className="gap-2 px-5">
+            <Button id="submit-create" type="submit" disabled={submitting || (source === "wav" && !files.length)} className="gap-2 px-5">
               {submitting ? <LoaderCircle className="size-4 animate-spin" /> : null}{source === "wav" ? (submitting ? (uploadProgress ? `正在上传分片 ${uploadProgress.completed}/${uploadProgress.total}` : "正在上传并解析") : "上传并创建") : "创建并进入"}
               <ArrowRight className="size-4" />
             </Button>

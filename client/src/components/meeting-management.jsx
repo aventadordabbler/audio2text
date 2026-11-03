@@ -94,7 +94,7 @@ export function CreateMeetingDialog({
 }) {
   const [title, setTitle] = useState("");
   const [source, setSource] = useState("recording");
-  const [file, setFile] = useState(null);
+  const [files, setFiles] = useState([]);
   const [language, setLanguage] = useState(initialLanguage);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -102,21 +102,21 @@ export function CreateMeetingDialog({
     if (open) {
       setTitle(initialTitle);
       setSource("recording");
-      setFile(null);
+      setFiles([]);
       setLanguage(initialLanguage);
       setError("");
     }
   }, [open, initialTitle, initialLanguage]);
   async function submit(event) {
     event.preventDefault();
-    if (!title.trim() || busy || (source === "wav" && !file)) return;
+    if (!title.trim() || busy || (source === "wav" && !files.length)) return;
     setBusy(true);
     setError("");
     try {
       await onCreate(
         title.trim(),
         null,
-        source === "wav" ? file : null,
+        source === "wav" ? files : [],
         language,
       );
       onOpenChange(false);
@@ -155,11 +155,11 @@ export function CreateMeetingDialog({
             <>
               <Label className="form-field">
                 <span>音频文件</span>
-                <Input type="file" accept=".wav,.mp3,audio/wav,audio/x-wav,audio/mpeg" required disabled={busy}
+                <Input type="file" multiple accept=".wav,.mp3,audio/wav,audio/x-wav,audio/mpeg" required disabled={busy}
                   onChange={(event) => {
-                    const selected = event.target.files?.[0] || null;
-                    setFile(selected);
-                    if (selected && !title.trim()) setTitle(selected.name.replace(/\.(wav|mp3)$/i, "").slice(0, 80));
+                    const selected = Array.from(event.target.files || []);
+                    setFiles(selected);
+                    if (selected[0] && !title.trim()) setTitle(selected[0].name.replace(/\.(wav|mp3)$/i, "").slice(0, 80));
                   }} />
               </Label>
               <Label className="form-field">
@@ -201,7 +201,7 @@ export function CreateMeetingDialog({
             >
               取消
             </Button>
-            <Button type="submit" disabled={busy || !title.trim() || (source === "wav" && !file)}>
+            <Button type="submit" disabled={busy || !title.trim() || (source === "wav" && !files.length)}>
               {busy && <LoaderCircle className="animate-spin" size={15} />}
               {source === "wav" ? (busy ? (uploadProgress ? `正在上传分片 ${uploadProgress.completed}/${uploadProgress.total}` : "正在上传并解析") : "上传并创建") : "创建并进入"}
             </Button>

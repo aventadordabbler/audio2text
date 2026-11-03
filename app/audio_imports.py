@@ -61,40 +61,46 @@ class AudioImportService:
                        (*values.values(), meeting_id))
 
     @staticmethod
-    def _source_name(filename):
+    def _source_name(filename, index=None):
         suffix = Path(filename).suffix.lower()
         if suffix not in {".wav", ".mp3"}:
             raise MeetingError("请选择 WAV 或 MP3 音频文件", 422)
-        return f"source{suffix}"
+        return f"source{f'-{index}' if index is not None else ''}{suffix}"
 
     async def create(self, upload, title, language, department_id, user_id=None):
-        filename = (upload.filename or "").replace("\\", "/").rsplit("/", 1)[-1]
-        source_name = self._source_name(filename)
+        uploads = upload if isinstance(upload, (list, tuple)) else [upload]
+        if not uploads:
+            raise MeetingError("请至少选择一个音频文件", 422)
+        filenames = [(item.filename or "").replace("\\", "/").rsplit("/", 1)[-1] for item in uploads]
+        source_names = [self._source_name(filename, index if len(uploads) > 1 else None)
+                        for index, filename in enumerate(filenames)]
         if self.decoder_factory is None:
             await _disk(self.models.require, "asr")
         if not self.minutes.available:
             raise MeetingError("请先配置大语言模型，再导入音频生成会议总结", 503)
-        uploads = self.store.path.parent / ".audio-uploads"
-        uploads.mkdir(parents=True, exist_ok=True)
+        upload_directory = self.store.path.parent / ".audio-uploads"
+        upload_directory.mkdir(parents=True, exist_ok=True)
         async with self.upload_slots:
-            with TemporaryDirectory(prefix="wav-", dir=uploads) as temporary:
+            with TemporaryDirectory(prefix="wav-", dir=upload_directory) as temporary:
                 directory = Path(temporary)
-                source = directory / source_name
-                size = 0
-                with source.open("wb") as output:
-                    while chunk := await upload.read(1024 * 1024):
-                        size += len(chunk)
-                        if size > self.settings.audio_import_max_bytes:
-                            raise MeetingError("音频文件超过服务端允许的大小", 413)
-                        await _disk(output.write, chunk)
-                if source_name.endswith(".wav"):
-                    with source.open("rb") as audio:
-                        header = audio.read(12)
-                    if len(header) < 12 or header[:4] not in {b"RIFF", b"RF64"} or header[8:] != b"WAVE":
-                        raise MeetingError("文件不是有效的 WAV 音频", 422)
-                await self._decode(directory, source_name)
+                for index, (item, source_name) in enumerate(zip(uploads, source_names)):
+                    source = directory / source_name
+                    size = 0
+                    with source.open("wb") as output:
+                        while chunk := await item.read(1024 * 1024):
+                            size += len(chunk)
+                            if size > self.settings.audio_import_max_bytes:
+                                raise MeetingError("音频文件超过服务端允许的大小", 413)
+                            await _disk(output.write, chunk)
+                    if source_name.endswith(".wav"):
+                        with source.open("rb") as audio:
+                            header = audio.read(12)
+                        if len(header) < 12 or header[:4] not in {b"RIFF", b"RF64"} or header[8:] != b"WAVE":
+                            raise MeetingError("文件不是有效的 WAV 音频", 422)
+                    await self._decode(directory, source_name, continue_capture=index > 0)
                 # Publish the meeting only after its complete archive and exact duration exist.
-                publishing = asyncio.create_task(self._publish(directory, title, language, department_id, filename, user_id))
+                publishing = asyncio.create_task(self._publish(directory, title, language, department_id,
+                                                               "、".join(filenames), user_id))
                 try:
                     return await asyncio.shield(publishing)
                 except asyncio.CancelledError:
@@ -117,16 +123,26 @@ class AudioImportService:
             raise MeetingError("上传会话不存在", 404)
         return directory, meta
 
-    async def start_chunked(self, title, language, filename, file_size, total_chunks, chunk_size, user_id=None):
-        filename = (filename or "").replace("\\", "/").rsplit("/", 1)[-1]
-        source_name = self._source_name(filename)
-        if type(file_size) is not int or file_size <= 0 or file_size > self.settings.audio_import_max_bytes:
-            raise MeetingError("音频文件超过服务端允许的大小", 413)
-        if type(chunk_size) is not int or not 1024 * 1024 <= chunk_size <= 32 * 1024 * 1024:
-            raise MeetingError("分片大小必须在 1–32 MiB 之间", 422)
-        expected_chunks = (file_size + chunk_size - 1) // chunk_size
-        if type(total_chunks) is not int or total_chunks != expected_chunks:
-            raise MeetingError("分片数量与文件大小不匹配", 422)
+    async def start_chunked(self, title, language, files, user_id=None):
+        if not files:
+            raise MeetingError("请至少选择一个音频文件", 422)
+        normalized = []
+        for index, item in enumerate(files):
+            filename = (item["filename"] or "").replace("\\", "/").rsplit("/", 1)[-1]
+            source_name = self._source_name(filename, index if len(files) > 1 else None)
+            file_size, total_chunks, chunk_size = item["file_size"], item["total_chunks"], item["chunk_size"]
+            if type(file_size) is not int or file_size <= 0 or file_size > self.settings.audio_import_max_bytes:
+                raise MeetingError("音频文件超过服务端允许的大小", 413)
+            if type(chunk_size) is not int or not 1024 * 1024 <= chunk_size <= 32 * 1024 * 1024:
+                raise MeetingError("分片大小必须在 1–32 MiB 之间", 422)
+            expected_chunks = (file_size + chunk_size - 1) // chunk_size
+            if type(total_chunks) is not int or total_chunks != expected_chunks:
+                raise MeetingError("分片数量与文件大小不匹配", 422)
+            normalized.append({
+                "index": index, "filename": filename, "source_name": source_name,
+                "file_size": file_size, "chunk_size": chunk_size, "total_chunks": total_chunks,
+                "received": {},
+            })
         if self.decoder_factory is None:
             await _disk(self.models.require, "asr")
         if not self.minutes.available:
@@ -138,25 +154,39 @@ class AudioImportService:
         directory.mkdir()
         meta = {
             "upload_id": upload_id, "title": title.strip(), "language": language,
-            "filename": filename, "source_name": source_name, "file_size": file_size, "chunk_size": chunk_size,
-            "total_chunks": total_chunks, "user_id": user_id, "received": {},
+            "files": normalized, "user_id": user_id,
         }
         (directory / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
-        return {"upload_id": upload_id, "chunk_size": chunk_size, "total_chunks": total_chunks, "received": []}
+        result = {"upload_id": upload_id, "files": [
+            {key: value for key, value in item.items() if key != "received"} | {"received": []}
+            for item in normalized
+        ]}
+        if len(normalized) == 1:
+            item = normalized[0]
+            result.update({key: item[key] for key in ("filename", "file_size", "chunk_size", "total_chunks")})
+            result["received"] = []
+        return result
 
-    async def upload_chunk(self, upload_id, index, stream, digest, user_id=None):
+    async def upload_chunk(self, upload_id, file_index, index, stream, digest, user_id=None):
         async with self.chunk_lock:
             directory, meta = self._read_chunk_meta(upload_id, user_id)
-            if type(index) is not int or not 0 <= index < meta["total_chunks"]:
+            files = meta.get("files")
+            if files is None:
+                files = [{key: meta[key] for key in ("filename", "source_name", "file_size", "chunk_size", "total_chunks", "received")}]
+            if type(file_index) is not int or not 0 <= file_index < len(files):
+                raise MeetingError("文件序号无效", 422)
+            item = files[file_index]
+            if type(index) is not int or not 0 <= index < item["total_chunks"]:
                 raise MeetingError("分片序号无效", 422)
             if not isinstance(digest, str) or len(digest) != 64:
                 raise MeetingError("分片校验值无效", 422)
-            expected_size = min(meta["chunk_size"], meta["file_size"] - index * meta["chunk_size"])
-            chunk_path = directory / f"chunk-{index:08d}.part"
-            existing = meta["received"].get(str(index))
+            expected_size = min(item["chunk_size"], item["file_size"] - index * item["chunk_size"])
+            chunk_path = directory / f"file-{file_index:04d}-chunk-{index:08d}.part"
+            existing = item["received"].get(str(index))
             if existing and chunk_path.exists():
                 if existing["sha256"] == digest and existing["size"] == expected_size:
-                    return {"index": index, "size": expected_size, "received": sorted(map(int, meta["received"]))}
+                    return {"file_index": file_index, "index": index, "size": expected_size,
+                            "received": sorted(map(int, item["received"]))}
                 raise MeetingError("该分片已上传但校验值不一致", 409)
             size = 0
             hasher = hashlib.sha256()
@@ -172,47 +202,53 @@ class AudioImportService:
                 if size != expected_size or not hmac.compare_digest(hasher.hexdigest(), digest):
                     raise MeetingError("分片完整性校验失败", 422)
                 temporary.replace(chunk_path)
-                meta["received"][str(index)] = {"size": size, "sha256": digest}
+                item["received"][str(index)] = {"size": size, "sha256": digest}
                 (directory / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
             finally:
                 temporary.unlink(missing_ok=True)
-            return {"index": index, "size": size, "received": sorted(map(int, meta["received"]))}
+            return {"file_index": file_index, "index": index, "size": size,
+                    "received": sorted(map(int, item["received"]))}
 
     async def complete_chunked(self, upload_id, user_id=None):
         async with self.chunk_lock:
             directory, meta = self._read_chunk_meta(upload_id, user_id)
-            if len(meta["received"]) != meta["total_chunks"]:
+            files = meta.get("files")
+            if files is None:
+                files = [{key: meta[key] for key in ("filename", "source_name", "file_size", "chunk_size", "total_chunks", "received")}]
+            if any(len(item["received"]) != item["total_chunks"] for item in files):
                 raise MeetingError("仍有分片未上传完成", 409)
-            source_name = meta.get("source_name", self._source_name(meta["filename"]))
-            source = directory / source_name
-            size = 0
             try:
-                with source.open("wb") as output:
-                    for index in range(meta["total_chunks"]):
-                        chunk_path = directory / f"chunk-{index:08d}.part"
-                        chunk_meta = meta["received"].get(str(index))
-                        if chunk_meta is None or not chunk_path.exists():
-                            raise MeetingError("分片文件缺失，请重新上传", 409)
-                        with chunk_path.open("rb") as chunk:
-                            chunk_hasher = hashlib.sha256()
-                            while block := chunk.read(1024 * 1024):
-                                size += len(block)
-                                chunk_hasher.update(block)
-                                output.write(block)
-                            if not hmac.compare_digest(chunk_hasher.hexdigest(), chunk_meta["sha256"]):
-                                raise MeetingError("分片文件完整性校验失败", 422)
-                if size != meta["file_size"]:
-                    raise MeetingError("合并后的文件大小不一致", 422)
-                if source_name.endswith(".wav"):
-                    with source.open("rb") as audio:
-                        header = audio.read(12)
-                    if len(header) < 12 or header[:4] not in {b"RIFF", b"RF64"} or header[8:] != b"WAVE":
-                        raise MeetingError("文件不是有效的 WAV 音频", 422)
-                for chunk_path in directory.glob("chunk-*.part"):
-                    chunk_path.unlink()
+                for file_index, item in enumerate(files):
+                    source_name = item.get("source_name", self._source_name(item["filename"], file_index if len(files) > 1 else None))
+                    source = directory / source_name
+                    size = 0
+                    with source.open("wb") as output:
+                        for index in range(item["total_chunks"]):
+                            chunk_path = directory / f"file-{file_index:04d}-chunk-{index:08d}.part"
+                            chunk_meta = item["received"].get(str(index))
+                            if chunk_meta is None or not chunk_path.exists():
+                                raise MeetingError("分片文件缺失，请重新上传", 409)
+                            with chunk_path.open("rb") as chunk:
+                                chunk_hasher = hashlib.sha256()
+                                while block := chunk.read(1024 * 1024):
+                                    size += len(block)
+                                    chunk_hasher.update(block)
+                                    output.write(block)
+                                if not hmac.compare_digest(chunk_hasher.hexdigest(), chunk_meta["sha256"]):
+                                    raise MeetingError("分片文件完整性校验失败", 422)
+                    if size != item["file_size"]:
+                        raise MeetingError("合并后的文件大小不一致", 422)
+                    if source_name.endswith(".wav"):
+                        with source.open("rb") as audio:
+                            header = audio.read(12)
+                        if len(header) < 12 or header[:4] not in {b"RIFF", b"RF64"} or header[8:] != b"WAVE":
+                            raise MeetingError("文件不是有效的 WAV 音频", 422)
+                    await self._decode(directory, source_name, continue_capture=file_index > 0)
+                    for chunk_path in directory.glob(f"file-{file_index:04d}-chunk-*.part"):
+                        chunk_path.unlink()
                 (directory / "metadata.json").unlink(missing_ok=True)
-                await self._decode(directory, source_name)
-                return await self._publish(directory, meta["title"], meta["language"], None, meta["filename"], user_id)
+                return await self._publish(directory, meta["title"], meta["language"], None,
+                                           "、".join(item["filename"] for item in files), user_id)
             except BaseException:
                 if directory.exists():
                     shutil.rmtree(directory, ignore_errors=True)
@@ -225,9 +261,12 @@ class AudioImportService:
             self._schedule(meeting["id"])
             return meeting
 
-    async def _decode(self, directory, source_name="source.wav"):
+    async def _decode(self, directory, source_name="source.wav", continue_capture=False):
         archive = await _disk(AudioArchive, directory)
-        await _disk(archive.begin)
+        if continue_capture and archive.manifest["captures"]:
+            archive.capture_id = archive.manifest["captures"][-1]["id"]
+        else:
+            await _disk(archive.begin)
         try:
             input_format = ["-f", "wav"] if source_name.endswith(".wav") else []
             process = await asyncio.create_subprocess_exec(
@@ -240,6 +279,7 @@ class AudioImportService:
         try:
             async with asyncio.timeout(self.settings.audio_import_decode_timeout_seconds):
                 remainder = b""
+                decoded_samples = 0
                 while True:
                     try:
                         block = await process.stdout.readexactly(SAMPLE_RATE * 2 * 10)
@@ -251,10 +291,11 @@ class AudioImportService:
                     length = len(block) // 2 * 2
                     remainder = block[length:]
                     samples = np.frombuffer(block[:length], dtype="<i2").astype(np.float32) / 32768
+                    decoded_samples += len(samples)
                     if archive.samples + len(samples) > self.settings.audio_import_max_seconds * SAMPLE_RATE:
                         raise MeetingError("音频时长超过服务端允许的范围", 413)
                     await _disk(archive.append, samples)
-                if await process.wait() or remainder or not archive.samples:
+                if await process.wait() or remainder or not decoded_samples:
                     raise MeetingError("音频解码失败或没有有效音频，请检查文件是否完整", 422)
                 await _disk(archive.end)
         except TimeoutError as exc:

@@ -166,10 +166,11 @@ export class MeetingApi {
   }
 
   importWav(title, departmentId, file, language = this.config.language, onProgress) {
-    if (file.size > CHUNK_THRESHOLD) return this.importWavChunked(title, file, language, onProgress);
+    const files = Array.isArray(file) ? file : [file];
+    if (files.length > 1 || files[0].size > CHUNK_THRESHOLD) return this.importWavChunked(title, files, language, onProgress);
     const body = new FormData();
     body.set("title", title);
-    body.set("file", file);
+    body.set("file", files[0]);
     if (departmentId) body.set("department_id", departmentId);
     if (language && language !== "auto") body.set("language", language);
     return this.request("/api/meetings/import", {
@@ -177,22 +178,27 @@ export class MeetingApi {
     });
   }
 
-  async importWavChunked(title, file, language = this.config.language, onProgress) {
-    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+  async importWavChunked(title, files, language = this.config.language, onProgress) {
+    const totalChunks = files.reduce((total, file) => total + Math.ceil(file.size / CHUNK_SIZE), 0);
     const started = await this.request("/api/meetings/import/chunked", {
       method: "POST",
-      body: JSON.stringify({ title, language: language === "auto" ? null : language, filename: file.name, file_size: file.size, total_chunks: totalChunks, chunk_size: CHUNK_SIZE }),
+      body: JSON.stringify({ title, language: language === "auto" ? null : language, files: files.map((file) => ({ filename: file.name, file_size: file.size, total_chunks: Math.ceil(file.size / CHUNK_SIZE), chunk_size: CHUNK_SIZE })) }),
       signal: AbortSignal.timeout(900000),
     });
-    for (let index = 0; index < totalChunks; index += 1) {
-      const chunk = file.slice(index * CHUNK_SIZE, Math.min(file.size, (index + 1) * CHUNK_SIZE));
-      await this.request(`/api/meetings/import/chunked/${started.upload_id}/${index}`, {
-        method: "PUT",
-        body: chunk,
-        headers: { "Content-Type": "application/octet-stream", "X-Chunk-SHA256": await sha256Hex(chunk) },
-        signal: AbortSignal.timeout(900000),
-      });
-      onProgress?.(index + 1, totalChunks);
+    let completed = 0;
+    for (let fileIndex = 0; fileIndex < files.length; fileIndex += 1) {
+      const file = files[fileIndex];
+      const fileChunks = Math.ceil(file.size / CHUNK_SIZE);
+      for (let index = 0; index < fileChunks; index += 1) {
+        const chunk = file.slice(index * CHUNK_SIZE, Math.min(file.size, (index + 1) * CHUNK_SIZE));
+        await this.request(`/api/meetings/import/chunked/${started.upload_id}/file/${fileIndex}/${index}`, {
+          method: "PUT", body: chunk,
+          headers: { "Content-Type": "application/octet-stream", "X-Chunk-SHA256": await sha256Hex(chunk) },
+          signal: AbortSignal.timeout(900000),
+        });
+        completed += 1;
+        onProgress?.(completed, totalChunks);
+      }
     }
     return this.request(`/api/meetings/import/chunked/${started.upload_id}/complete`, {
       method: "POST", signal: AbortSignal.timeout(900000),
