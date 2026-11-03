@@ -88,6 +88,7 @@ export function CreateMeetingDialog({
   departmentError,
   onRefresh,
   onCreate,
+  uploadProgress,
   initialTitle = "",
   initialLanguage = "auto",
 }) {
@@ -95,7 +96,6 @@ export function CreateMeetingDialog({
   const [source, setSource] = useState("recording");
   const [file, setFile] = useState(null);
   const [language, setLanguage] = useState(initialLanguage);
-  const [departmentId, setDepartmentId] = useState("unassigned");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -104,7 +104,6 @@ export function CreateMeetingDialog({
       setSource("recording");
       setFile(null);
       setLanguage(initialLanguage);
-      setDepartmentId("unassigned");
       setError("");
     }
   }, [open, initialTitle, initialLanguage]);
@@ -116,7 +115,7 @@ export function CreateMeetingDialog({
     try {
       await onCreate(
         title.trim(),
-        departmentId === "unassigned" ? null : departmentId,
+        null,
         source === "wav" ? file : null,
         language,
       );
@@ -188,27 +187,6 @@ export function CreateMeetingDialog({
               placeholder="例如：产品研发周会"
             />
           </Label>
-          <DepartmentSelect
-            departments={departments}
-            value={departmentId}
-            onChange={setDepartmentId}
-            disabled={busy || loading}
-          />
-          {departmentError ? (
-            <div role="alert" className="management-error">
-              {departmentError}
-              <Button type="button" variant="ghost" onClick={onRefresh}>
-                重试加载部门
-              </Button>
-            </div>
-          ) : (
-            !loading &&
-            !departments.length && (
-              <p className="management-help">
-                可先在部门管理中添加部门，也可选择未分类。
-              </p>
-            )
-          )}
           {error && (
             <p role="alert" className="management-error">
               {error}
@@ -225,7 +203,7 @@ export function CreateMeetingDialog({
             </Button>
             <Button type="submit" disabled={busy || !title.trim() || (source === "wav" && !file)}>
               {busy && <LoaderCircle className="animate-spin" size={15} />}
-              {source === "wav" ? (busy ? "正在上传并解析" : "上传并创建") : "创建并进入"}
+              {source === "wav" ? (busy ? (uploadProgress ? `正在上传分片 ${uploadProgress.completed}/${uploadProgress.total}` : "正在上传并解析") : "上传并创建") : "创建并进入"}
             </Button>
           </DialogFooter>
         </form>

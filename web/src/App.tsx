@@ -17,12 +17,15 @@ import { MeetingDetail } from "@/components/meeting-detail"
 import { ModelConfigDialog } from "@/components/model-config-dialog"
 import { MeetingList } from "@/components/meeting-list"
 import { WorkspaceSidebar } from "@/components/workspace-sidebar"
-import { api, emptyMeetingFilters, errorMessage, type Department, type Meeting, type MeetingFilters } from "@/lib/meetings"
+import { AuthScreen } from "@/components/auth-screen"
+import { api, authToken, emptyMeetingFilters, errorMessage, setAuthToken, type Department, type Meeting, type MeetingFilters } from "@/lib/meetings"
 import { RecordingSession } from "@/lib/recording-session"
 
 export default function App() {
   const [session] = useState(() => new RecordingSession())
   const state = useSyncExternalStore(session.subscribe, session.getSnapshot)
+  const [authReady, setAuthReady] = useState(false)
+  const [authUser, setAuthUser] = useState<Record<string, string> | null>(null)
   const [meetings, setMeetings] = useState<Meeting[]>([])
   const [loading, setLoading] = useState(true)
   const [routing, setRouting] = useState(true)
@@ -35,7 +38,22 @@ export default function App() {
   const [modelsOpen, setModelsOpen] = useState(false)
   const [modelsVersion, setModelsVersion] = useState(0)
 
+  useEffect(() => {
+    const expired = () => setAuthUser(null)
+    window.addEventListener("auth-expired", expired)
+    if (!authToken()) {
+      setAuthReady(true)
+    } else {
+      void api<Record<string, string>>("/api/auth/me")
+        .then(setAuthUser)
+        .catch(() => setAuthToken(null))
+        .finally(() => setAuthReady(true))
+    }
+    return () => window.removeEventListener("auth-expired", expired)
+  }, [])
+
   const refresh = useCallback(async () => {
+    if (!authUser) return
     setLoading(true)
     try {
       const [meetings, departments] = await Promise.all([
@@ -52,10 +70,14 @@ export default function App() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [authUser])
 
   useEffect(() => {
     let active = true
+    if (!authUser) {
+      setRouting(false)
+      return () => { active = false }
+    }
     let queue = Promise.resolve()
     const navigate = () => {
       queue = queue
@@ -114,7 +136,7 @@ export default function App() {
       window.removeEventListener("keydown", searchShortcut)
       session.disconnect()
     }
-  }, [session, refresh])
+  }, [authUser, session, refresh])
 
   useEffect(() => {
     if (state.meeting)
@@ -142,6 +164,9 @@ export default function App() {
     onPage: selectPage,
   }
   const visibleError = error || state.error
+
+  if (!authReady) return <div className="auth-screen">正在检查登录状态…</div>
+  if (!authUser) return <AuthScreen onAuthenticated={setAuthUser} />
 
   return (
     <TooltipProvider delayDuration={300}>
@@ -222,7 +247,7 @@ export default function App() {
               <Skeleton className="h-80 w-full rounded-xl" />
             </div>
           ) : page === "departments" ? (
-            <DepartmentManagement departments={departments} onChanged={refresh} />
+              <DepartmentManagement departments={departments} onChanged={refresh} />
           ) : state.meeting ? (
             <MeetingDetail
               key={state.meeting.id}
@@ -247,7 +272,7 @@ export default function App() {
           )}
         </main>
       </div>
-      <CreateMeetingDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={created} departments={departments} />
+      <CreateMeetingDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={created} />
       <ModelConfigDialog
         open={modelsOpen}
         onOpenChange={setModelsOpen}

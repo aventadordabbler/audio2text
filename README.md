@@ -243,7 +243,7 @@ Windows 标准版（Electron 35.7.5）安装包和便携版使用 `npm run dist:
 | `DIARIZATION_SEGMENTATION_DIR` | `models/pyannote/segmentation-3.0` | segmentation 权重目录 |
 | `DIARIZATION_WORKERS` | `1` | 说话人后台工作者数量 |
 | `DIARIZATION_THREADS` | `2` | 每个工作者的推理线程数 |
-| `AUDIO_IMPORT_MAX_BYTES` | `1073741824` | 单个 WAV 上传大小上限（1 GiB） |
+| `AUDIO_IMPORT_MAX_BYTES` | `5368709120` | 单个 WAV 上传大小上限（5 GiB） |
 | `AUDIO_IMPORT_MAX_SECONDS` | `28800` | 导入音频时长上限（8 小时） |
 | `AUDIO_IMPORT_WORKERS` | `1` | 同时处理的导入任务数 |
 | `AUDIO_IMPORT_DECODE_TIMEOUT_SECONDS` | `600` | 上传后音频校验和归档的超时秒数 |

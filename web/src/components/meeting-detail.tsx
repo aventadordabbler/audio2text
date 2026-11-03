@@ -29,7 +29,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { MeetingMinutes } from "./meeting-minutes"
 import { MeetingStatusBadge } from "./meeting-status"
-import { api, errorMessage, formatDate, formatDuration, languageLabels, importStatusLabel } from "@/lib/meetings"
+import { api, authToken, errorMessage, formatDate, formatDuration, languageLabels, importStatusLabel } from "@/lib/meetings"
 import { RecordingSession } from "@/lib/recording-session"
 import { downloadRecording } from "@/lib/recording-download"
 import { StageSummaryPanel } from "./stage-summary-panel"
@@ -439,7 +439,7 @@ export function MeetingDetail({
           </TabsList>
           {meeting.text && (
             <Button variant="outline" className="download-heading shrink-0 gap-2 bg-white" asChild>
-              <a id="download-link" href={`/api/meetings/${meeting.id}/download`}>
+              <a id="download-link" href={`/api/meetings/${meeting.id}/download?token=${encodeURIComponent(authToken())}`}>
                 <Download className="size-4" />
                 导出文本（TXT）
               </a>

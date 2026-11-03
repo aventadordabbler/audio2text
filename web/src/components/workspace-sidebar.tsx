@@ -1,4 +1,4 @@
-import { AudioLines, Building2, FileText, FolderClosed, Settings2 } from "lucide-react"
+import { AudioLines, FileText, FolderClosed, Settings2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { cn } from "@/lib/utils"
@@ -23,7 +23,6 @@ export function WorkspaceSidebar({
 }: Props) {
   const navigation = [
     { value: "meetings" as const, label: "会议管理", icon: FolderClosed },
-    { value: "departments" as const, label: "部门管理", icon: Building2 },
   ]
   return (
     <div className="sidebar-content">

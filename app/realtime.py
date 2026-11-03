@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 async def meeting_socket(websocket: WebSocket, meeting_id, store, models, minutes, factory, *, settings,
-                         diarization=None, events=None, stage_summaries=None):
+                         diarization=None, events=None, stage_summaries=None, user_id=None):
     """Bind one browser and one model stream to a meeting; persist only final segments."""
     await websocket.accept()
     owner = uuid4().hex
@@ -43,14 +43,14 @@ async def meeting_socket(websocket: WebSocket, meeting_id, store, models, minute
                 if event["revision"] <= revision:
                     return
                 if event["revision"] != revision + 1:
-                    current = await asyncio.to_thread(store.get, meeting_id)
+                    current = await asyncio.to_thread(store.get, meeting_id, user_id)
                     event = {"type": "snapshot", "meeting": current}
                     revision = current["transcript_revision"]
                 else:
                     revision = event["revision"]
             if "meeting" in event:
                 if event["meeting"]["transcript_revision"] < revision:
-                    event["meeting"] = await asyncio.to_thread(store.get, meeting_id)
+                    event["meeting"] = await asyncio.to_thread(store.get, meeting_id, user_id)
                 revision = event["meeting"]["transcript_revision"]
             await websocket.send_json({**event, "meeting_id": meeting_id})
 
@@ -58,7 +58,7 @@ async def meeting_socket(websocket: WebSocket, meeting_id, store, models, minute
         while True:
             event = await subscription.get()
             if event["type"] == "resync":
-                event = {"type": "snapshot", "meeting": await asyncio.to_thread(store.get, meeting_id)}
+                event = {"type": "snapshot", "meeting": await asyncio.to_thread(store.get, meeting_id, user_id)}
             await send(event)
             if event["type"] == "deleted":
                 await websocket.close(code=1000)
@@ -75,7 +75,7 @@ async def meeting_socket(websocket: WebSocket, meeting_id, store, models, minute
             text = event["text"].strip()
             if event["type"] == "final":
                 saved = await asyncio.to_thread(store.save_segment, meeting_id, owner, segment, text,
-                    event.get("start_ms", 0), event.get("end_ms", 0), archive.capture_id if archive else None)
+                    event.get("start_ms", 0), event.get("end_ms", 0), archive.capture_id if archive else None, user_id)
                 if text:
                     confirmed = "\n\n".join(part for part in (confirmed, text) if part)
                 next_segment += 1
@@ -129,11 +129,11 @@ async def meeting_socket(websocket: WebSocket, meeting_id, store, models, minute
             await asyncio.gather(task, return_exceptions=True)
 
     try:
-        meeting = await asyncio.to_thread(store.get, meeting_id)
+        meeting = await asyncio.to_thread(store.get, meeting_id, user_id)
         if meeting is None:
             raise MeetingError("会议不存在", 404)
         if meeting["status"] != "ended":
-            meeting = await asyncio.to_thread(store.claim, meeting_id, owner)
+            meeting = await asyncio.to_thread(store.claim, meeting_id, owner, user_id)
             claimed = True
         confirmed = meeting["text"]
         next_segment = local_base = meeting["next_segment_id"]
@@ -159,7 +159,7 @@ async def meeting_socket(websocket: WebSocket, meeting_id, store, models, minute
             factory = lambda: build_transcriber(config, settings)
         if events:
             subscription = events.subscribe(meeting_id, owner)
-            meeting = await asyncio.to_thread(store.get, meeting_id)
+            meeting = await asyncio.to_thread(store.get, meeting_id, user_id)
         await send({"type": "ready", "meeting": meeting, "audio_format": "pcm_s16le", "read_only": not claimed})
         if subscription is not None:
             pump = asyncio.create_task(forward())
@@ -216,12 +216,12 @@ async def meeting_socket(websocket: WebSocket, meeting_id, store, models, minute
                         await stream.start(meeting["language"], rate)
                         results = asyncio.create_task(read_results())
                     sample_rate = rate
-                    meeting = await asyncio.to_thread(store.transition, meeting_id, action, owner)
+                    meeting = await asyncio.to_thread(store.transition, meeting_id, action, owner, user_id)
                 elif action in {"pause", "end"}:
                     if action == "pause" and meeting["status"] != "recording":
                         raise MeetingError("当前会议状态不支持此操作")
                     if meeting["status"] == "recording":
-                        meeting = await asyncio.to_thread(store.transition, meeting_id, "pause", owner)
+                        meeting = await asyncio.to_thread(store.transition, meeting_id, "pause", owner, user_id)
                     if stream is not None:
                         await flush()
                     await asyncio.to_thread(archive.end)
@@ -230,13 +230,13 @@ async def meeting_socket(websocket: WebSocket, meeting_id, store, models, minute
                     if diarization:
                         diarization.notify(meeting_id)
                     if action == "end":
-                        meeting = await asyncio.to_thread(store.transition, meeting_id, "end", owner)
+                        meeting = await asyncio.to_thread(store.transition, meeting_id, "end", owner, user_id)
                         if diarization:
                             await diarization.finish(meeting_id)
                         else:
                             await minutes.after_end(meeting)
                     else:
-                        meeting = await asyncio.to_thread(store.get, meeting_id)
+                        meeting = await asyncio.to_thread(store.get, meeting_id, user_id)
                 elif action == "ping":
                     diagnostics = (
                         stream.diagnostics()
@@ -256,7 +256,7 @@ async def meeting_socket(websocket: WebSocket, meeting_id, store, models, minute
                     if stream:
                         await stream.close()
                         stream = None
-                    await asyncio.to_thread(store.release, meeting_id, owner)
+                    await asyncio.to_thread(store.release, meeting_id, owner, user_id)
                     claimed = False
             except (ValueError, TypeError):
                 await send({"type": "error", "action": action, "message": "消息格式不正确"})
@@ -292,4 +292,4 @@ async def meeting_socket(websocket: WebSocket, meeting_id, store, models, minute
                             await stage_summaries.finish(meeting_id, summary_watermark)
                         if diarization:
                             diarization.notify(meeting_id)
-                    await asyncio.to_thread(store.release, meeting_id, owner)
+                    await asyncio.to_thread(store.release, meeting_id, owner, user_id)

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Building2,
   ArrowLeft,
   Mic,
   Pause,
@@ -149,6 +148,13 @@ function Field({ label, children }) {
 
 export function App() {
   const [ready, setReady] = useState(false);
+  const [authUser, setAuthUser] = useState(null);
+  const [authMode, setAuthMode] = useState("login");
+  const [authForm, setAuthForm] = useState({ account: "", password: "", department: "", employeeId: "" });
+  const [authError, setAuthError] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authNotice, setAuthNotice] = useState("");
+  const [uploadProgress, setUploadProgress] = useState(null);
   const [config, setConfig] = useState(DEFAULT_CONFIG);
   const [formConfig, setFormConfig] = useState(DEFAULT_CONFIG);
   const [session, setSession] = useState(null);
@@ -224,7 +230,7 @@ export function App() {
   useEffect(() => {
     setDepartments([]);
     setDepartmentsError("");
-    if (!ready || !meetingApi) {
+    if (!authUser || !ready || !meetingApi) {
       setDepartmentsLoading(false);
       return;
     }
@@ -250,6 +256,7 @@ export function App() {
     return () => controller.abort();
   }, [
     ready,
+    authUser,
     meetingApi,
     catalogRevision,
     createOpen,
@@ -262,6 +269,7 @@ export function App() {
 
   useEffect(() => {
     if (
+      !authUser ||
       !autoScroll ||
       !isRecording ||
       activeView !== "overview" ||
@@ -338,6 +346,44 @@ export function App() {
       unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if (!ready || !meetingApi) return;
+    if (!localStorage.getItem("meeting-auth-token")) return;
+    meetingApi.authMe().then(setAuthUser).catch(() => localStorage.removeItem("meeting-auth-token"));
+  }, [ready, meetingApi]);
+
+  useEffect(() => {
+    const expired = () => {
+      recorder.disconnect();
+      setAuthUser(null);
+    };
+    window.addEventListener("auth-expired", expired);
+    return () => window.removeEventListener("auth-expired", expired);
+  }, []);
+
+  async function submitAuth(event) {
+    event.preventDefault();
+    setAuthBusy(true);
+    setAuthError("");
+    setAuthNotice("");
+    try {
+      if (authMode === "register") {
+        await meetingApi.authRegister(authForm.account, authForm.password, authForm.department, authForm.employeeId);
+        setAuthMode("login");
+        setAuthForm((current) => ({ ...current, password: "", department: "", employeeId: "" }));
+        setAuthNotice("注册成功，请登录");
+        return;
+      }
+      const result = await meetingApi.authLogin(authForm.account, authForm.password);
+      localStorage.setItem("meeting-auth-token", result.token);
+      setAuthUser(result.user);
+    } catch (error) {
+      setAuthError(error.message);
+    } finally {
+      setAuthBusy(false);
+    }
+  }
 
   useEffect(() => {
     const meetingId = session?.remoteMeetingId;
@@ -420,14 +466,14 @@ export function App() {
   }
 
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || !authUser) return;
     recorder.disconnect();
     sessionLoadRef.current++;
     setSessions([]);
     setSession(null);
     sessionRef.current = null;
     void reloadSessions();
-  }, [ready, config.stt.baseUrl]);
+  }, [ready, authUser, config.stt.baseUrl]);
 
   async function reloadSessions() {
     try {
@@ -974,19 +1020,24 @@ export function App() {
   async function createMeeting(title, departmentId, file = null, language) {
     if (startingRef.current || recordingRef.current || controllingRef.current)
       throw new Error("请先结束当前会议");
+    setUploadProgress(null);
     const loadId = ++sessionLoadRef.current;
-    let next;
-    if (meetingApi) {
-      const remote = file
-        ? await meetingApi.importWav(title, departmentId, file, language)
-        : await meetingApi.create(title, departmentId);
-      next = sessionFromMeeting(remote, meetingApi.config.baseUrl);
-    } else throw new Error("请先在模型设置中配置有效的会议服务地址");
-    if (loadId !== sessionLoadRef.current) return;
-    await updateSession(next, { syncView: false });
-    showSession(next);
-    refreshCatalog();
-    setStatusLine(file ? "音频已上传，后台正在生成转写和会议纪要" : "会议已创建，可以开始录音");
+    try {
+      let next;
+      if (meetingApi) {
+        const remote = file
+          ? await meetingApi.importWav(title, departmentId, file, language, (completed, total) => setUploadProgress({ completed, total }))
+          : await meetingApi.create(title, departmentId);
+        next = sessionFromMeeting(remote, meetingApi.config.baseUrl);
+      } else throw new Error("请先在模型设置中配置有效的会议服务地址");
+      if (loadId !== sessionLoadRef.current) return;
+      await updateSession(next, { syncView: false });
+      showSession(next);
+      refreshCatalog();
+      setStatusLine(file ? "音频已上传，后台正在生成转写和会议纪要" : "会议已创建，可以开始录音");
+    } finally {
+      setUploadProgress(null);
+    }
   }
 
   async function openRemoteMeeting(item) {
@@ -1207,7 +1258,6 @@ export function App() {
     : [];
   const navigation = [
     { key: "history", label: "会议管理", icon: FolderClosed },
-    { key: "departments", label: "部门管理", icon: Building2 },
   ];
   const selectedNavigation = activeView === "overview" ? "history" : activeView;
   const currentPage =
@@ -1349,6 +1399,23 @@ export function App() {
     );
   }
 
+  if (!authUser) {
+    return (
+      <main className="loading-screen auth-screen">
+        <form className="auth-panel" onSubmit={submitAuth}>
+          <WorkspaceBrand />
+          <div className="auth-tabs"><button type="button" className={authMode === "login" ? "active" : ""} onClick={() => { setAuthMode("login"); setAuthNotice(""); }}>登录</button><button type="button" className={authMode === "register" ? "active" : ""} onClick={() => { setAuthMode("register"); setAuthNotice(""); }}>注册</button></div>
+          <Field label="账号"><Input value={authForm.account} onChange={(event) => setAuthForm({ ...authForm, account: event.target.value })} required /></Field>
+          <Field label="密码"><Input type="password" value={authForm.password} onChange={(event) => setAuthForm({ ...authForm, password: event.target.value })} minLength={authMode === "register" ? 8 : 1} required /></Field>
+          {authMode === "register" && <><Field label="部门"><Input value={authForm.department} onChange={(event) => setAuthForm({ ...authForm, department: event.target.value })} required /></Field><Field label="工号"><Input value={authForm.employeeId} onChange={(event) => setAuthForm({ ...authForm, employeeId: event.target.value })} required /></Field></>}
+          {authNotice && <p className="auth-success" role="status">{authNotice}</p>}
+          {authError && <p className="auth-error" role="alert">{authError}</p>}
+          <Button type="submit" disabled={authBusy}>{authBusy ? "处理中…" : authMode === "register" ? "注册" : "登录"}</Button>
+        </form>
+      </main>
+    );
+  }
+
   return (
     <div className="desktop-app">
       <header
@@ -1392,6 +1459,7 @@ export function App() {
         departments={departments}
         loading={departmentsLoading}
         departmentError={departmentsError}
+        uploadProgress={uploadProgress}
         onRefresh={refreshCatalog}
         onCreate={createMeeting}
         initialTitle={""}

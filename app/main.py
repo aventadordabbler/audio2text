@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import AwareDatetime, BaseModel, Field, field_validator
 
 from .realtime import meeting_socket
+from .auth import AuthStore
 from .config import Settings, get_settings
 from .meetings import MeetingError, MeetingStore
 from .minutes import MinutesGenerator, MinutesService
@@ -22,7 +23,7 @@ from .model_configs import ModelConfigInput, ModelConfigStore, ModelKind
 from .model_probe import ModelProbeResult, probe_model
 from .meeting_events import MeetingEvents
 from .diarization.service import DiarizationService
-from .audio_imports import AudioImportService
+from .audio_imports import AudioImportService, DEFAULT_CHUNK_SIZE
 from .recordings import (
     AudioExportInvalid,
     AudioExportUnavailable,
@@ -59,6 +60,34 @@ class DepartmentInput(BaseModel):
         return value.strip()
 
 
+class RegisterInput(BaseModel):
+    account: str = Field(min_length=1, max_length=60)
+    password: str = Field(min_length=8, max_length=128)
+    department: str = Field(min_length=1, max_length=60)
+    employee_id: str = Field(min_length=1, max_length=60)
+
+
+class LoginInput(BaseModel):
+    account: str = Field(min_length=1, max_length=60)
+    password: str = Field(min_length=1, max_length=128)
+
+
+class ChunkedImportStart(BaseModel):
+    title: str = Field(min_length=1, max_length=80)
+    language: str | None = Field(default=None, max_length=40)
+    filename: str = Field(min_length=1, max_length=255)
+    file_size: int = Field(gt=0)
+    total_chunks: int = Field(gt=0)
+    chunk_size: int = Field(default=DEFAULT_CHUNK_SIZE, ge=1024 * 1024, le=32 * 1024 * 1024)
+
+    @field_validator("title")
+    @classmethod
+    def nonempty_chunked_title(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("请输入会议名称")
+        return value.strip()
+
+
 def create_app(
     settings: Settings | None = None,
     stream_factory=None,
@@ -69,6 +98,7 @@ def create_app(
 ) -> FastAPI:
     app_settings = settings or get_settings()
     store = MeetingStore(app_settings.database_path or app_settings.data_dir / "meetings.sqlite3", app_settings.data_dir)
+    auth = AuthStore(store.path)
     models = ModelConfigStore(store.path)
     events = MeetingEvents()
     minutes = MinutesService(store, models, app_settings, minutes_generator, events=events)
@@ -99,7 +129,22 @@ def create_app(
     app.state.stage_summaries = stage_summaries
     app.state.diarization_service = diarization
     app.state.audio_import_service = audio_imports
+    app.state.auth_store = auth
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
+
+    @app.middleware("http")
+    async def require_auth(request: Request, call_next):
+        if request.method != "OPTIONS" and request.url.path.startswith("/api/") and request.url.path not in {
+            "/api/auth/login", "/api/auth/register", "/api/auth/logout",
+        }:
+            authorization = request.headers.get("Authorization", "")
+            token = authorization.removeprefix("Bearer ").strip() if authorization.startswith("Bearer ") else request.query_params.get("token")
+            user = auth.user_for_token(token)
+            if user is None:
+                return JSONResponse(status_code=401, content={"detail": "请先登录"})
+            request.state.user = user
+        response = await call_next(request)
+        return response
 
     @app.exception_handler(MeetingError)
     async def meeting_error_handler(_, exc: MeetingError):
@@ -116,21 +161,41 @@ def create_app(
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.post("/api/auth/register", status_code=201)
+    def register(payload: RegisterInput) -> dict[str, Any]:
+        return auth.register(payload.account, payload.password, payload.department, payload.employee_id)
+
+    @app.post("/api/auth/login")
+    def login(payload: LoginInput) -> dict[str, Any]:
+        token, expires_at, user = auth.login(payload.account, payload.password)
+        return {"token": token, "expires_at": expires_at, "user": user}
+
+    @app.get("/api/auth/me")
+    def current_user(request: Request) -> dict[str, Any]:
+        return request.state.user
+
+    @app.post("/api/auth/logout", status_code=204)
+    def logout(request: Request) -> Response:
+        authorization = request.headers.get("Authorization", "")
+        auth.logout(authorization.removeprefix("Bearer ").strip() if authorization.startswith("Bearer ") else None)
+        return Response(status_code=204)
+
     @app.get("/api/model-configs")
-    def list_model_configs() -> list[dict[str, Any]]:
+    def list_model_configs(request: Request) -> list[dict[str, Any]]:
         return models.list()
 
     @app.put("/api/model-configs/{kind}")
-    def save_model_config(kind: ModelKind, payload: ModelConfigInput) -> dict[str, Any]:
+    def save_model_config(kind: ModelKind, payload: ModelConfigInput, request: Request) -> dict[str, Any]:
         return models.save(kind, payload)
 
     @app.post("/api/model-configs/{kind}/test", response_model=ModelProbeResult)
-    async def test_model_config(kind: ModelKind, payload: ModelConfigInput) -> ModelProbeResult:
+    async def test_model_config(kind: ModelKind, payload: ModelConfigInput, request: Request) -> ModelProbeResult:
         config = await asyncio.to_thread(models.resolve_draft, kind, payload)
         return await probe_model(config)
 
     @app.get("/api/meetings")
     def list_meetings(
+        request: Request,
         title: str = Query(default="", max_length=80),
         department_id: str | None = Query(default=None, pattern=r"^(?:[a-f0-9]{32}|unassigned)$"),
         status: Literal["created", "recording", "paused", "ended"] | None = None,
@@ -140,14 +205,17 @@ def create_app(
         if created_from and created_before and created_from >= created_before:
             raise HTTPException(422, "开始时间必须早于结束时间")
         return store.list(title=title, department_id=department_id, status=status,
-                          created_from=created_from, created_before=created_before)
+                          created_from=created_from, created_before=created_before,
+                          user_id=request.state.user["id"])
 
     @app.post("/api/meetings", status_code=201)
-    def create_meeting(payload: MeetingCreate) -> dict[str, Any]:
-        return store.create(payload.title, payload.language, payload.department_id)
+    def create_meeting(payload: MeetingCreate, request: Request) -> dict[str, Any]:
+        return store.create(payload.title, payload.language, payload.department_id,
+                            user_id=request.state.user["id"])
 
     @app.post("/api/meetings/import", status_code=202)
     async def import_meeting(
+        request: Request,
         file: UploadFile = File(...),
         title: str = Form(..., min_length=1, max_length=80),
         language: str | None = Form(default=None, max_length=40),
@@ -156,41 +224,62 @@ def create_app(
         try:
             if not title.strip():
                 raise MeetingError("请输入会议名称", 422)
-            return await audio_imports.create(file, title.strip(), language, department_id)
+            return await audio_imports.create(file, title.strip(), language, department_id, request.state.user["id"])
         finally:
             await file.close()
 
+    @app.post("/api/meetings/import/chunked")
+    async def start_chunked_import(payload: ChunkedImportStart, request: Request) -> dict[str, Any]:
+        return await audio_imports.start_chunked(
+            payload.title, payload.language, payload.filename, payload.file_size,
+            payload.total_chunks, payload.chunk_size, request.state.user["id"],
+        )
+
+    @app.put("/api/meetings/import/chunked/{upload_id}/{index}")
+    async def upload_import_chunk(upload_id: str, index: int, request: Request) -> dict[str, Any]:
+        return await audio_imports.upload_chunk(
+            upload_id, index, request.stream(), request.headers.get("X-Chunk-SHA256", ""),
+            request.state.user["id"],
+        )
+
+    @app.post("/api/meetings/import/chunked/{upload_id}/complete", status_code=202)
+    async def complete_chunked_import(upload_id: str, request: Request) -> dict[str, Any]:
+        return await audio_imports.complete_chunked(upload_id, request.state.user["id"])
+
     @app.post("/api/meetings/{meeting_id}/import/retry", status_code=202)
-    async def retry_import(meeting_id: str) -> dict[str, Any]:
+    async def retry_import(meeting_id: str, request: Request) -> dict[str, Any]:
+        if store.get(meeting_id, request.state.user["id"]) is None:
+            raise HTTPException(404, "会议不存在")
         return await audio_imports.retry(meeting_id)
 
     @app.get("/api/departments")
-    def list_departments() -> list[dict[str, Any]]:
+    def list_departments(request: Request) -> list[dict[str, Any]]:
         return store.list_departments()
 
     @app.post("/api/departments", status_code=201)
-    def create_department(payload: DepartmentInput) -> dict[str, Any]:
+    def create_department(payload: DepartmentInput, request: Request) -> dict[str, Any]:
         return store.save_department(payload.name)
 
     @app.put("/api/departments/{department_id}")
-    def update_department(department_id: str, payload: DepartmentInput) -> dict[str, Any]:
+    def update_department(department_id: str, payload: DepartmentInput, request: Request) -> dict[str, Any]:
         return store.save_department(payload.name, department_id)
 
     @app.delete("/api/departments/{department_id}", status_code=204)
-    def delete_department(department_id: str) -> Response:
+    def delete_department(department_id: str, request: Request) -> Response:
         store.delete_department(department_id)
         return Response(status_code=204)
 
     @app.get("/api/meetings/{meeting_id}")
-    def get_meeting(meeting_id: str) -> dict[str, Any]:
-        meeting = store.get(meeting_id)
+    def get_meeting(meeting_id: str, request: Request) -> dict[str, Any]:
+        meeting = store.get(meeting_id, request.state.user["id"])
         if meeting is None:
             raise HTTPException(404, "会议不存在")
         return meeting
 
     @app.post("/api/meetings/{meeting_id}/end")
-    async def end_meeting(meeting_id: str) -> dict[str, Any]:
-        meeting = await asyncio.to_thread(store.transition, meeting_id, "end")
+    async def end_meeting(meeting_id: str, request: Request) -> dict[str, Any]:
+        user_id = request.state.user["id"]
+        meeting = await asyncio.to_thread(store.transition, meeting_id, "end", None, user_id)
         audio = await asyncio.to_thread(read_audio_summary, store.directory(meeting_id))
         if audio:
             await stage_summaries.finish(meeting_id, audio.samples)
@@ -198,19 +287,22 @@ def create_app(
         return meeting
 
     @app.post("/api/meetings/{meeting_id}/diarization", status_code=202)
-    async def retry_diarization(meeting_id: str):
-        meeting = get_meeting(meeting_id)
+    async def retry_diarization(meeting_id: str, request: Request):
+        meeting = get_meeting(meeting_id, request)
         if meeting.get("import_job") and meeting["import_job"]["status"] != "ready":
             raise MeetingError("请先完成导入处理，失败时请重试导入任务")
         await diarization.finish(meeting_id, retry=True)
-        return await asyncio.to_thread(store.get, meeting_id)
+        return await asyncio.to_thread(store.get, meeting_id, request.state.user["id"])
 
     @app.delete("/api/meetings/{meeting_id}", status_code=204)
-    async def delete_meeting(meeting_id: str):
+    async def delete_meeting(meeting_id: str, request: Request):
+        user_id = request.state.user["id"]
+        if store.get(meeting_id, user_id) is None:
+            raise HTTPException(404, "会议不存在")
         async with audio_imports.lock, diarization.finish_lock, minutes._lock:
             if meeting_id in diarization.live or meeting_id in diarization.finalizers:
                 raise MeetingError("正在处理说话人，请完成后再删除")
-            await asyncio.to_thread(store.delete, meeting_id)
+            await asyncio.to_thread(store.delete, meeting_id, user_id)
             if timer := diarization.timers.pop(meeting_id, None):
                 timer.cancel()
             diarization.dirty.discard(meeting_id)
@@ -219,30 +311,34 @@ def create_app(
         return Response(status_code=204)
 
     @app.get("/api/diarization/status")
-    def diarization_status():
+    def diarization_status(request: Request):
         error = diarization.workers[0].readiness()
         return {"available": error is None, "error": error or ""}
 
     @app.get("/api/meetings/{meeting_id}/minutes")
-    async def get_minutes(meeting_id: str) -> dict[str, Any]:
+    async def get_minutes(meeting_id: str, request: Request) -> dict[str, Any]:
+        get_meeting(meeting_id, request)
         return await minutes.get(meeting_id)
 
     @app.get("/api/meetings/{meeting_id}/stage-summaries")
-    async def get_stage_summaries(meeting_id: str) -> list[dict[str, Any]]:
+    async def get_stage_summaries(meeting_id: str, request: Request) -> list[dict[str, Any]]:
+        get_meeting(meeting_id, request)
         return await stage_summaries.list(meeting_id)
 
     @app.post("/api/meetings/{meeting_id}/stage-summaries/retry", status_code=202)
-    async def retry_stage_summaries(meeting_id: str) -> list[dict[str, Any]]:
+    async def retry_stage_summaries(meeting_id: str, request: Request) -> list[dict[str, Any]]:
+        get_meeting(meeting_id, request)
         await stage_summaries.retry_failed(meeting_id)
         return await stage_summaries.list(meeting_id)
 
     @app.post("/api/meetings/{meeting_id}/minutes", status_code=202)
-    async def generate_minutes(meeting_id: str) -> dict[str, Any]:
+    async def generate_minutes(meeting_id: str, request: Request) -> dict[str, Any]:
+        get_meeting(meeting_id, request)
         return await minutes.start(meeting_id)
 
     @app.get("/api/meetings/{meeting_id}/minutes/download")
-    def download_minutes(meeting_id: str) -> Response:
-        meeting = get_meeting(meeting_id)
+    def download_minutes(meeting_id: str, request: Request) -> Response:
+        meeting = get_meeting(meeting_id, request)
         result = store.get_minutes(meeting_id)
         if not result["text"]:
             raise HTTPException(404, "会议纪要尚未生成")
@@ -254,7 +350,7 @@ def create_app(
     @app.head("/api/meetings/{meeting_id}/download")
     @app.get("/api/meetings/{meeting_id}/download")
     def download_meeting(meeting_id: str, request: Request) -> Response:
-        meeting = get_meeting(meeting_id)
+        meeting = get_meeting(meeting_id, request)
         content = (meeting["text"] + "\n").encode("utf-8")
         return Response(
             content if request.method != "HEAD" else None,
@@ -269,7 +365,7 @@ def create_app(
     @app.head("/api/meetings/{meeting_id}/audio/download")
     @app.get("/api/meetings/{meeting_id}/audio/download")
     def download_audio(meeting_id: str, request: Request) -> Response:
-        meeting = get_meeting(meeting_id)
+        meeting = get_meeting(meeting_id, request)
         try:
             export = prepare_wav_export(store.directory(meeting_id))
         except AudioExportUnavailable as exc:
@@ -291,13 +387,21 @@ def create_app(
 
     @app.websocket("/ws/meetings/{meeting_id}")
     async def recognize_meeting(websocket: WebSocket, meeting_id: str) -> None:
+        user = auth.user_for_token(websocket.query_params.get("token"))
+        if user is None:
+            await websocket.close(code=1008, reason="请先登录")
+            return
         await meeting_socket(websocket, meeting_id, store, models, minutes, stream_factory,
                              settings=app_settings, diarization=diarization, events=events,
-                             stage_summaries=stage_summaries)
+                             stage_summaries=stage_summaries, user_id=user["id"])
 
     @app.websocket("/ws/meetings/{meeting_id}/stage-summaries")
     async def summarize_meeting_stages(websocket: WebSocket, meeting_id: str) -> None:
-        await stage_summary_socket(websocket, meeting_id, store, stage_summaries)
+        user = auth.user_for_token(websocket.query_params.get("token"))
+        if user is None:
+            await websocket.close(code=1008, reason="请先登录")
+            return
+        await stage_summary_socket(websocket, meeting_id, store, stage_summaries, user_id=user["id"])
 
     # Mounts also match WebSockets, but StaticFiles only handles HTTP scopes.
     # Keep this fallback after the meeting socket and before the static mount.

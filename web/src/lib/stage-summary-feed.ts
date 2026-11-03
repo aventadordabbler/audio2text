@@ -1,4 +1,5 @@
 import type { StageSummary, StageSummaryStatus } from "./stage-summary"
+import { authToken } from "./meetings"
 
 interface StageSummaryPayload {
   type?: string
@@ -59,7 +60,7 @@ export class StageSummaryFeed {
     if (generation !== this.generation) return
     this.onStatus?.({ status: this.attempts ? "reconnecting" : "connecting" })
     const socket = new WebSocket(
-      `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/meetings/${encodeURIComponent(this.meetingId)}/stage-summaries`,
+      `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/meetings/${encodeURIComponent(this.meetingId)}/stage-summaries?token=${encodeURIComponent(authToken())}`,
     )
     this.socket = socket
     let ready = false

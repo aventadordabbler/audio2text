@@ -18,7 +18,7 @@ Audio2Text 应用 :8000
    └── CPU 说话人校正（可选本地模型）
 ```
 
-应用自身不加载 ASR 或 LLM 权重。`compose.yaml` 中的 `vllm` 服务只是可选的本地 ASR 部署示例；使用远程 ASR 时不需要启动该服务。
+应用自身不加载 ASR 或 LLM 权重。`compose.yaml` 中的 `asr` 和 `llm` 服务只是可选的本地模型部署示例；使用外部 ASR/LLM 时不需要启动它们。
 
 ## 2. 部署前准备
 
@@ -39,7 +39,7 @@ Audio2Text 应用 :8000
 - Audio2Text 容器能访问 ASR 和 LLM 的 API 地址；
 - 生产环境只对外开放反向代理的 80/443，端口 8000 和模型端口应限制在本机或内网。
 
-Compose 默认将应用的 8000 和本地 ASR 的 8001 绑定到 `127.0.0.1`。确需从可信局域网直接访问时，可在 `.env` 设置 `APP_BIND_ADDRESS` 或 `VLLM_BIND_ADDRESS` 为指定内网地址；不要设置为 `0.0.0.0` 后直接暴露到公网。
+当前 Compose 默认将应用的 8000 绑定到 `0.0.0.0`，本地 ASR 的 8001 绑定到 `127.0.0.1`，本地 LLM 的 8002 绑定到 `0.0.0.0`。生产环境建议按第 3 节设置应用回环绑定，并按第 4、5 节设置模型服务的宿主机绑定；不要把这些端口直接暴露到公网。
 
 > 浏览器从非 `localhost` 地址采集麦克风时应使用 HTTPS；同一域名下的 WebSocket 会自动使用 WSS。
 
@@ -70,51 +70,213 @@ models/pyannote/segmentation-3.0/
 
 缺少这些文件不会阻止实时转写，但说话人校正会显示不可用。
 
-## 3. 使用远程 ASR 和 LLM 部署
+## 3. 服务部署
 
-这是推荐的生产方案。应用运行在 CPU 服务器，ASR 与 LLM 由独立服务提供。
+服务容器只运行 Audio2Text API、Web 页面、SQLite 访问和 CPU 侧的音频处理。它不加载 ASR 或 LLM 权重，模型连接配置（基础地址、模型 ID、API Key、超时）保存在 `data/archives/meetings.sqlite3` 中。
 
-### 3.1 创建环境文件
+### 3.1 创建环境文件和持久化目录
 
 ```bash
 cp .env.example .env
+install -d -m 0700 data data/archives data/tokenizers data/tokenizers/qwen
+chmod -R go-rwx data
 ```
 
-按需修改 `.env`：
+生产环境建议先在 `.env` 中收紧宿主机监听地址，再放到反向代理后面：
+
+```dotenv
+APP_BIND_ADDRESS=127.0.0.1
+APP_PORT=8000
+```
+
+当前 Compose 的默认值是 `APP_BIND_ADDRESS=0.0.0.0`、`APP_PORT=8000`；这会让应用端口监听所有网卡。若不使用反向代理，必须用防火墙限制访问。应用没有内置用户认证，不能直接暴露公网。
+
+按需调整运行参数：
 
 ```dotenv
 ASR_WINDOW_SECONDS=5
 ASR_STRIDE_SECONDS=2
-
 LLM_MAX_TOKENS=16384
 LLM_CHUNK_CHARS=12000
-STAGE_SUMMARY_WINDOW_SECONDS=300
-STAGE_SUMMARY_MAX_TOKENS=1200
-
+STAGE_SUMMARY_WINDOW_SECONDS=60
+STAGE_SUMMARY_MAX_TOKENS=1024
 DIARIZATION_WORKERS=1
 DIARIZATION_THREADS=2
 DIARIZATION_TIMEOUT_SECONDS=120
 DIARIZATION_FINAL_TIMEOUT_SECONDS=1800
 ```
 
-这些参数的含义：
+`STAGE_SUMMARY_WINDOW_SECONDS` 的有效范围是 10–300 秒；`ASR_STRIDE_SECONDS` 不得大于窗口长度。`data/` 同时包含数据库、API Key、录音、转写和总结，必须持久化并按含密钥的敏感数据保护。
 
-| 参数 | 说明 |
-| --- | --- |
-| `ASR_WINDOW_SECONDS` | 单次 ASR 滚动窗口长度 |
-| `ASR_STRIDE_SECONDS` | ASR 请求推进步长；不得大于窗口长度 |
-| `LLM_MAX_TOKENS` | 完整会议纪要最大输出 token |
-| `LLM_CHUNK_CHARS` | 长会议纪要分段字符数 |
-| `STAGE_SUMMARY_WINDOW_SECONDS` | 阶段总结使用的实际归档录音窗口，范围 10–3600 秒 |
-| `STAGE_SUMMARY_MAX_TOKENS` | 单个阶段总结最大输出 token |
-| `DIARIZATION_WORKERS` | CPU 说话人工作进程数 |
-| `DIARIZATION_THREADS` | 每个说话人工作进程的 CPU 线程数 |
+### 3.2 构建和启动服务
 
-ASR 和 LLM 的 URL、模型名、API Key 与请求超时不放在 `.env`，而是在应用的“模型配置”中保存到服务端 SQLite。
+```bash
+docker compose --profile app --profile asr --profile llm config --quiet
+docker compose --profile app up -d --build app
+docker compose --profile app ps
+docker compose --profile app logs -f --tail=200 app
+```
 
-后续宿主机命令以默认 `APP_PORT=8000`、`VLLM_PORT=8001` 为例；如果覆盖了端口，请在健康检查、SSH 隧道、Nginx `proxy_pass` 和宿主机模型地址中使用实际值。容器之间仍使用内部端口 8000/8001。
+只部署外部 ASR/LLM 时只启用 `app` profile；不需要启动本地模型容器。Compose 为应用配置了 `restart: unless-stopped`，Linux 主机还应启用 Docker 开机启动：
 
-### 3.2 启动应用
+```bash
+sudo systemctl enable --now docker
+```
+
+健康检查和容器状态：
+
+```bash
+curl -fsS http://127.0.0.1:8000/health
+docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' audio2text-server
+```
+
+成功响应为 `{"status":"ok"}`。如果未配置反向代理，可从管理电脑建立隧道：
+
+```bash
+ssh -N -L 8000:127.0.0.1:8000 deploy@meeting-server
+```
+
+然后访问 `http://127.0.0.1:8000`。完成第 7 节反向代理后，使用正式 HTTPS 地址。
+
+### 3.3 服务端文件和可选说话人校正
+
+`data/` 通过 Compose 挂载到容器 `/app/data`。启用 `qwen_streaming` ASR 时，把完整 tokenizer 放到 `data/tokenizers/qwen/`；使用 `transcription` 模式不需要本地 tokenizer。
+
+说话人校正是应用服务的可选 CPU/本地模型能力，启用时准备：
+
+```text
+models/diarization/
+  campplus/campplus_cn_en_common.pt
+  fsmn/config.yaml
+  fsmn/model.pt
+  fsmn/am.mvn
+models/pyannote/segmentation-3.0/
+  pytorch_model.bin
+```
+
+缺少这些文件不会阻止实时转写，但会议结束后的说话人校正不可用。应用服务、ASR 和 LLM 可以运行在不同主机；只有应用容器需要访问 `data/` 和说话人模型目录。
+
+## 4. ASR 部署
+
+Audio2Text 支持两种 ASR 接口：`qwen_streaming` 调用 `POST /chat/completions` 并发送音频输入，要求服务支持 assistant 前缀续写；`transcription` 调用 `POST /audio/transcriptions`，适合标准 OpenAI 音频转写接口。两种模式都先通过 `GET /models` 检查模型 ID。
+
+### 4.1 使用外部 ASR
+
+外部 ASR 可以是独立服务器、云服务或 Kubernetes 服务。部署该服务时，确保应用容器能通过 DNS/IP 访问它，并提供与所选模式匹配的 OpenAI 兼容接口。Audio2Text 不会替外部供应商下载权重、分配 GPU 或管理进程。
+
+在 Audio2Text 的“模型配置”中新增 ASR：
+
+| 字段 | `qwen_streaming` | `transcription` |
+| --- | --- | --- |
+| 基础地址 | `https://asr.example.com/v1` | `https://asr.example.com/v1` |
+| 模型名称 | 与 `GET /v1/models` 的 `id` 完全一致 | 与 `GET /v1/models` 的 `id` 完全一致 |
+| 识别模式 | `qwen_streaming` | `transcription` |
+| API Key | 按服务要求填写 | 按服务要求填写 |
+
+配置保存后执行“测试”。从应用容器验证网络和 TLS，而不是只在宿主机测试：
+
+```bash
+docker compose --profile app exec app \
+  python -c "import urllib.request; print(urllib.request.urlopen('https://asr.example.com/v1/models').status)"
+```
+
+如果 ASR 只在宿主机监听，应用容器不能使用 `127.0.0.1`；应改为宿主机可达的内网地址或 Docker 网关地址。API Key 会写入服务端 SQLite，备份和文件权限必须按密钥处理。
+
+### 4.2 使用 Compose 部署本地 ASR
+
+本地 ASR 由 Compose 的 `asr` 服务启动，服务名是 `asr`，不是 `vllm`。将权重放到宿主机 `models/` 下，在 `.env` 设置：
+
+```dotenv
+VLLM_IMAGE=registry.neuro.com/library/qwenllm-qwen3-asr:latest
+VLLM_MODEL=qwen3-asr-1.7b
+VLLM_MODEL_PATH=/models/qwen3-asr-1.7b
+VLLM_GPU_MEMORY_UTILIZATION=0.3
+VLLM_MAX_MODEL_LEN=32768
+VLLM_BIND_ADDRESS=127.0.0.1
+VLLM_PORT=8001
+ASR_SEND_CHAT_TEMPLATE=true
+```
+
+启动本地 ASR 和应用：
+
+```bash
+docker compose --profile asr --profile app up -d --build asr app
+docker compose --profile asr --profile app ps
+curl --fail http://127.0.0.1:8001/v1/models
+```
+
+应用容器访问同一 Compose 网络中的 ASR 时填写：
+
+```text
+接口地址：http://asr:8001/v1
+模型名称：与 VLLM_MODEL 一致
+识别模式：qwen_streaming
+```
+
+宿主机访问使用 `http://127.0.0.1:8001/v1`。ASR 容器的宿主机端口默认只绑定回环地址；改为内网地址时必须同步配置防火墙。`qwen_streaming` 仍需要 `data/tokenizers/qwen/` 中的 tokenizer，因为 tokenizer 由应用服务加载，不由 ASR 容器提供。
+
+当前 Compose 使用 `asr` profile；`--profile gpu` 不是有效 profile。若只启动 ASR 供另一套应用使用，可执行 `docker compose --profile asr up -d asr`，但 Audio2Text 应用仍需单独配置其地址。
+
+## 5. LLM 部署
+
+LLM 用于完整会议纪要和阶段总结，使用独立的 OpenAI 兼容 `/chat/completions` 接口。应用只发送已归档的转写文本和提示词，不在应用容器中加载 LLM 权重。
+
+### 5.1 使用外部 LLM
+
+外部 LLM 的部署、GPU、鉴权和限流由供应商或平台负责。确保应用容器能访问基础地址，并提供：
+
+- `GET /v1/models`，返回配置中使用的模型 ID；
+- `POST /v1/chat/completions`，支持应用使用的消息格式；
+- 与配置的超时、上下文长度和最大输出 token 相匹配的资源。
+
+在“模型配置”中新增 LLM，例如：
+
+```text
+接口地址：https://llm.example.com/v1
+模型名称：与 GET /v1/models 返回的 id 一致
+API Key：按供应商要求填写
+```
+
+保存并测试通过后，阶段总结和完整纪要会复用这份 LLM 配置。不要填写网页地址、带查询参数的地址或应用容器自身的 `localhost`。
+
+### 5.2 使用 Compose 部署本地 LLM
+
+本地 LLM 由独立的 `llm` profile 启动，模型目录只读挂载到容器：
+
+```dotenv
+LLM_VLLM_IMAGE=registry.neuro.com/vllm/vllm-openai:v0.30.0-aarch64-cu129
+LLM_VLLM_MODEL_DIR=./models/llm
+LLM_VLLM_MODEL_PATH=/models/llm
+LLM_VLLM_MODEL=local-llm
+LLM_VLLM_PORT=8002
+LLM_VLLM_BIND_ADDRESS=127.0.0.1
+LLM_VLLM_GPU_MEMORY_UTILIZATION=0.6
+LLM_VLLM_MAX_MODEL_LEN=32768
+```
+
+启动并检查：
+
+```bash
+docker compose --profile llm up -d llm
+docker compose --profile llm ps
+curl --fail http://127.0.0.1:8002/v1/models
+```
+
+应用也运行在 Compose 时，LLM 地址填写 `http://llm:8002/v1`；应用运行在宿主机或其他容器时，填写宿主机可达的 `http://127.0.0.1:8002/v1` 或内网地址。模型名称填写 `LLM_VLLM_MODEL` 的值。
+
+如果 ASR 和 LLM 共用一张 GPU，分别降低 `VLLM_GPU_MEMORY_UTILIZATION` 与 `LLM_VLLM_GPU_MEMORY_UTILIZATION`，并为 CUDA、驱动和运行时预留余量。若模型服务启动失败，先查看 `docker compose --profile llm logs llm`，再确认模型目录和 GPU 架构。
+
+同时运行本地 ASR、LLM 和应用时，启用三个 profile：
+
+```bash
+docker compose --profile asr --profile llm --profile app up -d --build asr llm app
+```
+
+`LLM_VLLM_IMAGE` 必须与宿主机架构和 CUDA 环境匹配；示例中的 `v0.30.0-aarch64-cu129` 只适用于对应的 ARM64/CUDA 环境，x86_64 主机应替换为可用的 amd64 镜像。
+
+## 6. 外部 ASR 与外部 LLM 联合部署
+
+这是不运行本地 GPU 模型的部署方式：Audio2Text 主机只启动 `app`，ASR 和 LLM 由外部平台分别提供。
 
 ```bash
 docker compose --profile app config --quiet
@@ -122,120 +284,25 @@ docker compose --profile app up -d --build app
 docker compose --profile app ps
 ```
 
-Compose 已为应用配置 `restart: unless-stopped`。在使用 systemd 的 Linux 上，还应确保 Docker 随主机启动：
+部署顺序：
 
-```bash
-sudo systemctl enable --now docker
-```
+1. 先在 ASR 平台创建可用的 OpenAI 兼容服务，确认 `/v1/models` 和所选 ASR 接口；
+2. 再在 LLM 平台创建可用的 `/v1/chat/completions` 服务，确认模型 ID、API Key 和上下文限制；
+3. 从 Audio2Text 容器测试两个地址的 DNS、路由、证书和鉴权；
+4. 在“模型配置”中分别保存并测试 ASR、LLM；
+5. 创建一场短会议，验收实时转写、阶段总结、完整纪要和录音导出。
 
-可检查实际端口绑定和重启策略：
+组合部署的地址示例：
 
-```bash
-docker compose --profile app ps
-docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' audio2text-server
-```
-
-查看日志：
-
-```bash
-docker compose --profile app logs -f --tail=200 app
-```
-
-本机健康检查：
-
-```bash
-curl -fsS http://127.0.0.1:8000/health
-```
-
-成功响应：
-
-```json
-{"status":"ok"}
-```
-
-### 3.3 配置模型连接
-
-Compose 默认只监听服务器回环地址。反向代理尚未配置时，可从管理电脑建立 SSH 隧道：
-
-```bash
-ssh -N -L 8000:127.0.0.1:8000 deploy@meeting-server
-```
-
-随后打开 `http://127.0.0.1:8000`。若已经完成第 5 节的反向代理，则直接使用 `https://meeting.example.com`。进入“模型配置”，分别保存并测试：
-
-| 类型 | 基础地址示例 | 必需能力 |
+| 组件 | 配置地址 | 说明 |
 | --- | --- | --- |
-| ASR / `qwen_streaming` | `http://asr.internal:8001/v1` | `GET /models`、`POST /chat/completions`、音频输入和 assistant 前缀续写 |
-| ASR / `transcription` | `https://asr.example.com/v1` | `GET /models`、`POST /audio/transcriptions` |
-| LLM | `https://llm.example.com/v1` | `GET /models`、`POST /chat/completions` |
+| ASR | `https://asr.example.com/v1` | 按模式选择 `qwen_streaming` 或 `transcription` |
+| LLM | `https://llm.example.com/v1` | 使用 `/chat/completions` |
+| Audio2Text | `http://127.0.0.1:8000` 或反向代理 HTTPS 地址 | 只运行 `app` profile |
 
-注意：
+应用容器中的 `localhost` 只代表应用容器自身。外部服务必须使用其 DNS 名或内网 IP；若外部服务仅允许白名单，加入 Audio2Text 宿主机出口 IP。模型连接配置和 API Key 存在 `data/archives/meetings.sqlite3`，因此备份、迁移和回滚时必须同时保护该文件。
 
-- 地址应填写 API 基础地址，通常以 `/v1` 结尾；
-- 模型名必须与 `GET /models` 返回的 ID 一致；
-- 容器内的 `127.0.0.1` 和 `localhost` 指向应用容器自身，远程模型应填写容器可访问的 DNS 名或内网地址；
-- 模型测试通过后再创建正式会议；
-- 阶段总结与完整会议纪要复用同一份 LLM 配置。
-
-## 4. 可选：使用 Compose 启动本地 ASR
-
-将 ASR 权重放在宿主机 `models/` 下，并在 `.env` 设置：
-
-```dotenv
-VLLM_IMAGE=qwenllm/qwen3-asr:latest
-VLLM_MODEL=qwen3-asr-1.7b
-VLLM_MODEL_PATH=/models/qwen3-asr-1.7b
-VLLM_GPU_MEMORY_UTILIZATION=0.3
-VLLM_MAX_MODEL_LEN=32768
-ASR_SEND_CHAT_TEMPLATE=true
-```
-
-启动 ASR 与应用：
-
-```bash
-docker compose --profile gpu --profile app up -d --build
-docker compose --profile gpu --profile app ps
-```
-
-在 Audio2Text 的 ASR 模型配置中填写：
-
-```text
-接口地址：http://vllm:8001/v1
-模型名称：与 VLLM_MODEL 一致
-识别模式：qwen_streaming
-```
-
-宿主机访问该 ASR 时使用 `http://127.0.0.1:8001/v1`；覆盖 `VLLM_PORT` 后应替换为实际端口。LLM 仍按实际部署填写独立地址；项目不要求 ASR 和 LLM 位于同一 GPU 或同一服务器。
-
-如需在同一台 GPU 主机上运行本地 LLM，可使用 Compose 中独立的 `llm` 服务。它使用官方
-`vllm/vllm-openai` 镜像，将宿主机 `LLM_VLLM_MODEL_DIR` 以只读方式映射到
-`LLM_VLLM_MODEL_PATH`，并监听宿主机端口 `LLM_VLLM_PORT`（默认 8002）：
-
-```dotenv
-LLM_VLLM_IMAGE=vllm/vllm-openai:latest
-LLM_VLLM_MODEL_DIR=./models/llm
-LLM_VLLM_MODEL_PATH=/models/llm
-LLM_VLLM_MODEL=local-llm
-LLM_VLLM_PORT=8002
-LLM_VLLM_GPU_MEMORY_UTILIZATION=0.6
-```
-
-GB10 使用 128 GB 统一内存；两个服务共用同一张卡时，建议让
-`VLLM_GPU_MEMORY_UTILIZATION` 和 `LLM_VLLM_GPU_MEMORY_UTILIZATION` 的总和保持在 0.9 左右，
-为 CUDA、驱动和运行时开销预留余量。
-
-启动服务：
-
-```bash
-docker compose --profile gpu up -d llm
-curl --fail http://127.0.0.1:8002/v1/models
-```
-
-Audio2Text 的“大语言模型”配置填写 `http://127.0.0.1:8002/v1`（应用运行在宿主机时），
-或填写 `http://llm:8002/v1`（应用也作为 Compose 容器运行时），模型名称填写
-`LLM_VLLM_MODEL` 的值。
-
-## 5. HTTPS 与 WebSocket 反向代理
+## 7. HTTPS 与 WebSocket 反向代理
 
 应用同时使用普通 HTTP API、会议 WebSocket 和阶段总结 WebSocket。代理必须转发 `Upgrade`、关闭响应缓冲并允许长连接。
 
@@ -283,11 +350,11 @@ server {
 curl -fsS https://meeting.example.com/health
 ```
 
-生产环境不要将当前服务直接暴露到公网：应用没有内置用户认证，模型配置接口具有修改能力。上例使用内网 IP 白名单；也可以只允许 VPN 网段。若 Nginx 前方还有 CDN 或其他代理，必须先正确配置真实客户端 IP，再使用 `allow`/`deny`，否则白名单判断的是上游代理地址。Compose 的默认回环绑定可以防止绕过 Nginx 直接访问源站。
+生产环境不要将当前服务直接暴露到公网：应用没有内置用户认证，模型配置接口具有修改能力。上例使用内网 IP 白名单；也可以只允许 VPN 网段。若 Nginx 前方还有 CDN 或其他代理，必须先正确配置真实客户端 IP，再使用 `allow`/`deny`，否则白名单判断的是上游代理地址。按第 3 节将 `APP_BIND_ADDRESS` 设置为 `127.0.0.1` 后，回环绑定可以防止绕过 Nginx 直接访问源站。
 
-## 6. 客户端部署
+## 8. 客户端部署
 
-### 6.1 浏览器客户端
+### 8.1 浏览器客户端
 
 Web 前端已编译进应用镜像，直接访问部署地址即可：
 
@@ -297,7 +364,7 @@ https://meeting.example.com
 
 首次使用时允许麦克风权限，然后在“模型配置”中完成 ASR 和 LLM 配置。
 
-### 6.2 Electron 客户端
+### 8.2 Electron 客户端
 
 建议在对应 Windows 环境构建安装包：
 
@@ -320,7 +387,7 @@ https://meeting.example.com
 
 不要填写 `/api` 或 `/ws` 路径。客户端会自行建立会议和阶段总结 WebSocket。
 
-## 7. 数据备份与恢复
+## 9. 数据备份与恢复
 
 需要一起备份 SQLite 和会议文件。最稳妥的方式是短暂停止应用后复制整个 `data/`：
 
@@ -380,7 +447,7 @@ fi
 
 不要只备份 `meetings.sqlite3`。录音、转写事件和 Markdown 纪要位于同一数据目录下的会议子目录中。
 
-## 8. 升级与回滚
+## 10. 升级与回滚
 
 升级前先按上一节备份 `data/`，然后执行：
 
@@ -401,7 +468,7 @@ curl -fsS http://127.0.0.1:8000/health
 4. 重新构建并启动应用；
 5. 完成下方验收清单。
 
-## 9. 部署验收清单
+## 11. 部署验收清单
 
 按顺序验证：
 
@@ -416,7 +483,7 @@ curl -fsS http://127.0.0.1:8000/health
 9. 重启应用，确认历史会议、转写和总结仍可访问；
 10. 若部署了说话人模型，确认会议结束后的说话人校正成功。
 
-## 10. 常见问题
+## 12. 常见问题
 
 ### 模型测试失败，但模型服务本身可访问
 

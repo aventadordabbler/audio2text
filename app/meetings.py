@@ -47,6 +47,15 @@ class MeetingStore:
         (path.parent / "minutes").mkdir(exist_ok=True)
         with self._connection() as db:
             db.execute("PRAGMA journal_mode=WAL")
+            db.execute("""CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY, account TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                password_hash TEXT NOT NULL, department_id TEXT NOT NULL REFERENCES departments(id),
+                employee_id TEXT NOT NULL, created_at TEXT NOT NULL
+            )""")
+            db.execute("""CREATE TABLE IF NOT EXISTS sessions (
+                token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                expires_at TEXT NOT NULL, created_at TEXT NOT NULL
+            )""")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS departments (
                     id TEXT PRIMARY KEY, name TEXT NOT NULL COLLATE NOCASE UNIQUE,
@@ -61,13 +70,17 @@ class MeetingStore:
                     updated_at TEXT NOT NULL, ended_at TEXT,
                     duration_seconds REAL NOT NULL DEFAULT 0,
                     recording_since REAL, owner TEXT,
-                    department_id TEXT REFERENCES departments(id)
+                    department_id TEXT REFERENCES departments(id),
+                    user_id TEXT REFERENCES users(id)
                 )
             """)
             if "department_id" not in {row["name"] for row in db.execute("PRAGMA table_info(meetings)")}:
                 db.execute("ALTER TABLE meetings ADD COLUMN department_id TEXT REFERENCES departments(id)")
+            if "user_id" not in {row["name"] for row in db.execute("PRAGMA table_info(meetings)")}:
+                db.execute("ALTER TABLE meetings ADD COLUMN user_id TEXT REFERENCES users(id)")
             db.execute("CREATE INDEX IF NOT EXISTS meetings_created ON meetings(created_at DESC, id DESC)")
             db.execute("CREATE INDEX IF NOT EXISTS meetings_department ON meetings(department_id, created_at DESC)")
+            db.execute("CREATE INDEX IF NOT EXISTS meetings_user ON meetings(user_id, created_at DESC)")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS meeting_minutes (
                     meeting_id TEXT PRIMARY KEY REFERENCES meetings(id),
@@ -148,9 +161,9 @@ class MeetingStore:
     def transcript(self, meeting_id: str) -> TranscriptStore:
         return TranscriptStore(self.directory(meeting_id))
 
-    def save_segment(self, meeting_id, owner, segment_id, text, start_ms, end_ms, capture_id):
+    def save_segment(self, meeting_id, owner, segment_id, text, start_ms, end_ms, capture_id, user_id=None):
         with self._connection() as db:
-            row = self._require(db, meeting_id, owner)
+            row = self._require(db, meeting_id, owner, user_id)
             if row["status"] == "ended":
                 raise MeetingError("会议已结束，只能查看记录")
             event = self.transcript(meeting_id).final(segment_id, text, start_ms, end_ms, capture_id)
@@ -176,9 +189,14 @@ class MeetingStore:
             temporary.unlink(missing_ok=True)
 
     @staticmethod
-    def _require(db: sqlite3.Connection, meeting_id: str, owner: str | None) -> sqlite3.Row:
+    def _require(db: sqlite3.Connection, meeting_id: str, owner: str | None, user_id: str | None = None) -> sqlite3.Row:
         db.execute("BEGIN IMMEDIATE")
-        row = db.execute(MEETING_SELECT + " WHERE meetings.id = ?", (meeting_id,)).fetchone()
+        values: list[Any] = [meeting_id]
+        where = "meetings.id = ?"
+        if user_id is not None:
+            where += " AND meetings.user_id = ?"
+            values.append(user_id)
+        row = db.execute(MEETING_SELECT + " WHERE " + where, values).fetchone()
         if row is None:
             raise MeetingError("会议不存在", 404)
         if row["owner"] != owner:
@@ -186,11 +204,16 @@ class MeetingStore:
         return row
 
     def create(self, title: str, language: str | None = None, department_id: str | None = None,
-               *, imported_audio: Path | None = None, filename: str = "") -> dict[str, Any]:
+               *, imported_audio: Path | None = None, filename: str = "", user_id: str | None = None) -> dict[str, Any]:
         meeting_id, now = uuid4().hex, _timestamp()
         text_path = f"meetings/{meeting_id}/transcript.txt"
         with self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
+            if user_id:
+                user = db.execute("SELECT department_id FROM users WHERE id = ?", (user_id,)).fetchone()
+                if user is None:
+                    raise MeetingError("用户不存在", 401)
+                department_id = user["department_id"]
             if department_id and not db.execute("SELECT 1 FROM departments WHERE id = ?", (department_id,)).fetchone():
                 raise MeetingError("部门不存在，请重新选择", 422)
             audio = read_audio_summary(imported_audio) if imported_audio else None
@@ -204,9 +227,9 @@ class MeetingStore:
                 self.transcript(meeting_id).read()
                 db.execute(
                     """INSERT INTO meetings (id, title, language, status, text_path, created_at, updated_at,
-                       department_id, ended_at, duration_seconds) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       department_id, ended_at, duration_seconds, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (meeting_id, title.strip(), language or None, "ended" if audio else "created", text_path,
-                     now, now, department_id, now if audio else None, audio.duration_seconds if audio else 0),
+                     now, now, department_id, now if audio else None, audio.duration_seconds if audio else 0, user_id),
                 )
                 if audio:
                     db.execute("""INSERT INTO meeting_imports (meeting_id, filename, total_samples, updated_at)
@@ -218,8 +241,12 @@ class MeetingStore:
             return self._record(db.execute(MEETING_SELECT + " WHERE meetings.id = ?", (meeting_id,)).fetchone())
 
     def list(self, *, title: str = "", department_id: str | None = None, status: str | None = None,
-             created_from: datetime | None = None, created_before: datetime | None = None) -> list[dict[str, Any]]:
+             created_from: datetime | None = None, created_before: datetime | None = None,
+             user_id: str | None = None) -> list[dict[str, Any]]:
         conditions, values = [], []
+        if user_id is not None:
+            conditions.append("meetings.user_id = ?")
+            values.append(user_id)
         if title.strip():
             # Treat %, _ and backslashes as literal characters in meeting names.
             escaped = title.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
@@ -243,22 +270,27 @@ class MeetingStore:
                 MEETING_SELECT + where + " ORDER BY meetings.created_at DESC, meetings.id DESC", values,
             )]
 
-    def get(self, meeting_id: str) -> dict[str, Any] | None:
+    def get(self, meeting_id: str, user_id: str | None = None) -> dict[str, Any] | None:
         if not MEETING_ID.fullmatch(meeting_id):
             return None
         with self._connection() as db:
-            row = db.execute(MEETING_SELECT + " WHERE meetings.id = ?", (meeting_id,)).fetchone()
+            values: list[Any] = [meeting_id]
+            where = "meetings.id = ?"
+            if user_id is not None:
+                where += " AND meetings.user_id = ?"
+                values.append(user_id)
+            row = db.execute(MEETING_SELECT + " WHERE " + where, values).fetchone()
             return self._record(row) if row else None
 
-    def claim(self, meeting_id: str, owner: str) -> dict[str, Any]:
+    def claim(self, meeting_id: str, owner: str, user_id: str | None = None) -> dict[str, Any]:
         with self._connection() as db:
-            row = self._require(db, meeting_id, None)
+            row = self._require(db, meeting_id, None, user_id)
             if row["status"] == "ended":
                 raise MeetingError("会议已结束，只能查看记录")
             db.execute("UPDATE meetings SET owner = ? WHERE id = ?", (owner, meeting_id))
             return self._record(row)
 
-    def transition(self, meeting_id: str, action: str, owner: str | None = None) -> dict[str, Any]:
+    def transition(self, meeting_id: str, action: str, owner: str | None = None, user_id: str | None = None) -> dict[str, Any]:
         transitions = {
             "start": ({"created"}, "recording"),
             "pause": ({"recording"}, "paused"),
@@ -267,7 +299,7 @@ class MeetingStore:
         }
         allowed, status = transitions[action]
         with self._connection() as db:
-            row = self._require(db, meeting_id, owner)
+            row = self._require(db, meeting_id, owner, user_id)
             if row["status"] not in allowed:
                 raise MeetingError("当前会议状态不支持此操作")
             now, timestamp = time.time(), _timestamp()
@@ -335,9 +367,9 @@ class MeetingStore:
                 (_timestamp(), self._duration(row, now), now if row["status"] == "recording" else None, meeting_id),
             )
 
-    def release(self, meeting_id: str, owner: str) -> None:
+    def release(self, meeting_id: str, owner: str, user_id: str | None = None) -> None:
         with self._connection() as db:
-            row = self._require(db, meeting_id, owner)
+            row = self._require(db, meeting_id, owner, user_id)
             db.execute(
                 """UPDATE meetings SET owner = NULL, recording_since = NULL, duration_seconds = ?,
                    status = ?, updated_at = ? WHERE id = ?""",
@@ -365,13 +397,13 @@ class MeetingStore:
                 else:
                     shutil.rmtree(directory)
 
-    def delete(self, meeting_id: str) -> None:
+    def delete(self, meeting_id: str, user_id: str | None = None) -> None:
         directory = self.directory(meeting_id)
         trash = self.path.parent / ".deleted-meetings" / meeting_id
         moved = False
         try:
             with self._connection() as db:
-                row = self._require(db, meeting_id, None)
+                row = self._require(db, meeting_id, None, user_id)
                 if row["status"] == "recording":
                     raise MeetingError("请先停止录音，再删除会议")
                 if db.execute("SELECT 1 FROM meeting_imports WHERE meeting_id = ? AND status IN ('queued', 'running')", (meeting_id,)).fetchone():

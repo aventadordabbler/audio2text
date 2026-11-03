@@ -1,5 +1,7 @@
+import { authToken } from "./meetings"
+
 export async function downloadRecording(id: string) {
-  const url = `/api/meetings/${encodeURIComponent(id)}/audio/download`
+  const url = `/api/meetings/${encodeURIComponent(id)}/audio/download?token=${encodeURIComponent(authToken())}`
   const response = await fetch(url, {
     method: "HEAD", cache: "no-store", signal: AbortSignal.timeout(15000),
   })

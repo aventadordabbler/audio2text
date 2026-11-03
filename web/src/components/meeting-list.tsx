@@ -34,7 +34,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { MeetingStatusBadge } from "./meeting-status"
 import { downloadRecording } from "@/lib/recording-download"
-import { api, emptyMeetingFilters, errorMessage, formatDate, formatDuration, statusLabels, importStatusLabel, type Department, type Meeting, type MeetingFilters, type MeetingStatus } from "@/lib/meetings"
+import { api, authToken, emptyMeetingFilters, errorMessage, formatDate, formatDuration, statusLabels, importStatusLabel, type Department, type Meeting, type MeetingFilters, type MeetingStatus } from "@/lib/meetings"
 
 interface Props {
   meetings: Meeting[]
@@ -314,7 +314,7 @@ export function MeetingList({
                       </DropdownMenuItem>
                       {meeting.text && (
                         <DropdownMenuItem asChild>
-                          <a href={`/api/meetings/${meeting.id}/download`}>
+                          <a href={`/api/meetings/${meeting.id}/download?token=${encodeURIComponent(authToken())}`}>
                             <FileText />
                             导出文本（TXT）
                           </a>

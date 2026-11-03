@@ -103,8 +103,27 @@ export class ApiError extends Error {
   }
 }
 
+const AUTH_TOKEN_KEY = "meeting-auth-token"
+
+export function authToken() {
+  return localStorage.getItem(AUTH_TOKEN_KEY) || ""
+}
+
+export function setAuthToken(token: string | null) {
+  if (token) localStorage.setItem(AUTH_TOKEN_KEY, token)
+  else localStorage.removeItem(AUTH_TOKEN_KEY)
+}
+
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, options)
+  const token = authToken()
+  const response = await fetch(path, {
+    ...options,
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...options.headers },
+  })
+  if (response.status === 401 && !path.startsWith("/api/auth/")) {
+    setAuthToken(null)
+    window.dispatchEvent(new Event("auth-expired"))
+  }
   if (!response.ok) {
     const result = await response.json().catch(() => null)
     const detail = result?.detail
@@ -119,6 +138,53 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   }
   if (response.status === 204) return undefined as T
   return response.json()
+}
+
+const CHUNK_THRESHOLD = 100 * 1024 * 1024
+const CHUNK_SIZE = 8 * 1024 * 1024
+
+async function sha256Hex(blob: Blob) {
+  const digest = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer())
+  return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("")
+}
+
+export async function importWav(
+  file: File,
+  title: string,
+  language: string,
+  onProgress?: (completed: number, total: number) => void,
+) {
+  if (file.size <= CHUNK_THRESHOLD) {
+    const body = new FormData()
+    body.set("file", file)
+    body.set("title", title)
+    if (language !== "auto") body.set("language", language)
+    return api<Meeting>("/api/meetings/import", { method: "POST", body })
+  }
+
+  const totalChunks = Math.ceil(file.size / CHUNK_SIZE)
+  const started = await api<{ upload_id: string }>("/api/meetings/import/chunked", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      title,
+      language: language === "auto" ? null : language,
+      filename: file.name,
+      file_size: file.size,
+      total_chunks: totalChunks,
+      chunk_size: CHUNK_SIZE,
+    }),
+  })
+  for (let index = 0; index < totalChunks; index += 1) {
+    const chunk = file.slice(index * CHUNK_SIZE, Math.min(file.size, (index + 1) * CHUNK_SIZE))
+    await api(`/api/meetings/import/chunked/${started.upload_id}/${index}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/octet-stream", "X-Chunk-SHA256": await sha256Hex(chunk) },
+      body: chunk,
+    })
+    onProgress?.(index + 1, totalChunks)
+  }
+  return api<Meeting>(`/api/meetings/import/chunked/${started.upload_id}/complete`, { method: "POST" })
 }
 
 export function formatDuration(seconds: number) {

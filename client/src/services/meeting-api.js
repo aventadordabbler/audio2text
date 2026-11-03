@@ -1,6 +1,14 @@
 import { normalizeSttConfig } from "../shared/defaults.js";
 import { meetingQuery } from "./meeting-catalog.js";
 
+const CHUNK_THRESHOLD = 100 * 1024 * 1024;
+const CHUNK_SIZE = 8 * 1024 * 1024;
+
+async function sha256Hex(blob) {
+  const digest = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
+  return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
+}
+
 export class MeetingApi {
   constructor(config) {
     this.config = normalizeSttConfig(config);
@@ -28,11 +36,16 @@ export class MeetingApi {
       cache: "no-store",
       ...init,
       headers: {
+        ...(localStorage.getItem("meeting-auth-token") ? { Authorization: `Bearer ${localStorage.getItem("meeting-auth-token")}` } : {}),
         ...(options.body && !(options.body instanceof FormData) ? { "Content-Type": "application/json" } : {}),
         ...options.headers,
       },
       signal: options.signal || AbortSignal.timeout(150000),
     });
+    if (response.status === 401 && !path.startsWith("/api/auth/")) {
+      localStorage.removeItem("meeting-auth-token");
+      window.dispatchEvent(new Event("auth-expired"));
+    }
     const payload = await response.json().catch(() => null);
     if (!response.ok) {
       const detail = payload?.detail;
@@ -45,6 +58,14 @@ export class MeetingApi {
       );
     }
     return payload;
+  }
+
+  authMe() { return this.request("/api/auth/me"); }
+  authLogin(account, password) {
+    return this.request("/api/auth/login", { method: "POST", body: JSON.stringify({ account, password }) });
+  }
+  authRegister(account, password, department, employeeId) {
+    return this.request("/api/auth/register", { method: "POST", body: JSON.stringify({ account, password, department, employee_id: employeeId }) });
   }
 
   async probe() {
@@ -144,7 +165,8 @@ export class MeetingApi {
     });
   }
 
-  importWav(title, departmentId, file, language = this.config.language) {
+  importWav(title, departmentId, file, language = this.config.language, onProgress) {
+    if (file.size > CHUNK_THRESHOLD) return this.importWavChunked(title, file, language, onProgress);
     const body = new FormData();
     body.set("title", title);
     body.set("file", file);
@@ -152,6 +174,28 @@ export class MeetingApi {
     if (language && language !== "auto") body.set("language", language);
     return this.request("/api/meetings/import", {
       method: "POST", body, signal: AbortSignal.timeout(900000),
+    });
+  }
+
+  async importWavChunked(title, file, language = this.config.language, onProgress) {
+    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+    const started = await this.request("/api/meetings/import/chunked", {
+      method: "POST",
+      body: JSON.stringify({ title, language: language === "auto" ? null : language, filename: file.name, file_size: file.size, total_chunks: totalChunks, chunk_size: CHUNK_SIZE }),
+      signal: AbortSignal.timeout(900000),
+    });
+    for (let index = 0; index < totalChunks; index += 1) {
+      const chunk = file.slice(index * CHUNK_SIZE, Math.min(file.size, (index + 1) * CHUNK_SIZE));
+      await this.request(`/api/meetings/import/chunked/${started.upload_id}/${index}`, {
+        method: "PUT",
+        body: chunk,
+        headers: { "Content-Type": "application/octet-stream", "X-Chunk-SHA256": await sha256Hex(chunk) },
+        signal: AbortSignal.timeout(900000),
+      });
+      onProgress?.(index + 1, totalChunks);
+    }
+    return this.request(`/api/meetings/import/chunked/${started.upload_id}/complete`, {
+      method: "POST", signal: AbortSignal.timeout(900000),
     });
   }
 
@@ -170,14 +214,14 @@ export class MeetingApi {
   }
 
   socketUrl(id) {
-    return this.url(`/ws/meetings/${encodeURIComponent(id)}`, true);
+    return `${this.url(`/ws/meetings/${encodeURIComponent(id)}`, true)}?token=${encodeURIComponent(localStorage.getItem("meeting-auth-token") || "")}`;
   }
 
   stageSummarySocketUrl(id) {
-    return this.url(
+    return `${this.url(
       `/ws/meetings/${encodeURIComponent(id)}/stage-summaries`,
       true,
-    );
+    )}?token=${encodeURIComponent(localStorage.getItem("meeting-auth-token") || "")}`;
   }
 
   stageSummaries(id, options = {}) {
@@ -195,12 +239,12 @@ export class MeetingApi {
   }
 
   audioDownloadUrl(id) {
-    return this.url(`/api/meetings/${encodeURIComponent(id)}/audio/download`);
+    return `${this.url(`/api/meetings/${encodeURIComponent(id)}/audio/download`)}?token=${encodeURIComponent(localStorage.getItem("meeting-auth-token") || "")}`;
   }
 
   downloadTranscript(id) {
     return this.downloadFile(
-      this.url(`/api/meetings/${encodeURIComponent(id)}/download`),
+      `${this.url(`/api/meetings/${encodeURIComponent(id)}/download`)}?token=${encodeURIComponent(localStorage.getItem("meeting-auth-token") || "")}`,
       "转写文本",
     );
   }

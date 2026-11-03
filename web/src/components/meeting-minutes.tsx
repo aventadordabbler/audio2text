@@ -12,7 +12,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { api, ApiError, errorMessage, formatDate, importStatusLabel, type Meeting } from "@/lib/meetings"
+import { api, ApiError, authToken, errorMessage, formatDate, importStatusLabel, type Meeting } from "@/lib/meetings"
 
 const MinutesMarkdown = lazy(() => import("./minutes-markdown"))
 
@@ -248,7 +248,7 @@ export const MeetingMinutes = memo(function MeetingMinutes({
               {copied ? <Check /> : <Copy />}
             </Button>
             <Button variant="ghost" size="sm" asChild className="gap-1.5 text-xs">
-              <a id="download-minutes" href={`/api/meetings/${meeting.id}/minutes/download`}>
+              <a id="download-minutes" href={`/api/meetings/${meeting.id}/minutes/download?token=${encodeURIComponent(authToken())}`}>
                 <Download />
                 下载纪要
               </a>

@@ -2538,3 +2538,13 @@ button:disabled {
 .import-progress small { color: #737373; }
 
 .meeting-workspace--import { grid-template-columns: minmax(0, 1fr); }
+
+.auth-screen { display: grid; place-items: center; background: #f7f7f5; }
+.auth-panel { display: grid; gap: 16px; width: min(390px, calc(100vw - 32px)); padding: 30px; border: 1px solid #e5e5e5; border-radius: 8px; background: white; box-shadow: 0 16px 40px #0000000d; }
+.auth-panel .workspace-brand { margin: 0; }
+.auth-panel .form-field { display: grid; gap: 7px; }
+.auth-tabs { display: grid; grid-template-columns: repeat(2, 1fr); border-bottom: 1px solid #e5e5e5; }
+.auth-tabs button { padding: 10px; color: #737373; border-bottom: 2px solid transparent; }
+.auth-tabs button.active { color: #171717; border-color: #171717; }
+.auth-error { margin: 0; color: #b91c1c; font-size: 13px; }
+.auth-success { margin: 0; color: #15803d; font-size: 13px; }

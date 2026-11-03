@@ -533,10 +533,11 @@ async def stage_summary_socket(
     meeting_id: str,
     meetings: MeetingStore,
     summaries: StageSummaryService,
+    user_id: str | None = None,
 ) -> None:
     """Read-only snapshot/update stream, isolated from the recording socket."""
     await websocket.accept()
-    if await asyncio.to_thread(meetings.get, meeting_id) is None:
+    if await asyncio.to_thread(meetings.get, meeting_id, user_id) is None:
         await websocket.send_json(
             {"type": "error", "message": "会议不存在", "meeting_id": meeting_id}
         )

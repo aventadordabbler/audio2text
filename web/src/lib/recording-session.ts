@@ -1,4 +1,4 @@
-import { api, ApiError, importStatusLabel, errorMessage, type Meeting, type TranscriptSegment, type ProcessingState } from "./meetings"
+import { api, ApiError, authToken, importStatusLabel, errorMessage, type Meeting, type TranscriptSegment, type ProcessingState } from "./meetings"
 import { PcmRecorder } from "./pcm-recorder"
 
 type Action = "start" | "pause" | "resume" | "end"
@@ -226,7 +226,7 @@ export class RecordingSession {
 
   private openSocket(id: string) {
     const socket = new WebSocket(
-      `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/meetings/${encodeURIComponent(id)}`,
+      `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/meetings/${encodeURIComponent(id)}?token=${encodeURIComponent(authToken())}`,
     )
     this.socket = socket
     this.nextSegment = 0

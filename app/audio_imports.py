@@ -5,9 +5,13 @@ import asyncio
 from dataclasses import replace
 from datetime import datetime, timezone
 import json
+import hashlib
+import hmac
 import logging
 from pathlib import Path
+import shutil
 from tempfile import TemporaryDirectory
+from uuid import uuid4
 
 import numpy as np
 
@@ -18,6 +22,7 @@ from .qwen_streaming import ASRError, RemoteDecoder
 from .recordings import AudioArchive, SAMPLE_RATE, read_audio
 
 logger = logging.getLogger(__name__)
+DEFAULT_CHUNK_SIZE = 8 * 1024 * 1024
 
 
 async def _disk(function, *args, **kwargs):
@@ -39,6 +44,7 @@ class AudioImportService:
         self.lock = asyncio.Lock()
         self.slots = asyncio.Semaphore(settings.audio_import_workers)
         self.upload_slots = asyncio.Semaphore(settings.audio_import_workers)
+        self.chunk_lock = asyncio.Lock()
         self.closed = False
 
     def _job(self, meeting_id):
@@ -54,7 +60,7 @@ class AudioImportService:
             db.execute(f"UPDATE meeting_imports SET {', '.join(key + ' = ?' for key in values)} WHERE meeting_id = ?",
                        (*values.values(), meeting_id))
 
-    async def create(self, upload, title, language, department_id):
+    async def create(self, upload, title, language, department_id, user_id=None):
         filename = (upload.filename or "").replace("\\", "/").rsplit("/", 1)[-1]
         if not filename.lower().endswith(".wav"):
             raise MeetingError("请选择 WAV 音频文件", 422)
@@ -81,7 +87,7 @@ class AudioImportService:
                     raise MeetingError("文件不是有效的 WAV 音频", 422)
                 await self._decode(directory)
                 # Publish the meeting only after its complete archive and exact duration exist.
-                publishing = asyncio.create_task(self._publish(directory, title, language, department_id, filename))
+                publishing = asyncio.create_task(self._publish(directory, title, language, department_id, filename, user_id))
                 try:
                     return await asyncio.shield(publishing)
                 except asyncio.CancelledError:
@@ -89,10 +95,125 @@ class AudioImportService:
                     await publishing
                     raise
 
-    async def _publish(self, directory, title, language, department_id, filename):
+    def _chunk_path(self, upload_id):
+        if not upload_id or len(upload_id) != 32 or any(char not in "0123456789abcdef" for char in upload_id):
+            raise MeetingError("上传会话不存在", 404)
+        return self.store.path.parent / ".audio-uploads" / f"chunked-{upload_id}"
+
+    def _read_chunk_meta(self, upload_id, user_id):
+        directory = self._chunk_path(upload_id)
+        try:
+            meta = json.loads((directory / "metadata.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise MeetingError("上传会话不存在或已失效", 404) from exc
+        if meta.get("user_id") != user_id:
+            raise MeetingError("上传会话不存在", 404)
+        return directory, meta
+
+    async def start_chunked(self, title, language, filename, file_size, total_chunks, chunk_size, user_id=None):
+        filename = (filename or "").replace("\\", "/").rsplit("/", 1)[-1]
+        if not filename.lower().endswith(".wav"):
+            raise MeetingError("请选择 WAV 音频文件", 422)
+        if type(file_size) is not int or file_size <= 0 or file_size > self.settings.audio_import_max_bytes:
+            raise MeetingError("WAV 文件超过服务端允许的大小", 413)
+        if type(chunk_size) is not int or not 1024 * 1024 <= chunk_size <= 32 * 1024 * 1024:
+            raise MeetingError("分片大小必须在 1–32 MiB 之间", 422)
+        expected_chunks = (file_size + chunk_size - 1) // chunk_size
+        if type(total_chunks) is not int or total_chunks != expected_chunks:
+            raise MeetingError("分片数量与文件大小不匹配", 422)
+        if self.decoder_factory is None:
+            await _disk(self.models.require, "asr")
+        if not self.minutes.available:
+            raise MeetingError("请先配置大语言模型，再导入音频生成会议总结", 503)
+        uploads = self.store.path.parent / ".audio-uploads"
+        uploads.mkdir(parents=True, exist_ok=True)
+        upload_id = uuid4().hex
+        directory = uploads / f"chunked-{upload_id}"
+        directory.mkdir()
+        meta = {
+            "upload_id": upload_id, "title": title.strip(), "language": language,
+            "filename": filename, "file_size": file_size, "chunk_size": chunk_size,
+            "total_chunks": total_chunks, "user_id": user_id, "received": {},
+        }
+        (directory / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
+        return {"upload_id": upload_id, "chunk_size": chunk_size, "total_chunks": total_chunks, "received": []}
+
+    async def upload_chunk(self, upload_id, index, stream, digest, user_id=None):
+        async with self.chunk_lock:
+            directory, meta = self._read_chunk_meta(upload_id, user_id)
+            if type(index) is not int or not 0 <= index < meta["total_chunks"]:
+                raise MeetingError("分片序号无效", 422)
+            if not isinstance(digest, str) or len(digest) != 64:
+                raise MeetingError("分片校验值无效", 422)
+            expected_size = min(meta["chunk_size"], meta["file_size"] - index * meta["chunk_size"])
+            chunk_path = directory / f"chunk-{index:08d}.part"
+            existing = meta["received"].get(str(index))
+            if existing and chunk_path.exists():
+                if existing["sha256"] == digest and existing["size"] == expected_size:
+                    return {"index": index, "size": expected_size, "received": sorted(map(int, meta["received"]))}
+                raise MeetingError("该分片已上传但校验值不一致", 409)
+            size = 0
+            hasher = hashlib.sha256()
+            temporary = chunk_path.with_suffix(".tmp")
+            try:
+                with temporary.open("wb") as output:
+                    async for block in stream:
+                        size += len(block)
+                        if size > expected_size:
+                            raise MeetingError("分片大小不正确", 422)
+                        hasher.update(block)
+                        output.write(block)
+                if size != expected_size or not hmac.compare_digest(hasher.hexdigest(), digest):
+                    raise MeetingError("分片完整性校验失败", 422)
+                temporary.replace(chunk_path)
+                meta["received"][str(index)] = {"size": size, "sha256": digest}
+                (directory / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
+            finally:
+                temporary.unlink(missing_ok=True)
+            return {"index": index, "size": size, "received": sorted(map(int, meta["received"]))}
+
+    async def complete_chunked(self, upload_id, user_id=None):
+        async with self.chunk_lock:
+            directory, meta = self._read_chunk_meta(upload_id, user_id)
+            if len(meta["received"]) != meta["total_chunks"]:
+                raise MeetingError("仍有分片未上传完成", 409)
+            source = directory / "source.wav"
+            size = 0
+            try:
+                with source.open("wb") as output:
+                    for index in range(meta["total_chunks"]):
+                        chunk_path = directory / f"chunk-{index:08d}.part"
+                        chunk_meta = meta["received"].get(str(index))
+                        if chunk_meta is None or not chunk_path.exists():
+                            raise MeetingError("分片文件缺失，请重新上传", 409)
+                        with chunk_path.open("rb") as chunk:
+                            chunk_hasher = hashlib.sha256()
+                            while block := chunk.read(1024 * 1024):
+                                size += len(block)
+                                chunk_hasher.update(block)
+                                output.write(block)
+                            if not hmac.compare_digest(chunk_hasher.hexdigest(), chunk_meta["sha256"]):
+                                raise MeetingError("分片文件完整性校验失败", 422)
+                if size != meta["file_size"]:
+                    raise MeetingError("合并后的文件大小不一致", 422)
+                with source.open("rb") as audio:
+                    header = audio.read(12)
+                if len(header) < 12 or header[:4] not in {b"RIFF", b"RF64"} or header[8:] != b"WAVE":
+                    raise MeetingError("文件不是有效的 WAV 音频", 422)
+                for chunk_path in directory.glob("chunk-*.part"):
+                    chunk_path.unlink()
+                (directory / "metadata.json").unlink(missing_ok=True)
+                await self._decode(directory)
+                return await self._publish(directory, meta["title"], meta["language"], None, meta["filename"], user_id)
+            except BaseException:
+                if directory.exists():
+                    shutil.rmtree(directory, ignore_errors=True)
+                raise
+
+    async def _publish(self, directory, title, language, department_id, filename, user_id=None):
         async with self.lock:
             meeting = await _disk(self.store.create, title, language, department_id,
-                                 imported_audio=directory, filename=filename)
+                                  imported_audio=directory, filename=filename, user_id=user_id)
             self._schedule(meeting["id"])
             return meeting
 
