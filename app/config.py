@@ -9,6 +9,7 @@ from .model_configs import DEFAULT_TOKENIZER
 
 class Settings(BaseSettings):
     app_name: str = "会议助手"
+    slogan: str = Field(default="", max_length=200)
     asr_tokenizer: str = Field(default=DEFAULT_TOKENIZER, min_length=1, max_length=2000)
     asr_send_chat_template: bool = False
     asr_window_seconds: float = Field(default=5.0, ge=1.0, le=30.0)

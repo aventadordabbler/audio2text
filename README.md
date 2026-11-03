@@ -235,6 +235,7 @@ Windows 标准版（Electron 35.7.5）安装包和便携版使用 `npm run dist:
 | --- | --- | --- |
 | `DATA_DIR` | `data/archives` | 会议数据库和文件归档目录 |
 | `DATABASE_PATH` | 数据目录下的 `meetings.sqlite3` | 可选的 SQLite 路径 |
+| `SLOGAN` | 空 | Web 和 Client 顶部显示的系统标语 |
 | `ASR_TOKENIZER` | `data/tokenizers/qwen` | Qwen 前缀回退所需的本地 tokenizer |
 | `ASR_SEND_CHAT_TEMPLATE` | `false` | 是否发送内置 Qwen chat template |
 | `ASR_WINDOW_SECONDS` | `5` | ASR 固定窗口长度 |

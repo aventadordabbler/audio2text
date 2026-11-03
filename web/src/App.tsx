@@ -37,6 +37,7 @@ export default function App() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const [modelsOpen, setModelsOpen] = useState(false)
   const [modelsVersion, setModelsVersion] = useState(0)
+  const [slogan, setSlogan] = useState("")
 
   useEffect(() => {
     const expired = () => setAuthUser(null)
@@ -51,6 +52,24 @@ export default function App() {
     }
     return () => window.removeEventListener("auth-expired", expired)
   }, [])
+
+  useEffect(() => {
+    if (!authUser) {
+      setSlogan("")
+      return
+    }
+    let active = true
+    api<{ slogan: string }>("/api/settings")
+      .then((settings) => {
+        if (active) setSlogan(settings.slogan?.trim() || "")
+      })
+      .catch(() => {
+        if (active) setSlogan("")
+      })
+    return () => {
+      active = false
+    }
+  }, [authUser])
 
   const refresh = useCallback(async () => {
     if (!authUser) return
@@ -207,6 +226,7 @@ export default function App() {
                 )}
               </nav>
             </div>
+            {slogan && <strong className="workspace-slogan" title={slogan}>{slogan}</strong>}
             <span className="topbar-date">
               <CalendarDays />
               {new Date().toLocaleDateString("zh-CN", {

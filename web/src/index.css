@@ -365,11 +365,24 @@ input {
   height: 66px;
   border-bottom: 1px solid var(--border);
   padding: 0 38px;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(0, 1fr);
   align-items: center;
-  justify-content: space-between;
   gap: 16px;
   background: #ffffffb3;
+}
+.workspace-slogan {
+  grid-column: 2;
+  grid-row: 1;
+  max-width: min(42vw, 560px);
+  overflow: hidden;
+  color: #262626;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.3;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .breadcrumb {
   display: flex;
@@ -391,6 +404,8 @@ input {
   color: #525252;
 }
 .topbar-date {
+  grid-column: 3;
+  justify-self: end;
   display: flex;
   align-items: center;
   gap: 7px;

@@ -188,6 +188,10 @@ def create_app(
     def current_user(request: Request) -> dict[str, Any]:
         return request.state.user
 
+    @app.get("/api/settings")
+    def public_settings() -> dict[str, str]:
+        return {"slogan": app_settings.slogan}
+
     @app.post("/api/auth/logout", status_code=204)
     def logout(request: Request) -> Response:
         authorization = request.headers.get("Authorization", "")

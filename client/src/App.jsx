@@ -154,6 +154,7 @@ export function App() {
   const [authError, setAuthError] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
   const [authNotice, setAuthNotice] = useState("");
+  const [slogan, setSlogan] = useState("");
   const [uploadProgress, setUploadProgress] = useState(null);
   const [config, setConfig] = useState(DEFAULT_CONFIG);
   const [formConfig, setFormConfig] = useState(DEFAULT_CONFIG);
@@ -352,6 +353,20 @@ export function App() {
     if (!localStorage.getItem("meeting-auth-token")) return;
     meetingApi.authMe().then(setAuthUser).catch(() => localStorage.removeItem("meeting-auth-token"));
   }, [ready, meetingApi]);
+
+  useEffect(() => {
+    setSlogan("");
+    if (!ready || !authUser || !meetingApi) return undefined;
+    let active = true;
+    meetingApi.settings()
+      .then((settings) => {
+        if (active) setSlogan(String(settings?.slogan || "").trim());
+      })
+      .catch(() => {})
+    return () => {
+      active = false;
+    };
+  }, [ready, authUser, meetingApi]);
 
   useEffect(() => {
     const expired = () => {
@@ -1520,6 +1535,7 @@ export function App() {
               <ChevronRight size={12} />
               <strong>{currentPage}</strong>
             </nav>
+            {slogan && <strong className="workspace-slogan" title={slogan}>{slogan}</strong>}
             <span className="topbar-date">
               <CalendarDays size={13} />
               {dateLabel}

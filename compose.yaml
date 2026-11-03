@@ -6,6 +6,7 @@ services:
     restart: unless-stopped
     environment:
       DATA_DIR: /app/data/archives
+      SLOGAN: ${SLOGAN:-}
       ASR_TOKENIZER: ${ASR_TOKENIZER:-/app/data/tokenizers/qwen}
       ASR_SEND_CHAT_TEMPLATE: ${ASR_SEND_CHAT_TEMPLATE:-true}
       ASR_WINDOW_SECONDS: ${ASR_WINDOW_SECONDS:-5}

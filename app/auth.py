@@ -91,7 +91,7 @@ class AuthStore:
             row = db.execute("""SELECT users.*, departments.name AS department_name FROM users
                 JOIN departments ON departments.id = users.department_id WHERE users.account = ? COLLATE NOCASE""", (account.strip(),)).fetchone()
             if row is None or not _verify_password(password, row["password_hash"]):
-                raise MeetingError("账号或密码错误", 401)
+                raise MeetingError("账户不存在或密码错误", 401)
             token = secrets.token_urlsafe(32)
             expires = datetime.now(timezone.utc) + timedelta(hours=SESSION_HOURS)
             token_hash = hashlib.sha256(token.encode()).hexdigest()

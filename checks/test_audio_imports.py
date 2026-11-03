@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 from io import BytesIO
 import json
+import logging
 import subprocess
 import threading
 import wave
@@ -202,7 +203,8 @@ async def test_import_guards_incomplete_results_and_recovers_after_restart(tmp_p
         assert restarted.state.stage_summaries.store.recoverable() == []
 
 
-async def test_summary_retry_keeps_transcript_and_does_not_rerun_asr(tmp_path):
+async def test_summary_retry_keeps_transcript_and_does_not_rerun_asr(tmp_path, caplog):
+    caplog.set_level(logging.ERROR)
     decoder, minutes = Decoder(), Minutes(fail=True)
     app = build(tmp_path, decoder=decoder, minutes=minutes)
     async with app.router.lifespan_context(app), httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
@@ -211,6 +213,8 @@ async def test_summary_retry_keeps_transcript_and_does_not_rerun_asr(tmp_path):
         failed = await settled(client, meeting["id"])
         assert failed["import_job"]["status"] == "failed"
         assert failed["import_job"]["stage"] == "summarizing"
+        assert "Meeting summary generation failed" in caplog.text
+        assert "Audio import failed" not in caplog.text
         samples = decoder.samples
         minutes.fail = False
         assert (await client.post(f"/api/meetings/{meeting['id']}/import/retry")).status_code == 202

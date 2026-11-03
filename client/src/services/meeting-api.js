@@ -61,6 +61,7 @@ export class MeetingApi {
   }
 
   authMe() { return this.request("/api/auth/me"); }
+  settings(options = {}) { return this.request("/api/settings", options); }
   authLogin(account, password) {
     return this.request("/api/auth/login", { method: "POST", body: JSON.stringify({ account, password }) });
   }

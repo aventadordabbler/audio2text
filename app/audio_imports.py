@@ -379,8 +379,10 @@ class AudioImportService:
 
     async def _run(self, meeting_id):
         async with self.slots:
+            stage = "unknown"
             try:
                 job = await _disk(self._job, meeting_id)
+                stage = job["stage"]
                 await _disk(self._update, meeting_id, status="running", attempts=job["attempts"] + 1)
                 if job["stage"] == "transcribing":
                     await self._transcribe(meeting_id, job)
@@ -389,9 +391,11 @@ class AudioImportService:
                         raise MeetingError("音频中未识别到有效讲话内容，无法生成会议总结", 422)
                     await _disk(self._update, meeting_id, stage="diarizing")
                     job["stage"] = "diarizing"
+                    stage = "diarizing"
                 if job["stage"] == "diarizing":
                     await self.diarization.correct_import(meeting_id)
                     await _disk(self._update, meeting_id, stage="summarizing")
+                    stage = "summarizing"
                 result = await self.minutes.get(meeting_id)
                 if result["status"] != "ready" or result.get("stale"):
                     await self.minutes.start(meeting_id)
@@ -402,7 +406,10 @@ class AudioImportService:
             except asyncio.CancelledError:
                 raise  # Keep the current stage and checkpoint for startup recovery.
             except Exception as exc:
-                logger.exception("Audio import failed for %s", meeting_id)
+                if stage == "summarizing":
+                    logger.error("Meeting summary generation failed for %s: %s", meeting_id, exc)
+                else:
+                    logger.exception("Audio import failed for %s", meeting_id)
                 message = str(exc) if isinstance(exc, (MeetingError, ASRError)) else "音频处理失败，已保存的内容已保留，请重试"
                 await _disk(self._update, meeting_id, status="failed", error=message)
 

@@ -429,13 +429,26 @@ button:disabled {
 .workspace-topbar {
   height: 57px;
   padding: 0 30px;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(0, 1fr);
   flex-shrink: 0;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
   background: #fff;
   border-bottom: 1px solid #e5e5e5;
+}
+.workspace-slogan {
+  grid-column: 2;
+  grid-row: 1;
+  max-width: min(42vw, 560px);
+  overflow: hidden;
+  color: #262626;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.3;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .breadcrumb {
   display: flex;
@@ -452,6 +465,8 @@ button:disabled {
   margin-right: 5px;
 }
 .topbar-date {
+  grid-column: 3;
+  justify-self: end;
   display: flex;
   gap: 6px;
   align-items: center;
