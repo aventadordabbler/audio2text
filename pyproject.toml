@@ -27,8 +27,13 @@ dependencies = [
 ]
 
 [[tool.uv.index]]
+name = "aliyun"
+url = "https://mirrors.aliyun.com/pypi/simple/"
+default = true
+
+[[tool.uv.index]]
 name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
+url = "https://mirror.sjtu.edu.cn/pytorch-wheels/cpu/"
 explicit = true
 
 [tool.uv.sources]
