@@ -390,13 +390,14 @@ export function MeetingDetail({
       <div className="detail-heading">
         <div className="detail-heading-main">
           <div className="min-w-0">
-          <div className="detail-status mb-3">
-            <MeetingStatusBadge id="meeting-status" status={status} />
-          </div>
-          <div className="detail-title-row">
-            <h1 id="meeting-title" title={meeting.title}>
-              {meeting.title}
-            </h1>
+            <div className="detail-status mb-3">
+              <MeetingStatusBadge id="meeting-status" status={status} />
+            </div>
+            <div className="detail-title-row">
+              <h1 id="meeting-title" title={meeting.title}>
+                {meeting.title}
+              </h1>
+            </div>
             <div id="meeting-meta" className="meeting-meta">
               <span>
                 <CalendarDays />
@@ -426,7 +427,6 @@ export function MeetingDetail({
                 </span>
               ))}
             </div>
-          </div>
           </div>
           <div className="detail-heading-actions">
             {renderRecordingControl()}

@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import {
   ArrowRight,
   AudioLines,
+  CalendarDays,
   Check,
   Clock3,
   Download,
@@ -35,6 +36,53 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { MeetingStatusBadge } from "./meeting-status"
 import { downloadRecording } from "@/lib/recording-download"
 import { api, authToken, emptyMeetingFilters, errorMessage, formatDate, formatDuration, statusLabels, importStatusLabel, type Meeting, type MeetingFilters, type MeetingStatus } from "@/lib/meetings"
+
+function DateFilter({
+  id,
+  label,
+  value,
+  min,
+  max,
+  onChange,
+}: {
+  id: string
+  label: string
+  value: string
+  min?: string
+  max?: string
+  onChange: (value: string) => void
+}) {
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  function openPicker() {
+    const input = inputRef.current
+    if (!input) return
+    try {
+      input.showPicker()
+    } catch {
+      input.focus()
+    }
+  }
+
+  return (
+    <Label htmlFor={id} className={`date-filter${value ? " has-value" : ""}`} onClick={openPicker}>
+      <CalendarDays aria-hidden="true" />
+      <span aria-hidden="true">{value || label}</span>
+      <Input
+        id={id}
+        type="date"
+        aria-label={label}
+        title={label}
+        value={value}
+        min={min}
+        max={max}
+        onChange={(event) => onChange(event.target.value)}
+        className="date-filter-native"
+        ref={inputRef}
+      />
+    </Label>
+  )
+}
 
 interface Props {
   meetings: Meeting[]
@@ -185,14 +233,20 @@ export function MeetingList({
             </SelectContent>
           </Select>
         </div>
-        <div className="filter-field">
-          <Label htmlFor="filter-start-date" className="sr-only">创建日期 · 从</Label>
-          <Input id="filter-start-date" type="date" title="创建开始日期" value={filters.startDate} max={filters.endDate || undefined} onChange={(e) => update({ startDate: e.target.value })} />
-        </div>
-        <div className="filter-field">
-          <Label htmlFor="filter-end-date" className="sr-only">创建日期 · 至</Label>
-          <Input id="filter-end-date" type="date" title="创建结束日期" value={filters.endDate} min={filters.startDate || undefined} onChange={(e) => update({ endDate: e.target.value })} />
-        </div>
+        <DateFilter
+          id="filter-start-date"
+          label="开始日期"
+          value={filters.startDate}
+          max={filters.endDate || undefined}
+          onChange={(startDate) => update({ startDate })}
+        />
+        <DateFilter
+          id="filter-end-date"
+          label="结束日期"
+          value={filters.endDate}
+          min={filters.startDate || undefined}
+          onChange={(endDate) => update({ endDate })}
+        />
         <div className="filter-actions">
           <Button variant="ghost" onClick={() => onFilters(emptyMeetingFilters)} disabled={!filteredEmpty}>重置筛选</Button>
           <Button id="refresh-button" variant="outline" aria-label="刷新会议记录" onClick={onRefresh} disabled={loading}>
@@ -205,11 +259,13 @@ export function MeetingList({
         <Table>
           <TableHeader>
             <TableRow className="bg-muted/45 hover:bg-muted/45">
-              <TableHead className="pl-6">会议名称</TableHead>
+              <TableHead>会议名称</TableHead>
+              <TableHead className="department-column">所属部门</TableHead>
+              <TableHead className="creator-column">创建人</TableHead>
               <TableHead className="date-column">创建时间</TableHead>
               <TableHead className="duration-column">录音时长</TableHead>
-              <TableHead>状态</TableHead>
-              <TableHead className="w-14">
+              <TableHead className="status-column">状态</TableHead>
+              <TableHead className="operation-column">
                 <span className="sr-only">操作</span>
               </TableHead>
             </TableRow>
@@ -218,25 +274,27 @@ export function MeetingList({
             {loading && filtered.length === 0
               ? Array.from({ length: 4 }, (_, i) => (
                   <TableRow key={i}>
-                    <TableCell className="py-6 pl-6">
+                    <TableCell className="py-6">
                       <Skeleton className="mb-2 h-4 w-40" />
-                      <Skeleton className="h-3 w-56" />
                     </TableCell>
+                    <TableCell className="department-column"><Skeleton className="h-4 w-20" /></TableCell>
+                    <TableCell className="creator-column"><Skeleton className="h-4 w-24" /></TableCell>
                     <TableCell className="date-column">
                       <Skeleton className="h-4 w-24" />
                     </TableCell>
                     <TableCell className="duration-column">
                       <Skeleton className="h-4 w-12" />
                     </TableCell>
-                    <TableCell colSpan={2}>
+                    <TableCell className="status-column">
                       <Skeleton className="h-5 w-16" />
                     </TableCell>
+                    <TableCell className="operation-column" />
                   </TableRow>
                 ))
               : null}
             {filtered.map((meeting) => (
               <TableRow key={meeting.id} className="meeting-row group">
-                <TableCell className="meeting-name-cell pl-6">
+                <TableCell className="meeting-name-cell">
                   <a href={`#meeting/${meeting.id}`} className="meeting-entry">
                     <span
                       className={`document-icon ${meeting.status === "recording" ? "is-live" : ""}`}
@@ -245,40 +303,32 @@ export function MeetingList({
                     </span>
                     <span className="meeting-summary">
                       <strong>{meeting.title}</strong>
-                      <span className="meeting-department">{meeting.department_name || "未分类"}</span>
-                      <span className="meeting-preview">
-                        {meeting.text ||
-                          (meeting.status === "created"
-                            ? "一切准备就绪，等待开始录音"
-                            : "暂无转写内容")}
-                      </span>
-                      <span className="mobile-date">{formatDate(meeting.created_at, false)}</span>
                     </span>
                   </a>
                 </TableCell>
+                <TableCell className="department-column">
+                  <span className="table-cell-value">{meeting.department_name || "未分类"}</span>
+                </TableCell>
+                <TableCell className="creator-column">
+                  <span className="table-cell-value">
+                    {meeting.creator_account || "—"}
+                  </span>
+                </TableCell>
                 <TableCell className="date-column">
-                  <div className="cell-date">
-                    {formatDate(meeting.created_at, false)}
-                    <span>
-                      {new Date(meeting.created_at).toLocaleTimeString("zh-CN", {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                    </span>
-                  </div>
+                  <span className="table-cell-value">{formatDate(meeting.created_at)}</span>
                 </TableCell>
                 <TableCell className="duration-column">
-                  <span className="inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground">
+                  <span className="table-cell-value inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground">
                     <Clock3 className="size-3.5 opacity-60" />
                     {formatDuration(meeting.duration_seconds)}
                   </span>
                 </TableCell>
-                <TableCell>
+                <TableCell className="status-column">
                   {meeting.import_job && meeting.import_job.status !== "ready"
                     ? <span className="text-xs text-muted-foreground">{importStatusLabel(meeting.import_job)}</span>
                     : <MeetingStatusBadge status={meeting.status} />}
                 </TableCell>
-                <TableCell className="pr-4">
+                <TableCell className="operation-column">
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button variant="ghost" size="icon-sm" aria-label={`${meeting.title}的操作`}>
@@ -313,7 +363,7 @@ export function MeetingList({
             ))}
             {!loading && !searchError && filtered.length === 0 && (
               <TableRow className="hover:bg-transparent">
-                <TableCell colSpan={5} className="whitespace-normal">
+                <TableCell colSpan={7} className="whitespace-normal">
                   <div className="empty-state">
                     <div className="empty-illustration">
                       <span />

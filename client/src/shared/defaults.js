@@ -15,7 +15,6 @@ export const STT_LANGUAGE_OPTIONS = Object.freeze([
   { value: "Russian", label: "Русский" },
   { value: "Thai", label: "ไทย" },
   { value: "Vietnamese", label: "Tiếng Việt" },
-  { value: "Japanese", label: "日本語" },
   { value: "Turkish", label: "Türkçe" },
   { value: "Hindi", label: "हिन्दी" },
   { value: "Malay", label: "Bahasa Melayu" },

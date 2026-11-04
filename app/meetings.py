@@ -19,11 +19,13 @@ from .transcripts import TranscriptStore, plain_text
 logger = logging.getLogger(__name__)
 MEETING_ID = re.compile(r"^[0-9a-f]{32}$")
 MEETING_SELECT = """SELECT meetings.*, departments.name AS department_name,
+    users.account AS creator_account, users.employee_id AS creator_employee_id,
     meeting_imports.status AS import_status, meeting_imports.stage AS import_stage,
     meeting_imports.filename AS import_filename, meeting_imports.error AS import_error,
     meeting_imports.processed_samples AS import_processed_samples,
     meeting_imports.total_samples AS import_total_samples
     FROM meetings LEFT JOIN departments ON departments.id = meetings.department_id
+    LEFT JOIN users ON users.id = meetings.user_id
     LEFT JOIN meeting_imports ON meeting_imports.meeting_id = meetings.id"""
 
 

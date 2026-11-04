@@ -185,21 +185,51 @@ a {
 }
 
 .auth-screen {
+  position: relative;
+  isolation: isolate;
   min-height: 100vh;
   display: grid;
   place-items: center;
+  overflow: hidden;
   padding: 24px;
-  background: #f7f7f5;
+  background: #f2f2f2;
+}
+.auth-screen::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  opacity: 0.42;
+  background-image:
+    linear-gradient(90deg, transparent 49.5%, #d2d2d2 49.5%, #d2d2d2 50.5%, transparent 50.5%),
+    linear-gradient(0deg, transparent 49.5%, #d2d2d2 49.5%, #d2d2d2 50.5%, transparent 50.5%);
+  background-size: 56px 56px;
+}
+.auth-screen::after {
+  content: "";
+  position: absolute;
+  top: -18%;
+  right: -12%;
+  z-index: -1;
+  width: 58vw;
+  height: 136%;
+  border: 1px solid #c5c5c5;
+  transform: rotate(14deg);
+  box-shadow: -34px 0 0 -33px #c5c5c5, -68px 0 0 -67px #c5c5c5;
+  pointer-events: none;
 }
 .auth-panel {
+  position: relative;
+  z-index: 1;
   width: min(100%, 390px);
   display: grid;
   gap: 16px;
   padding: 32px;
   border: 1px solid #e5e5e5;
   border-radius: 12px;
-  background: white;
-  box-shadow: 0 16px 40px #0000000d;
+  background: rgb(255 255 255 / 94%);
+  box-shadow: 0 22px 60px rgb(0 0 0 / 12%), 0 3px 12px rgb(0 0 0 / 7%);
+  backdrop-filter: blur(12px);
 }
 .auth-brand { display: flex; align-items: center; gap: 11px; margin-bottom: 4px; }
 .auth-brand > span { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 8px; background: #171717; color: white; }
@@ -410,8 +440,6 @@ input {
   color: #525252;
 }
 .topbar-date {
-  grid-column: 3;
-  justify-self: end;
   display: flex;
   align-items: center;
   gap: 7px;
@@ -422,6 +450,26 @@ input {
 .topbar-date svg {
   width: 13px;
   height: 13px;
+}
+.topbar-actions {
+  grid-column: 3;
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.topbar-logout {
+  gap: 5px;
+  color: #737373;
+  white-space: nowrap;
+}
+.topbar-logout:hover {
+  color: #171717;
+}
+.topbar-logout svg {
+  width: 14px;
+  height: 14px;
 }
 .mobile-menu {
   display: none;
@@ -648,8 +696,67 @@ input {
   width: 100%;
   min-width: 0;
   height: 36px;
+  min-height: 36px;
   font-size: 12px;
   box-shadow: none;
+}
+.filter-field > input {
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 8px 11px;
+  color: #404040;
+}
+.filter-field > input:focus {
+  border-color: #a3a3a3;
+  box-shadow: 0 0 0 3px #17171708;
+}
+.date-filter {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  min-height: 36px;
+  padding: 8px 11px;
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #a3a3a3;
+  font-size: 12px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.date-filter.has-value {
+  color: #404040;
+  font-variant-numeric: tabular-nums;
+}
+.date-filter > svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: #737373;
+}
+.date-filter > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.date-filter:focus-within {
+  border-color: #a3a3a3;
+  box-shadow: 0 0 0 3px #17171708;
+}
+.date-filter-native {
+  position: absolute;
+  inset: 0;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  opacity: 0;
+  cursor: pointer;
 }
 .filter-field [data-slot="select-value"] {
   min-width: 0;
@@ -761,20 +868,15 @@ input {
   font-size: 11px;
   font-weight: 500;
   height: 41px;
+  text-align: center;
 }
-.meeting-table-card th:first-child {
-  width: auto;
-}
-.meeting-table-card th.date-column {
-  width: 134px;
-}
-.meeting-table-card th.duration-column {
-  width: 112px;
-}
-.meeting-table-card th:nth-last-child(2) {
-  width: 102px;
-}
-.meeting-table-card th:last-child {
+.meeting-table-card th:nth-child(1) { width: 20%; }
+.meeting-table-card th:nth-child(2) { width: 15%; }
+.meeting-table-card th:nth-child(3) { width: 15%; }
+.meeting-table-card th:nth-child(4) { width: 20%; }
+.meeting-table-card th:nth-child(5) { width: 15%; }
+.meeting-table-card th:nth-child(6) { width: 15%; }
+.meeting-table-card th.operation-column {
   width: 54px;
 }
 .meeting-row {
@@ -791,10 +893,12 @@ input {
 .meeting-entry {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 13px;
   min-width: 0;
   margin: -12px 0;
   padding: 12px 0;
+  text-align: center;
 }
 .document-icon {
   background: #fafafa;
@@ -816,6 +920,28 @@ input {
 .meeting-summary {
   min-width: 0;
   display: block;
+}
+.meeting-table-card .table-cell-value {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.meeting-table-card .table-cell-value:not(.inline-flex) {
+  display: block;
+}
+.meeting-table-card .table-cell-value.inline-flex {
+  display: inline-flex;
+}
+.meeting-table-card .status-column {
+  white-space: nowrap;
+}
+.meeting-table-card .operation-column {
+  text-align: center;
+}
+.meeting-table-card [data-slot="table-cell"] {
+  text-align: center;
 }
 .meeting-summary strong {
   display: block;
@@ -954,8 +1080,8 @@ input {
 .detail-heading {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  margin-bottom: 20px;
+  gap: 12px;
+  margin-bottom: 14px;
 }
 .detail-heading-main {
   display: flex;
@@ -998,6 +1124,7 @@ input {
   flex-wrap: wrap;
   align-items: center;
   gap: 13px;
+  margin-top: 10px;
   font-size: 12px;
   color: #737373;
 }
@@ -1887,12 +2014,6 @@ input {
   .search-field {
     width: 210px;
   }
-  .meeting-table-card th.date-column {
-    width: 110px;
-  }
-  .meeting-table-card th.duration-column {
-    width: 96px;
-  }
 }
 @media (max-width: 1023px) {
   .desktop-sidebar {
@@ -2065,20 +2186,6 @@ input {
   }
   .duration-column {
     display: none;
-  }
-  .meeting-table-card th:nth-last-child(2) {
-    width: 86px;
-  }
-  .meeting-table-card th:last-child {
-    width: 38px;
-  }
-  .meeting-table-card th:first-child,
-  .meeting-name-cell {
-    padding-left: 15px;
-  }
-  .meeting-row td:last-child {
-    padding-right: 8px;
-    padding-left: 0;
   }
   .meeting-row td {
     padding-top: 15px;

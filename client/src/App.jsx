@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
+  Building2,
   Mic,
   Pause,
   Play,
@@ -17,6 +18,7 @@ import {
   ChevronRight,
   FolderClosed,
   Languages,
+  LogOut,
   MicOff,
   PanelLeft,
   RefreshCw,
@@ -398,6 +400,19 @@ export function App() {
     } finally {
       setAuthBusy(false);
     }
+  }
+
+  function logout() {
+    recorder.disconnect();
+    stageSummaryFeed.disconnect();
+    localStorage.removeItem("meeting-auth-token");
+    setAuthUser(null);
+    setSession(null);
+    setSessions([]);
+    setSlogan("");
+    setAuthError("");
+    setAuthNotice("");
+    setActiveView("history");
   }
 
   useEffect(() => {
@@ -1156,6 +1171,45 @@ export function App() {
     await window.meetingDesktop?.closeWindow?.();
   }
 
+  function renderWindowTitlebar() {
+    return (
+      <header
+        className="window-titlebar"
+        style={{ WebkitAppRegion: "drag" }}
+        onDoubleClick={toggleMaximize}
+      >
+        <span>
+          <AudioLines size={14} />
+          会议助手
+        </span>
+        <div className="window-actions" style={{ WebkitAppRegion: "no-drag" }}>
+          <button
+            onClick={minimizeWindow}
+            aria-label="最小化窗口"
+            title="最小化"
+          >
+            <Minus size={15} />
+          </button>
+          <button
+            onClick={toggleMaximize}
+            aria-label={isMaximized ? "还原窗口" : "最大化窗口"}
+            title={isMaximized ? "还原" : "最大化"}
+          >
+            <Maximize2 size={13} />
+          </button>
+          <button
+            className="window-close"
+            onClick={closeWindow}
+            aria-label="关闭窗口"
+            title="关闭"
+          >
+            <X size={15} />
+          </button>
+        </div>
+      </header>
+    );
+  }
+
   const imported = session?.source === "wav";
   const importJob = session?.importJob;
   const importBusy = ["queued", "running"].includes(importJob?.status);
@@ -1416,57 +1470,27 @@ export function App() {
 
   if (!authUser) {
     return (
-      <main className="loading-screen auth-screen">
-        <form className="auth-panel" onSubmit={submitAuth}>
-          <WorkspaceBrand />
-          <div className="auth-tabs"><button type="button" className={authMode === "login" ? "active" : ""} onClick={() => { setAuthMode("login"); setAuthNotice(""); }}>登录</button><button type="button" className={authMode === "register" ? "active" : ""} onClick={() => { setAuthMode("register"); setAuthNotice(""); }}>注册</button></div>
-          <Field label="账号"><Input value={authForm.account} onChange={(event) => setAuthForm({ ...authForm, account: event.target.value })} required /></Field>
-          <Field label="密码"><Input type="password" value={authForm.password} onChange={(event) => setAuthForm({ ...authForm, password: event.target.value })} minLength={authMode === "register" ? 8 : 1} required /></Field>
-          {authMode === "register" && <><Field label="部门"><Input value={authForm.department} onChange={(event) => setAuthForm({ ...authForm, department: event.target.value })} required /></Field><Field label="工号"><Input value={authForm.employeeId} onChange={(event) => setAuthForm({ ...authForm, employeeId: event.target.value })} required /></Field></>}
-          {authNotice && <p className="auth-success" role="status">{authNotice}</p>}
-          {authError && <p className="auth-error" role="alert">{authError}</p>}
-          <Button type="submit" disabled={authBusy}>{authBusy ? "处理中…" : authMode === "register" ? "注册" : "登录"}</Button>
-        </form>
-      </main>
+      <div className="desktop-app auth-desktop-shell">
+        {renderWindowTitlebar()}
+        <main className="loading-screen auth-screen">
+          <form className="auth-panel" onSubmit={submitAuth}>
+            <WorkspaceBrand />
+            <div className="auth-tabs"><button type="button" className={authMode === "login" ? "active" : ""} onClick={() => { setAuthMode("login"); setAuthNotice(""); }}>登录</button><button type="button" className={authMode === "register" ? "active" : ""} onClick={() => { setAuthMode("register"); setAuthNotice(""); }}>注册</button></div>
+            <Field label="账号"><Input value={authForm.account} onChange={(event) => setAuthForm({ ...authForm, account: event.target.value })} required /></Field>
+            <Field label="密码"><Input type="password" value={authForm.password} onChange={(event) => setAuthForm({ ...authForm, password: event.target.value })} minLength={authMode === "register" ? 8 : 1} required /></Field>
+            {authMode === "register" && <><Field label="部门"><Input value={authForm.department} onChange={(event) => setAuthForm({ ...authForm, department: event.target.value })} required /></Field><Field label="工号"><Input value={authForm.employeeId} onChange={(event) => setAuthForm({ ...authForm, employeeId: event.target.value })} required /></Field></>}
+            {authNotice && <p className="auth-success" role="status">{authNotice}</p>}
+            {authError && <p className="auth-error" role="alert">{authError}</p>}
+            <Button type="submit" disabled={authBusy}>{authBusy ? "处理中…" : authMode === "register" ? "注册" : "登录"}</Button>
+          </form>
+        </main>
+      </div>
     );
   }
 
   return (
     <div className="desktop-app">
-      <header
-        className="window-titlebar"
-        style={{ WebkitAppRegion: "drag" }}
-        onDoubleClick={toggleMaximize}
-      >
-        <span>
-          <AudioLines size={14} />
-          会议助手
-        </span>
-        <div className="window-actions" style={{ WebkitAppRegion: "no-drag" }}>
-          <button
-            onClick={minimizeWindow}
-            aria-label="最小化窗口"
-            title="最小化"
-          >
-            <Minus size={15} />
-          </button>
-          <button
-            onClick={toggleMaximize}
-            aria-label={isMaximized ? "还原窗口" : "最大化窗口"}
-            title={isMaximized ? "还原" : "最大化"}
-          >
-            <Maximize2 size={13} />
-          </button>
-          <button
-            className="window-close"
-            onClick={closeWindow}
-            aria-label="关闭窗口"
-            title="关闭"
-          >
-            <X size={15} />
-          </button>
-        </div>
-      </header>
+      {renderWindowTitlebar()}
 
       <CreateMeetingDialog
         open={createOpen}
@@ -1536,10 +1560,16 @@ export function App() {
               <strong>{currentPage}</strong>
             </nav>
             {slogan && <strong className="workspace-slogan" title={slogan}>{slogan}</strong>}
-            <span className="topbar-date">
-              <CalendarDays size={13} />
-              {dateLabel}
-            </span>
+            <div className="topbar-actions">
+              <span className="topbar-date">
+                <CalendarDays size={13} />
+                {dateLabel}
+              </span>
+              <button className="topbar-logout" type="button" onClick={logout}>
+                <LogOut size={14} />
+                <span>退出登录</span>
+              </button>
+            </div>
           </header>
           <nav className="compact-navigation" aria-label="紧凑导航">
             {navigation.map(({ key, label, icon: Icon }) => (

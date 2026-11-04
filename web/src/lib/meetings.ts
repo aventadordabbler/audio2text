@@ -40,6 +40,8 @@ export interface Meeting {
   language: string | null
   department_id: string | null
   department_name: string | null
+  creator_account: string | null
+  creator_employee_id: string | null
   status: MeetingStatus
   text: string
   text_path: string
@@ -76,6 +78,39 @@ export interface MeetingFilters {
 export const emptyMeetingFilters: MeetingFilters = {
   title: "", departmentId: "all", status: "all", startDate: "", endDate: "",
 }
+
+export const STT_LANGUAGE_OPTIONS = [
+  { value: "auto", label: "自动检测" },
+  { value: "Chinese", label: "中文" },
+  { value: "English", label: "English" },
+  { value: "Cantonese", label: "粤语" },
+  { value: "Arabic", label: "العربية" },
+  { value: "German", label: "Deutsch" },
+  { value: "French", label: "Français" },
+  { value: "Spanish", label: "Español" },
+  { value: "Portuguese", label: "Português" },
+  { value: "Indonesian", label: "Bahasa Indonesia" },
+  { value: "Italian", label: "Italiano" },
+  { value: "Korean", label: "한국어" },
+  { value: "Russian", label: "Русский" },
+  { value: "Thai", label: "ไทย" },
+  { value: "Vietnamese", label: "Tiếng Việt" },
+  { value: "Turkish", label: "Türkçe" },
+  { value: "Hindi", label: "हिन्दी" },
+  { value: "Malay", label: "Bahasa Melayu" },
+  { value: "Dutch", label: "Nederlands" },
+  { value: "Swedish", label: "Svenska" },
+  { value: "Danish", label: "Dansk" },
+  { value: "Finnish", label: "Suomi" },
+  { value: "Polish", label: "Polski" },
+  { value: "Czech", label: "Čeština" },
+  { value: "Filipino", label: "Filipino" },
+  { value: "Persian", label: "فارسی" },
+  { value: "Greek", label: "Ελληνικά" },
+  { value: "Hungarian", label: "Magyar" },
+  { value: "Macedonian", label: "Македонски" },
+  { value: "Romanian", label: "Română" },
+] as const
 
 export const statusLabels: Record<MeetingStatus, string> = {
   created: "未开始",

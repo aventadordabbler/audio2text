@@ -18,7 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { api, errorMessage, importWav, type Meeting } from "@/lib/meetings"
+import { api, errorMessage, importWav, STT_LANGUAGE_OPTIONS, type Meeting } from "@/lib/meetings"
 
 export function CreateMeetingDialog({
   open,
@@ -158,13 +158,12 @@ export function CreateMeetingDialog({
                     avoidCollisions={false}
                     className="meeting-filter-menu"
                   >
-                    <SelectItem value="auto">
-                      <Sparkles className="size-3.5 text-neutral-500" />
-                      自动识别
-                    </SelectItem>
-                    <SelectItem value="zh">中文</SelectItem>
-                    <SelectItem value="en">English</SelectItem>
-                    <SelectItem value="ja">日本語</SelectItem>
+                    {STT_LANGUAGE_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.value === "auto" && <Sparkles className="size-3.5 text-neutral-500" />}
+                        {option.label}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
                 <p className="text-xs leading-5 text-muted-foreground">

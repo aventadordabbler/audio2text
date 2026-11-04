@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react"
-import { AlertCircle, CalendarDays, ChevronRight, Menu, PanelsTopLeft, X } from "lucide-react"
+import { AlertCircle, CalendarDays, ChevronRight, LogOut, Menu, PanelsTopLeft, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import {
@@ -171,6 +171,15 @@ export default function App() {
     setMeetings((meetings) => [meeting, ...meetings])
     location.hash = `meeting/${meeting.id}`
   }
+  async function logout() {
+    await session.leave().catch(() => {})
+    setAuthToken(null)
+    setAuthUser(null)
+    setMeetings([])
+    setDepartments([])
+    setError("")
+    location.hash = ""
+  }
   const configureModels = useCallback(() => {
     setMobileOpen(false)
     setModelsOpen(true)
@@ -227,14 +236,20 @@ export default function App() {
               </nav>
             </div>
             {slogan && <strong className="workspace-slogan" title={slogan}>{slogan}</strong>}
-            <span className="topbar-date">
-              <CalendarDays />
-              {new Date().toLocaleDateString("zh-CN", {
-                month: "long",
-                day: "numeric",
-                weekday: "long",
-              })}
-            </span>
+            <div className="topbar-actions">
+              <span className="topbar-date">
+                <CalendarDays />
+                {new Date().toLocaleDateString("zh-CN", {
+                  month: "long",
+                  day: "numeric",
+                  weekday: "long",
+                })}
+              </span>
+              <Button className="topbar-logout" variant="ghost" size="sm" onClick={logout}>
+                <LogOut />
+                退出登录
+              </Button>
+            </div>
           </header>
           {visibleError && (
             <div className="page-error">

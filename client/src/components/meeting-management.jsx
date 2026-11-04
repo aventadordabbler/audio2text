@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   Building2,
+  Clock3,
   FileText,
   LoaderCircle,
   Plus,
@@ -43,6 +44,11 @@ import {
   meetingQuery,
   importStatusLabel,
 } from "@/services/meeting-catalog";
+
+function formatDuration(seconds = 0) {
+  const total = Math.max(0, Math.floor(Number(seconds) || 0));
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
 
 export function CreateMeetingDialog({
   open,
@@ -364,8 +370,10 @@ export function MeetingManagement({
               <TableRow>
                 <TableHead>会议名称</TableHead>
                 <TableHead>所属部门</TableHead>
+                <TableHead>创建人</TableHead>
                 <TableHead>创建时间</TableHead>
-                <TableHead>会议状态</TableHead>
+                <TableHead>录音时长</TableHead>
+                <TableHead>状态</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -383,35 +391,43 @@ export function MeetingManagement({
                         </span>
                         <span>
                           <strong>{meeting.title}</strong>
-                          <small>{meeting.text || "暂无转写内容"}</small>
                         </span>
                       </button>
                     </TableCell>
                     <TableCell>
                       <span className="department-name">
                         <Building2 size={13} />
-                        {departments.find(
-                          (item) => item.id === meeting.department_id,
-                        )?.name ||
-                          meeting.department_name ||
-                          "未分类"}
+                        <span className="table-cell-value">
+                          {departments.find(
+                            (item) => item.id === meeting.department_id,
+                          )?.name ||
+                            meeting.department_name ||
+                            "未分类"}
+                        </span>
                       </span>
                     </TableCell>
                     <TableCell>
-                      <span className="cell-date">
+                      <span className="table-cell-value">
+                        {meeting.creator_account || "—"}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <span className="table-cell-value">
                         {meeting.created_at
-                          ? new Date(meeting.created_at).toLocaleDateString(
-                              "zh-CN",
-                            )
+                          ? new Date(meeting.created_at).toLocaleString("zh-CN", {
+                              year: "numeric",
+                              month: "2-digit",
+                              day: "2-digit",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })
                           : "—"}
-                        <small>
-                          {meeting.created_at
-                            ? new Date(meeting.created_at).toLocaleTimeString(
-                                "zh-CN",
-                                { hour: "2-digit", minute: "2-digit" },
-                              )
-                            : ""}
-                        </small>
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <span className="table-cell-value inline-flex items-center gap-1.5 font-mono">
+                        <Clock3 size={13} />
+                        {formatDuration(meeting.duration_seconds)}
                       </span>
                     </TableCell>
                     <TableCell>
@@ -427,7 +443,7 @@ export function MeetingManagement({
                 ))}
               {(loading || error || !meetings.length) && (
                 <TableRow>
-                  <TableCell colSpan={4}>
+                  <TableCell colSpan={6}>
                     <EmptyDocument
                       icon={loading ? LoaderCircle : Search}
                       title={
