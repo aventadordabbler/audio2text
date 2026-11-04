@@ -900,6 +900,13 @@ input {
   padding: 12px 0;
   text-align: center;
 }
+.meeting-table-card .meeting-name-cell {
+  text-align: left;
+}
+.meeting-table-card .meeting-name-cell .meeting-entry {
+  justify-content: flex-start;
+  text-align: left;
+}
 .document-icon {
   background: #fafafa;
   color: #737373;
@@ -1907,14 +1914,23 @@ input {
 .model-config-actions button {
   font-size: 12px;
 }
-.model-test-button:is([data-state="success"], [data-state="failure"]) {
+.model-test-button[data-state="success"] {
   border-color: #86efac;
-  background: #f0fdf4;
+  background: #dcfce7;
   color: #166534;
 }
-.model-test-button:is([data-state="success"], [data-state="failure"]):hover:not(:disabled) {
-  background: #dcfce7;
+.model-test-button[data-state="failure"] {
+  border-color: #fca5a5;
+  background: #fee2e2;
+  color: #b91c1c;
+}
+.model-test-button[data-state="success"]:hover:not(:disabled) {
+  background: #bbf7d0;
   color: #14532d;
+}
+.model-test-button[data-state="failure"]:hover:not(:disabled) {
+  background: #fecaca;
+  color: #991b1b;
 }
 .model-test-button[data-state="failure"] > svg {
   color: #b91c1c;

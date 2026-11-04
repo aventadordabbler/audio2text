@@ -190,11 +190,6 @@ export function MeetingList({
         </Button>
       </div>
 
-      <div className="list-heading">
-        <h2>
-          会议列表 <span>{meetings.length}</span>
-        </h2>
-      </div>
       <div className="meeting-filters" aria-label="会议筛选">
         <div className="filter-field filter-title">
           <Label htmlFor="meeting-search" className="sr-only">会议名称</Label>

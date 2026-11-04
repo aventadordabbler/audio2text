@@ -20,6 +20,7 @@ export function ServerModelSettings({ api, onSaveStateChange }) {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState(null);
   const formRef = useRef(null);
   const testController = useRef(null);
   const disabled = busy || testing;
@@ -34,6 +35,7 @@ export function ServerModelSettings({ api, onSaveStateChange }) {
     setNotice("");
     setKey("");
     setTesting(false);
+    setTestResult(null);
     if (api)
       api
         .modelConfigs({ signal: controller.signal })
@@ -65,6 +67,7 @@ export function ServerModelSettings({ api, onSaveStateChange }) {
     else setModel((current) => ({ ...current, [field]: value }));
     setNotice("");
     setError("");
+    setTestResult(null);
   }
 
   async function testConnection() {
@@ -77,6 +80,7 @@ export function ServerModelSettings({ api, onSaveStateChange }) {
     const controller = new AbortController();
     testController.current = controller;
     setTesting(true);
+    setTestResult(null);
     setError("");
     setNotice("");
     try {
@@ -84,10 +88,18 @@ export function ServerModelSettings({ api, onSaveStateChange }) {
         signal: controller.signal,
       });
       if (controller.signal.aborted) return;
-      if (result.success) setNotice("连接成功");
-      else setError("连接失败");
+      if (result.success) {
+        setNotice("连接成功");
+        setTestResult(true);
+      } else {
+        setError("连接失败");
+        setTestResult(false);
+      }
     } catch {
-      if (!controller.signal.aborted) setError("连接失败");
+      if (!controller.signal.aborted) {
+        setError("连接失败");
+        setTestResult(false);
+      }
     } finally {
       if (testController.current === controller) {
         testController.current = null;
@@ -101,6 +113,7 @@ export function ServerModelSettings({ api, onSaveStateChange }) {
     setBusy(true);
     setError("");
     setNotice("");
+    setTestResult(null);
     try {
       const saved = await api.saveModelConfig("llm", draftConfig());
       setModel(saved);
@@ -141,6 +154,8 @@ export function ServerModelSettings({ api, onSaveStateChange }) {
             onClick={testConnection}
             disabled={!canSave}
             aria-busy={testing}
+            className="model-test-button"
+            data-state={testing ? "testing" : testResult === true ? "success" : testResult === false ? "failure" : "idle"}
           >
             {testing && <LoaderCircle size={14} className="animate-spin" />}
             {testing ? "测试中…" : "测试连接"}

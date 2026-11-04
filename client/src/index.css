@@ -1602,6 +1602,24 @@ button:disabled {
 .settings-card-heading > button {
   flex-shrink: 0;
 }
+.model-test-button[data-state="success"] {
+  border-color: #86efac;
+  background: #dcfce7;
+  color: #166534;
+}
+.model-test-button[data-state="failure"] {
+  border-color: #fca5a5;
+  background: #fee2e2;
+  color: #b91c1c;
+}
+.model-test-button[data-state="success"]:hover:not(:disabled) {
+  background: #bbf7d0;
+  color: #14532d;
+}
+.model-test-button[data-state="failure"]:hover:not(:disabled) {
+  background: #fecaca;
+  color: #991b1b;
+}
 .settings-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2502,8 +2520,8 @@ button:disabled {
   text-align: center;
 }
 .management-table .meeting-title-button {
-  justify-content: center;
-  text-align: center;
+  justify-content: flex-start;
+  text-align: left;
 }
 .management-table .department-name {
   justify-content: center;
