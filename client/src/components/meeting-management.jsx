@@ -44,42 +44,6 @@ import {
   importStatusLabel,
 } from "@/services/meeting-catalog";
 
-export function DepartmentSelect({
-  departments,
-  value,
-  onChange,
-  label = "所属部门",
-  all = false,
-  disabled = false,
-}) {
-  return (
-    <Label className="form-field">
-      <span>{label}</span>
-      <Select value={value} onValueChange={onChange} disabled={disabled}>
-        <SelectTrigger aria-label={label}>
-          <SelectValue className="min-w-0" />
-        </SelectTrigger>
-        <SelectContent
-          position="popper"
-          side="bottom"
-          align="start"
-          sideOffset={4}
-          avoidCollisions={false}
-          className="meeting-filter-menu"
-        >
-          {all && <SelectItem value="all">全部部门</SelectItem>}
-          <SelectItem value="unassigned">未分类</SelectItem>
-          {departments.map((item) => (
-            <SelectItem key={item.id} value={item.id}>
-              {item.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </Label>
-  );
-}
-
 export function CreateMeetingDialog({
   open,
   onOpenChange,
@@ -145,7 +109,14 @@ export function CreateMeetingDialog({
             <span>创建方式</span>
             <Select value={source} onValueChange={setSource} disabled={busy}>
               <SelectTrigger aria-label="创建方式"><SelectValue /></SelectTrigger>
-              <SelectContent>
+              <SelectContent
+                position="popper"
+                side="bottom"
+                align="start"
+                sideOffset={4}
+                avoidCollisions={false}
+                className="meeting-filter-menu"
+              >
                 <SelectItem value="recording">实时录音</SelectItem>
                 <SelectItem value="wav">导入音频（WAV/MP3）</SelectItem>
               </SelectContent>
@@ -166,7 +137,14 @@ export function CreateMeetingDialog({
                 <span>转写语言</span>
                 <Select value={language} onValueChange={setLanguage} disabled={busy}>
                   <SelectTrigger aria-label="转写语言"><SelectValue /></SelectTrigger>
-                  <SelectContent>
+                  <SelectContent
+                    position="popper"
+                    side="bottom"
+                    align="start"
+                    sideOffset={4}
+                    avoidCollisions={false}
+                    className="meeting-filter-menu"
+                  >
                     {STT_LANGUAGE_OPTIONS.map((option) => (
                       <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
                     ))}
@@ -282,7 +260,7 @@ export function MeetingManagement({
       <div className="page-heading">
         <div>
           <h1>会议管理</h1>
-          <p>按部门、日期、状态和名称查找会议。</p>
+          <p>按日期、状态和名称查找会议。</p>
         </div>
         <div className="heading-actions">
           <Button
@@ -315,12 +293,6 @@ export function MeetingManagement({
             onChange={(event) => update({ title: event.target.value })}
           />
         </Label>
-        <DepartmentSelect
-          departments={departments}
-          all
-          value={filters.departmentId}
-          onChange={(departmentId) => update({ departmentId })}
-        />
         <Label className="form-field">
           <span>会议状态</span>
           <Select

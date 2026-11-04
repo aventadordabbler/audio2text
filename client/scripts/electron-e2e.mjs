@@ -228,9 +228,8 @@ try {
     );
   }
 
-  // Four filters combine on the server, including the full end date.
+  // The remaining filters combine on the server, including the full end date.
   await page.getByRole("textbox", { name: "搜索会议" }).fill("界面验证");
-  await select("所属部门", "产品研发部");
   await select("会议状态", "已暂停");
   const today = new Date();
   const day = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;

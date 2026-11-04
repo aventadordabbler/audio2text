@@ -34,12 +34,11 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { MeetingStatusBadge } from "./meeting-status"
 import { downloadRecording } from "@/lib/recording-download"
-import { api, authToken, emptyMeetingFilters, errorMessage, formatDate, formatDuration, statusLabels, importStatusLabel, type Department, type Meeting, type MeetingFilters, type MeetingStatus } from "@/lib/meetings"
+import { api, authToken, emptyMeetingFilters, errorMessage, formatDate, formatDuration, statusLabels, importStatusLabel, type Meeting, type MeetingFilters, type MeetingStatus } from "@/lib/meetings"
 
 interface Props {
   meetings: Meeting[]
   loading: boolean
-  departments: Department[]
   filters: MeetingFilters
   onFilters: (filters: MeetingFilters) => void
   onCreate: () => void
@@ -49,7 +48,6 @@ interface Props {
 export function MeetingList({
   meetings,
   loading: loadingAll,
-  departments,
   filters,
   onFilters,
   onCreate,
@@ -169,24 +167,6 @@ export function MeetingList({
               <kbd>/</kbd>
             )}
           </div>
-        </div>
-        <div className="filter-field">
-          <Label htmlFor="filter-department" className="sr-only">所属部门</Label>
-          <Select value={filters.departmentId} onValueChange={(departmentId) => update({ departmentId })}>
-            <SelectTrigger id="filter-department"><SelectValue /></SelectTrigger>
-            <SelectContent
-              position="popper"
-              side="bottom"
-              align="start"
-              sideOffset={4}
-              avoidCollisions={false}
-              className="meeting-filter-menu"
-            >
-              <SelectItem value="all">全部部门</SelectItem>
-              <SelectItem value="unassigned">未分类</SelectItem>
-              {departments.map((department) => <SelectItem key={department.id} value={department.id}>{department.name}</SelectItem>)}
-            </SelectContent>
-          </Select>
         </div>
         <div className="filter-field">
           <Label htmlFor="filter-status" className="sr-only">会议状态</Label>
@@ -332,7 +312,7 @@ export function MeetingList({
               </TableRow>
             ))}
             {!loading && !searchError && filtered.length === 0 && (
-              <TableRow>
+              <TableRow className="hover:bg-transparent">
                 <TableCell colSpan={5} className="whitespace-normal">
                   <div className="empty-state">
                     <div className="empty-illustration">

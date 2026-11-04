@@ -280,7 +280,6 @@ export default function App() {
             <MeetingList
               meetings={meetings}
               loading={loading}
-              departments={departments}
               filters={filters}
               onFilters={setFilters}
               onCreate={() => setCreateOpen(true)}

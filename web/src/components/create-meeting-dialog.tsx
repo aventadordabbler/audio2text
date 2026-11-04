@@ -106,7 +106,14 @@ export function CreateMeetingDialog({
                 <Label htmlFor="source-input">创建方式</Label>
                 <Select value={source} onValueChange={setSource} disabled={submitting}>
                   <SelectTrigger id="source-input" className="w-full"><SelectValue /></SelectTrigger>
-                  <SelectContent>
+                  <SelectContent
+                    position="popper"
+                    side="bottom"
+                    align="start"
+                    sideOffset={4}
+                    avoidCollisions={false}
+                    className="meeting-filter-menu"
+                  >
                     <SelectItem value="recording">实时录音</SelectItem>
                     <SelectItem value="wav">导入音频（WAV/MP3）</SelectItem>
                   </SelectContent>
@@ -143,7 +150,14 @@ export function CreateMeetingDialog({
                   <SelectTrigger id="language-input" className="h-11 w-full">
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent
+                    position="popper"
+                    side="bottom"
+                    align="start"
+                    sideOffset={4}
+                    avoidCollisions={false}
+                    className="meeting-filter-menu"
+                  >
                     <SelectItem value="auto">
                       <Sparkles className="size-3.5 text-neutral-500" />
                       自动识别
