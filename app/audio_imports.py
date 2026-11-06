@@ -395,8 +395,8 @@ class AudioImportService:
                     job["stage"] = "diarizing"
                     stage = "diarizing"
                 if job["stage"] == "diarizing":
-                    await self.diarization.correct_import(meeting_id)
-                    if self.stage_summaries is not None:
+                    speaker_ready = await self.diarization.correct_import(meeting_id)
+                    if speaker_ready and self.stage_summaries is not None:
                         await self.stage_summaries.finish(meeting_id, job["total_samples"])
                     await _disk(self._update, meeting_id, stage="summarizing")
                     stage = "summarizing"

@@ -13,6 +13,7 @@ import {
   FileText,
   LoaderCircle,
   AudioLines,
+  AlertCircle,
   CalendarDays,
   ChevronRight,
   FolderClosed,
@@ -1726,6 +1727,7 @@ export function App() {
 
           {statusError && (
             <div className="status-alert" role="alert">
+              <AlertCircle size={16} aria-hidden="true" />
               <span>{statusLine}</span>
             </div>
           )}

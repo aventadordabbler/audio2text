@@ -484,7 +484,8 @@ async def test_chunked_multiple_audio_files_create_one_combined_meeting(tmp_path
 
 
 async def test_missing_speaker_models_preserves_transcription_and_summary(tmp_path):
-    app = build(tmp_path)
+    stage_summary = StageSummary()
+    app = build(tmp_path, stage_summary=stage_summary, stage_summary_window_seconds=10)
     app.state.diarization_service.workers[0].readiness = lambda: "缺少本地说话人模型"
     async with app.router.lifespan_context(app), httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
         await login(client)
@@ -493,6 +494,8 @@ async def test_missing_speaker_models_preserves_transcription_and_summary(tmp_pa
         assert meeting["processing"]["status"] == "unavailable"
         assert meeting["text"]
         assert (await client.get(f"/api/meetings/{meeting['id']}/minutes")).json()["status"] == "ready"
+        assert stage_summary.calls == []
+        assert (await client.get(f"/api/meetings/{meeting['id']}/stage-summaries")).json() == []
 
 
 async def test_silence_retains_audio_duration_without_hallucinating_minutes(tmp_path):

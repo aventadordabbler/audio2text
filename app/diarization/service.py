@@ -10,14 +10,16 @@ from .worker import ModelWorker, WorkerError
 from .jobs import ProcessingJobs
 from .finalize import global_timeline, label_document, SegmentCorrector
 from ..meetings import MeetingError
+from ..recordings import read_audio_summary
 
 logger = logging.getLogger(__name__)
 
 
 class DiarizationService:
-    def __init__(self, store, models, minutes, settings, events, worker_factory=None):
+    def __init__(self, store, models, minutes, settings, events, worker_factory=None, stage_summaries=None):
         self.store, self.models, self.minutes = store, models, minutes
         self.settings, self.events = settings, events
+        self.stage_summaries = stage_summaries
         self.workers = [worker_factory() if worker_factory else ModelWorker(settings)
                         for _ in range(settings.diarization_workers)]
         self.available_workers = asyncio.Queue()
@@ -111,6 +113,8 @@ class DiarizationService:
                                             expected_revision=doc["revision"])
             if event:
                 self.events.publish(meeting_id, event)
+                if self.stage_summaries:
+                    self.stage_summaries.notify_diarization(meeting_id)
                 return
 
     async def _live(self, meeting_id):
@@ -182,6 +186,7 @@ class DiarizationService:
         self.events.publish(meeting_id, {"type": "minutes", "minutes": await self.minutes.get(meeting_id)})
 
     async def _finalize(self, meeting_id):
+        completed = False
         try:
             if task := self.live.get(meeting_id):
                 await task
@@ -192,9 +197,11 @@ class DiarizationService:
                 async with asyncio.timeout(self.settings.diarization_final_timeout_seconds):
                     if error := self.workers[0].readiness():
                         raise WorkerError(error)
-                    await self._correct(meeting_id)
+                    if not await self._correct(meeting_id):
+                        raise WorkerError("未生成有效的说话人时间线，请检查音频内容或模型配置。")
             await asyncio.to_thread(self.jobs.set, meeting_id, "ready")
             await self._status(meeting_id, "ready")
+            completed = True
         except asyncio.CancelledError:
             # Keep the durable running marker: startup retries at most twice.
             raise
@@ -204,6 +211,14 @@ class DiarizationService:
             status = "unavailable" if self.workers[0].readiness() else "failed"
             await asyncio.to_thread(self.jobs.set, meeting_id, status, message)
             await self._status(meeting_id, status, message)
+        if completed and self.stage_summaries:
+            try:
+                audio = await asyncio.to_thread(read_audio_summary, self.store.directory(meeting_id))
+                if audio is not None:
+                    await self.stage_summaries.finish(meeting_id, audio.samples)
+                self.stage_summaries.notify_diarization(meeting_id)
+            except Exception:
+                logger.exception("Could not release stage summaries after diarization for %s", meeting_id)
         if not self.closed:
             await self._minutes(meeting_id)
 
@@ -218,7 +233,7 @@ class DiarizationService:
         transcript = self.store.transcript(meeting_id)
         document = await asyncio.to_thread(transcript.read)
         if not state.log.exists():
-            return
+            return False
         result = await self.request({"type": "cluster", "path": str(state.log.resolve())})
         names = await asyncio.to_thread(global_timeline, directory, result["centroids"], state)
         segments = await asyncio.to_thread(lambda: list(label_document(directory, document, state.value["processed"] / 16)))
@@ -253,6 +268,7 @@ class DiarizationService:
                 self.events.publish(meeting_id, event)
         finally:
             await corrector.close()
+        return True
 
     async def correct_import(self, meeting_id):
         """The import job owns persistence and summary scheduling for uploaded audio."""
@@ -262,14 +278,19 @@ class DiarizationService:
                 await self._status(meeting_id, "running")
                 if error := self.workers[0].readiness():
                     await self._status(meeting_id, "unavailable", error)
-                    return
+                    return False
                 async with asyncio.timeout(self.settings.diarization_final_timeout_seconds):
-                    await self._correct(meeting_id)
+                    completed = await self._correct(meeting_id)
+                if not completed:
+                    await self._status(meeting_id, "failed", "未生成有效的说话人时间线，请检查音频内容或模型配置。")
+                    return False
             await self._status(meeting_id, "ready")
+            return True
         except Exception as exc:
             logger.exception("Imported audio speaker correction failed for %s", meeting_id)
             await self._status(meeting_id, "failed", str(exc) if isinstance(exc, WorkerError)
                                else "说话人校正未完成，已保留转写，可重试。")
+            return False
 
     async def close(self):
         self.closed = True

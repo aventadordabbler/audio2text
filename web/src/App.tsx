@@ -265,7 +265,7 @@ export default function App() {
               <Alert
                 variant="destructive"
                 id="error-message"
-                className="items-center border-neutral-200 bg-neutral-50"
+                className="items-start border-neutral-200 bg-neutral-50"
               >
                 <AlertCircle />
                 <AlertDescription className="pr-7">{visibleError}</AlertDescription>

@@ -205,11 +205,18 @@ class StageSummaryStore:
                 (row["meeting_id"], row["start_sample"], row["end_sample"])).fetchone()
         return self._public(result) if result else None
 
-    def claim(self) -> dict[str, Any] | None:
+    def claim(self, excluded_meetings: set[str] | None = None) -> dict[str, Any] | None:
         with self._connection() as db, db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute("""SELECT * FROM stage_summaries WHERE status = 'pending'
-                ORDER BY updated_at, meeting_id, start_sample LIMIT 1""").fetchone()
+            excluded_meetings = excluded_meetings or set()
+            query = "SELECT * FROM stage_summaries WHERE status = 'pending'"
+            values: list[str] = []
+            if excluded_meetings:
+                placeholders = ", ".join("?" for _ in excluded_meetings)
+                query += f" AND meeting_id NOT IN ({placeholders})"
+                values.extend(excluded_meetings)
+            query += " ORDER BY updated_at, meeting_id, start_sample LIMIT 1"
+            row = db.execute(query, values).fetchone()
             if row is None:
                 return None
             db.execute("""UPDATE stage_summaries SET status = 'generating', attempts = attempts + 1,
@@ -219,6 +226,15 @@ class StageSummaryStore:
             updated["status"] = "generating"
             updated["attempts"] += 1
             return updated
+
+    def defer(self, row: dict[str, Any]) -> None:
+        with self._connection() as db, db:
+            db.execute(
+                """UPDATE stage_summaries SET status = 'pending', attempts = MAX(0, attempts - 1),
+                error = '', updated_at = ?
+                WHERE meeting_id = ? AND start_sample = ? AND end_sample = ?""",
+                (_timestamp(), row["meeting_id"], row["start_sample"], row["end_sample"]),
+            )
 
     def save(self, row: dict[str, Any], text: str, source_revision: int) -> None:
         with self._connection() as db, db:
@@ -284,6 +300,7 @@ class StageSummaryService:
         self.worker: asyncio.Task | None = None
         self.reconciler: asyncio.Task | None = None
         self.listeners: dict[str, dict[str, asyncio.Queue]] = {}
+        self.blocked_meetings: set[str] = set()
 
     async def start(self) -> None:
         await asyncio.to_thread(self.store.recover)
@@ -335,10 +352,16 @@ class StageSummaryService:
             logger.exception("Stage summary startup reconciliation failed")
 
     def offer(self, meeting_id: str, watermark_samples: int) -> None:
+        self.blocked_meetings.discard(meeting_id)
         self._notify(meeting_id, watermark_samples)
+
+    def notify_diarization(self, meeting_id: str) -> None:
+        self.blocked_meetings.discard(meeting_id)
+        self.wake.set()
 
     async def finish(self, meeting_id: str, total_samples: int) -> None:
         """Persist an exact pause/end boundary without waiting for generation."""
+        self.blocked_meetings.discard(meeting_id)
         try:
             await asyncio.to_thread(
                 self.store.plan,
@@ -399,6 +422,7 @@ class StageSummaryService:
     def deleted(self, meeting_id: str) -> None:
         self.notifications.pop(meeting_id, None)
         self.boundaries.pop(meeting_id, None)
+        self.blocked_meetings.discard(meeting_id)
         self._publish(meeting_id, {"type": "deleted"})
 
     def _publish(self, meeting_id: str, event: dict[str, Any]) -> None:
@@ -444,9 +468,13 @@ class StageSummaryService:
                         self.settings.stage_summary_window_seconds * SAMPLE_RATE,
                         False,
                     )
-                while row := await asyncio.to_thread(self.store.claim):
+                while row := await asyncio.to_thread(self.store.claim, self.blocked_meetings):
                     await self._publish_row(row)
-                    await self._generate(row)
+                    ready = await self._generate(row)
+                    if not ready:
+                        self.blocked_meetings.add(row["meeting_id"])
+                        await self._publish_row(row)
+                        break
                 if self.notifications:
                     self.wake.set()
             except asyncio.CancelledError:
@@ -465,12 +493,27 @@ class StageSummaryService:
                 await asyncio.sleep(1)
                 self.wake.set()
 
-    async def _generate(self, row: dict[str, Any]) -> None:
+    @staticmethod
+    def _speakers_ready(segments: list[dict[str, Any]]) -> bool:
+        resolved = {"assigned", "multiple", "overlap"}
+        for segment in segments:
+            if segment.get("speaker_status") not in resolved or not segment.get("speaker_ids"):
+                return False
+            if any(
+                turn.get("unknown")
+                or not turn.get("speaker_ids")
+                or any(not speaker_id for speaker_id in turn["speaker_ids"])
+                for turn in segment.get("speaker_turns", [])
+            ):
+                return False
+        return True
+
+    async def _generate(self, row: dict[str, Any]) -> bool:
         generator = self.generator
         try:
             meeting = await asyncio.to_thread(self.meetings.get, row["meeting_id"])
             if meeting is None:
-                return
+                return True
             document = await asyncio.to_thread(self.meetings.transcript(row["meeting_id"]).read)
             start_ms = row["start_sample"] * 1000 / SAMPLE_RATE
             end_ms = row["end_sample"] * 1000 / SAMPLE_RATE
@@ -479,6 +522,9 @@ class StageSummaryService:
                 for segment in document["segments"]
                 if segment["text"].strip() and start_ms <= segment.get("start_ms", 0) < end_ms
             ]
+            if not self._speakers_ready(segments):
+                await asyncio.to_thread(self.store.defer, row)
+                return False
             text = plain_text({**document, "segments": segments}, labels=True)
             if not text:
                 await asyncio.to_thread(
@@ -488,7 +534,7 @@ class StageSummaryService:
                     document.get("content_revision", 0),
                 )
                 await self._publish_row(row)
-                return
+                return True
             if generator is None:
                 if self.models is None:
                     raise MeetingError("尚未配置大语言模型，请在模型配置中添加。", 503)
@@ -527,6 +573,7 @@ class StageSummaryService:
         finally:
             if generator is not None and generator is not self.generator:
                 await generator.close()
+        return True
 
     async def close(self) -> None:
         if self.reconciler:

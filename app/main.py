@@ -151,7 +151,10 @@ def create_app(
     events = MeetingEvents()
     minutes = MinutesService(store, models, app_settings, minutes_generator, events=events)
     stage_summaries = StageSummaryService(store, models, app_settings, stage_summary_generator)
-    diarization = DiarizationService(store, models, minutes, app_settings, events, diarization_worker_factory)
+    diarization = DiarizationService(
+        store, models, minutes, app_settings, events, diarization_worker_factory,
+        stage_summaries=stage_summaries,
+    )
     audio_imports = AudioImportService(
         store, models, app_settings, diarization, minutes, import_decoder_factory,
         stage_summaries=stage_summaries,
