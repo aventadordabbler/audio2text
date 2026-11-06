@@ -3,7 +3,6 @@ import {
   ArrowRight,
   AudioLines,
   CalendarDays,
-  Check,
   Clock3,
   Download,
   FileText,
@@ -390,15 +389,6 @@ export function MeetingList({
             )}
           </TableBody>
         </Table>
-        <div className="table-footer">
-          <span>
-            {loading ? "正在读取会议…" : searchError ? "查询未完成" : filteredEmpty ? `找到 ${filtered.length} 场相关会议` : `共 ${filtered.length} 场会议`}
-          </span>
-          <span>
-            <Check className="size-3.5" />
-            会议内容自动保存
-          </span>
-        </div>
       </Card>
     </section>
   )

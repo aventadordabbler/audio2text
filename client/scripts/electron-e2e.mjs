@@ -279,7 +279,7 @@ try {
     (await api.minutes(meeting.id)).updated_at,
     minutesBefore.updated_at,
   );
-  await page.getByRole("tab", { name: "会议总结", exact: true }).click();
+  await page.getByRole("tab", { name: "会议纪要", exact: true }).click();
   await page.getByRole("heading", { name: "核心结论", exact: true }).waitFor();
   assert.equal(await page.locator(".minutes-document table").count(), 1);
   await screenshot("electron-main.png");
@@ -502,12 +502,12 @@ try {
     "会议服务同步",
     "转写与总结均由服务端保存",
     "从讨论到行动",
-    "实时转写保留完整记录，会议总结帮你梳理重点与下一步。",
-    "管理模型设置",
+    "实时转写保留完整记录，会议纪要帮你梳理重点与下一步。",
+    "模型设置",
   ]) {
     assert.equal(await page.getByText(removedText, { exact: true }).count(), 0);
   }
-  await page.getByRole("tab", { name: "会议总结", exact: true }).click();
+  await page.getByRole("tab", { name: "会议纪要", exact: true }).click();
   await page.getByRole("heading", { name: "核心结论", exact: true }).waitFor();
   const [recorded] = await api.list({ title: "桌面 PCM 录音验证" });
   assert.equal(recorded.department_name, "研发中心");
@@ -524,7 +524,7 @@ try {
       });
     });
   }, wavPath);
-  await page.getByRole("button", { name: "导出录音（WAV）", exact: true }).click();
+  await page.getByRole("button", { name: "下载录音", exact: true }).click();
   await until(() => electronApp.evaluate(() => Boolean(globalThis.recordingDownload)));
   assert.deepEqual(await electronApp.evaluate(() => globalThis.recordingDownload), {
     state: "completed", filename: "桌面 PCM 录音验证-录音.wav",
@@ -535,86 +535,13 @@ try {
   assert.equal(bytes.toString("ascii", 8, 12), "WAVE");
   assert.equal(bytes.length, bytes.readUInt32LE(4) + 8);
 
-  await page
-    .locator(".sidebar-bottom")
-    .getByRole("button", { name: "模型设置", exact: true })
-    .click();
-  assert.equal(
-    await page.getByLabel("接口地址", { exact: true }).inputValue(),
-    backend.baseUrl,
-  );
-  await page.evaluate(() => {
-    const originalGetUserMedia = navigator.mediaDevices.getUserMedia.bind(
-      navigator.mediaDevices,
-    );
-    const originalResume = AudioContext.prototype.resume;
-    navigator.mediaDevices.getUserMedia = async (...args) => {
-      const stream = await originalGetUserMedia(...args);
-      window.__microphoneTestTracks = stream.getTracks();
-      return stream;
-    };
-    AudioContext.prototype.resume = function delayedResume() {
-      return new Promise((resolve) => {
-        window.__resumeMicrophoneTest = resolve;
-      });
-    };
-    window.__restoreMicrophoneTest = () => {
-      navigator.mediaDevices.getUserMedia = originalGetUserMedia;
-      AudioContext.prototype.resume = originalResume;
-    };
-  });
-  await page.getByText("麦克风输入测试", { exact: true }).click();
-  await page.waitForFunction(() => Boolean(window.__resumeMicrophoneTest));
-  await page.getByText("麦克风输入测试", { exact: true }).click();
-  await page.waitForFunction(() =>
-    window.__microphoneTestTracks?.every((track) => track.readyState === "ended"),
-  );
-  await page.evaluate(() => window.__resumeMicrophoneTest());
-  await page.evaluate(() => window.__restoreMicrophoneTest());
-  await page.getByText("麦克风输入测试", { exact: true }).click();
-  const microphoneLevel = page.getByRole("meter", {
-    name: "麦克风输入音量",
-  });
-  await microphoneLevel.waitFor();
-  await page.waitForFunction(() => {
-    const meter = document.querySelector(
-      '[role="meter"][aria-label="麦克风输入音量"]',
-    );
-    return Number(meter?.getAttribute("aria-valuenow")) > 0;
-  });
-  assert.equal(
-    await page.getByText(/getUserMedia:|AudioContext:|WebSocket:/).count(),
-    0,
-  );
-  await page.getByText("麦克风输入测试", { exact: true }).click();
-  await select("识别语言", "English");
-  await page.getByRole("button", { name: "保存配置", exact: true }).click();
-  await page.waitForFunction(
-    async () =>
-      (await window.meetingDesktop.getBootstrap()).config.stt.language ===
-      "English",
-  );
-  await page.getByRole("tab", { name: "大语言模型", exact: true }).click();
-  await page
-    .getByLabel("接口地址", { exact: true })
-    .fill("https://example.invalid/v1");
-  await page.getByLabel("模型名称", { exact: true }).fill("test-server-model");
-  await page.getByLabel("接口密钥", { exact: true }).fill("test-secret");
-  await page.getByRole("button", { name: "保存配置", exact: true }).click();
-  await page.getByText("模型配置已保存到服务端", { exact: true }).waitFor();
-  const llm = (await api.modelConfigs()).find((item) => item.kind === "llm");
-  assert.equal(llm.model, "test-server-model");
-  assert.equal(llm.api_key_configured, true);
-  assert.ok(!(await fs.readFile(storePath, "utf8")).includes("test-secret"));
-  await screenshot("electron-settings.png");
-
   // Reload drops memory; all displayed records must be reloaded from the server.
   await page.reload({ waitUntil: "domcontentloaded" });
   await page
     .locator("tbody")
     .getByRole("button", { name: /^桌面 PCM 录音验证/ })
     .click();
-  await page.getByRole("tab", { name: "会议总结", exact: true }).click();
+  await page.getByRole("tab", { name: "会议纪要", exact: true }).click();
   await page.getByRole("heading", { name: "核心结论", exact: true }).waitFor();
   await go("会议管理");
   await page
@@ -626,10 +553,15 @@ try {
     .locator("tbody")
     .getByRole("button", { name: /^界面验证会议/ })
     .click();
-  await page.getByRole("tab", { name: "会议总结", exact: true }).click();
+  await page.getByRole("tab", { name: "会议纪要", exact: true }).click();
   await page.getByRole("heading", { name: "核心结论", exact: true }).waitFor();
   const minutesReady = electronApp.waitForEvent("window");
-  await page.getByRole("button", { name: "独立窗口", exact: true }).click();
+  await page.evaluate(() =>
+    window.meetingDesktop.openMinutesWindow({
+      title: "界面验证会议",
+      minutes: "## 核心结论\n\n总结窗口已更新。",
+    }),
+  );
   const minutesPage = await minutesReady;
   await minutesPage
     .getByRole("heading", { name: "核心结论", exact: true })

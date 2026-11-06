@@ -32,6 +32,9 @@ def _verify_password(password: str, encoded: str) -> bool:
 class AuthStore:
     def __init__(self, path):
         self.path = path
+        with self._connection() as db:
+            if "must_change_password" not in {row["name"] for row in db.execute("PRAGMA table_info(users)")}:
+                db.execute("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0")
 
     def _connection(self):
         db = sqlite3.connect(self.path, timeout=5)
@@ -47,7 +50,29 @@ class AuthStore:
             "employee_id": row["employee_id"],
             "department_id": row["department_id"],
             "department_name": row["department_name"],
+            "is_admin": row["account"].casefold() == "admin",
+            "must_change_password": bool(row["must_change_password"]),
         }
+
+    def ensure_admin(self) -> None:
+        db = self._connection()
+        try:
+            with db:
+                db.execute("BEGIN IMMEDIATE")
+                if db.execute("SELECT 1 FROM users WHERE account = ? COLLATE NOCASE", ("admin",)).fetchone():
+                    return
+                department = db.execute("SELECT id FROM departments WHERE name = ? COLLATE NOCASE", ("管理员",)).fetchone()
+                department_id = department["id"] if department else uuid4().hex
+                if department is None:
+                    now = _timestamp()
+                    db.execute("INSERT INTO departments (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+                               (department_id, "管理员", now, now))
+                db.execute("""INSERT INTO users
+                    (id, account, password_hash, department_id, employee_id, created_at, must_change_password)
+                    VALUES (?, ?, ?, ?, ?, ?, 1)""",
+                           (uuid4().hex, "admin", _password_digest(""), department_id, "admin", _timestamp()))
+        finally:
+            db.close()
 
     def register(self, account: str, password: str, department: str, employee_id: str) -> dict[str, Any]:
         account, department, employee_id = account.strip(), department.strip(), employee_id.strip()
@@ -99,6 +124,22 @@ class AuthStore:
                 db.execute("INSERT INTO sessions (token_hash, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)",
                            (token_hash, row["id"], expires.isoformat(), _timestamp()))
             return token, expires.isoformat(), self._user(row)
+        finally:
+            db.close()
+
+    def change_password(self, user_id: str, password: str) -> dict[str, Any]:
+        if len(password) < 8 or len(password) > 128:
+            raise MeetingError("密码须为 8–128 个字符", 422)
+        db = self._connection()
+        try:
+            with db:
+                db.execute("UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?",
+                           (_password_digest(password), user_id))
+                row = db.execute("""SELECT users.*, departments.name AS department_name FROM users
+                    JOIN departments ON departments.id = users.department_id WHERE users.id = ?""", (user_id,)).fetchone()
+                if row is None:
+                    raise MeetingError("账户不存在", 401)
+                return self._user(row)
         finally:
             db.close()
 

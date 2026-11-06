@@ -47,7 +47,7 @@ services:
       - --max-model-len
       - ${VLLM_MAX_MODEL_LEN:-16384}
     ports:
-      - "${VLLM_BIND_ADDRESS:-0.0.0.0}:${VLLM_PORT:-8001}:8001"
+      - "${VLLM_BIND_ADDRESS:-0.0.0.0}:${VLLM_PORT:-8010}:8001"
     volumes:
       - ./models:/models:ro
       - hf-cache:/root/.cache/huggingface

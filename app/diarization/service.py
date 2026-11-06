@@ -40,6 +40,9 @@ class DiarizationService:
         finally:
             self.available_workers.put_nowait(worker)
 
+    async def embed(self, directory, samples):
+        return await self.request({"type": "embed", "directory": str(directory.resolve()), "samples": samples})
+
     def notify(self, meeting_id):
         if self.closed or meeting_id in self.finalizers:
             return
@@ -117,7 +120,7 @@ class DiarizationService:
                 await self._status(meeting_id, "unavailable", error)
                 return
             directory = self.store.directory(meeting_id)
-            state = await asyncio.to_thread(SpeakerState, directory)
+            state = await asyncio.to_thread(SpeakerState, directory, self.store.list_voiceprints())
             await self._status(meeting_id, "pending")
             while meeting_id in self.dirty:
                 self.dirty.discard(meeting_id)
@@ -206,7 +209,8 @@ class DiarizationService:
 
     async def _correct(self, meeting_id):
         directory = self.store.directory(meeting_id)
-        state = await asyncio.to_thread(SpeakerState, directory)
+        meeting = await asyncio.to_thread(self.store.get, meeting_id)
+        state = await asyncio.to_thread(SpeakerState, directory, self.store.list_voiceprints())
         while payload := await asyncio.to_thread(self._window, directory, state.value["processed"], True):
             result = await self.request(payload)
             await asyncio.to_thread(state.accept, result)
@@ -218,7 +222,6 @@ class DiarizationService:
         result = await self.request({"type": "cluster", "path": str(state.log.resolve())})
         names = await asyncio.to_thread(global_timeline, directory, result["centroids"], state)
         segments = await asyncio.to_thread(lambda: list(label_document(directory, document, state.value["processed"] / 16)))
-        meeting = await asyncio.to_thread(self.store.get, meeting_id)
         corrector = SegmentCorrector(directory, self.models, self.settings, meeting["language"])
         changed, removed, number = [], [], document["next_segment_id"]
         original = {s["segment_id"]: s for s in document["segments"]}

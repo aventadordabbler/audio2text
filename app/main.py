@@ -18,7 +18,7 @@ from .realtime import meeting_socket
 from .auth import AuthStore
 from .config import Settings, get_settings
 from .meetings import MeetingError, MeetingStore
-from .minutes import MinutesGenerator, MinutesService
+from .minutes import MinutesGenerationError, MinutesGenerator, MinutesService
 from .model_configs import ModelConfigInput, ModelConfigStore, ModelKind
 from .model_probe import ModelProbeResult, probe_model
 from .meeting_events import MeetingEvents
@@ -31,6 +31,9 @@ from .recordings import (
     read_audio_summary,
 )
 from .stage_summaries import StageSummaryGenerator, StageSummaryService, stage_summary_socket
+from .voiceprints import VoiceprintService
+from .transcripts import plain_text
+from .docx_export import build_docx
 
 logger = logging.getLogger(__name__)
 WEB_DIR = Path(__file__).resolve().parent.parent / "web" / "dist"
@@ -40,6 +43,7 @@ class MeetingCreate(BaseModel):
     title: str = Field(min_length=1, max_length=80)
     language: str | None = Field(default=None, max_length=40)
     department_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
+    minutes_format_id: str | None = Field(default=None, pattern=r"^(?:[a-f0-9]{32}|default)$")
 
     @field_validator("title")
     @classmethod
@@ -60,6 +64,30 @@ class DepartmentInput(BaseModel):
         return value.strip()
 
 
+class MinutesFormatInput(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    prompt: str = Field(min_length=1, max_length=20000)
+
+    @field_validator("name", "prompt")
+    @classmethod
+    def nonempty_value(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("请输入有效内容")
+        return value.strip()
+
+
+class MinutesFormatGenerateInput(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    requirement: str = Field(min_length=1, max_length=6000)
+
+    @field_validator("name", "requirement")
+    @classmethod
+    def nonempty_generation_value(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("请输入有效内容")
+        return value.strip()
+
+
 class RegisterInput(BaseModel):
     account: str = Field(min_length=1, max_length=60)
     password: str = Field(min_length=8, max_length=128)
@@ -69,7 +97,11 @@ class RegisterInput(BaseModel):
 
 class LoginInput(BaseModel):
     account: str = Field(min_length=1, max_length=60)
-    password: str = Field(min_length=1, max_length=128)
+    password: str = Field(min_length=0, max_length=128)
+
+
+class PasswordChangeInput(BaseModel):
+    password: str = Field(min_length=8, max_length=128)
 
 
 class ChunkedImportFile(BaseModel):
@@ -87,6 +119,7 @@ class ChunkedImportStart(BaseModel):
     file_size: int | None = Field(default=None, gt=0)
     total_chunks: int | None = Field(default=None, gt=0)
     chunk_size: int = Field(default=DEFAULT_CHUNK_SIZE, ge=1024 * 1024, le=32 * 1024 * 1024)
+    minutes_format_id: str | None = Field(default=None, pattern=r"^(?:[a-f0-9]{32}|default)$")
 
     @field_validator("title")
     @classmethod
@@ -113,12 +146,17 @@ def create_app(
     app_settings = settings or get_settings()
     store = MeetingStore(app_settings.database_path or app_settings.data_dir / "meetings.sqlite3", app_settings.data_dir)
     auth = AuthStore(store.path)
+    auth.ensure_admin()
     models = ModelConfigStore(store.path)
     events = MeetingEvents()
     minutes = MinutesService(store, models, app_settings, minutes_generator, events=events)
     stage_summaries = StageSummaryService(store, models, app_settings, stage_summary_generator)
     diarization = DiarizationService(store, models, minutes, app_settings, events, diarization_worker_factory)
-    audio_imports = AudioImportService(store, models, app_settings, diarization, minutes, import_decoder_factory)
+    audio_imports = AudioImportService(
+        store, models, app_settings, diarization, minutes, import_decoder_factory,
+        stage_summaries=stage_summaries,
+    )
+    voiceprints = VoiceprintService(store, diarization, app_settings)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -144,6 +182,7 @@ def create_app(
     app.state.diarization_service = diarization
     app.state.audio_import_service = audio_imports
     app.state.auth_store = auth
+    app.state.voiceprint_service = voiceprints
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
 
     @app.middleware("http")
@@ -184,6 +223,12 @@ def create_app(
         token, expires_at, user = auth.login(payload.account, payload.password)
         return {"token": token, "expires_at": expires_at, "user": user}
 
+    @app.post("/api/auth/password")
+    def change_password(payload: PasswordChangeInput, request: Request) -> dict[str, Any]:
+        if not request.state.user.get("must_change_password"):
+            raise HTTPException(403, "当前账户不需要首次设置密码")
+        return {"user": auth.change_password(request.state.user["id"], payload.password)}
+
     @app.get("/api/auth/me")
     def current_user(request: Request) -> dict[str, Any]:
         return request.state.user
@@ -197,6 +242,13 @@ def create_app(
         authorization = request.headers.get("Authorization", "")
         auth.logout(authorization.removeprefix("Bearer ").strip() if authorization.startswith("Bearer ") else None)
         return Response(status_code=204)
+
+    def require_admin(request: Request) -> None:
+        if not request.state.user.get("is_admin"):
+            raise HTTPException(403, "只有管理员可以维护此配置")
+
+    def meeting_user_id(request: Request) -> str | None:
+        return None if request.state.user.get("is_admin") else request.state.user["id"]
 
     @app.get("/api/model-configs")
     def list_model_configs(request: Request) -> list[dict[str, Any]]:
@@ -224,12 +276,12 @@ def create_app(
             raise HTTPException(422, "开始时间必须早于结束时间")
         return store.list(title=title, department_id=department_id, status=status,
                           created_from=created_from, created_before=created_before,
-                          user_id=request.state.user["id"])
+                          user_id=meeting_user_id(request))
 
     @app.post("/api/meetings", status_code=201)
     def create_meeting(payload: MeetingCreate, request: Request) -> dict[str, Any]:
         return store.create(payload.title, payload.language, payload.department_id,
-                            user_id=request.state.user["id"])
+                            payload.minutes_format_id, user_id=request.state.user["id"])
 
     @app.post("/api/meetings/import", status_code=202)
     async def import_meeting(
@@ -238,11 +290,13 @@ def create_app(
         title: str = Form(..., min_length=1, max_length=80),
         language: str | None = Form(default=None, max_length=40),
         department_id: str | None = Form(default=None, pattern=r"^[a-f0-9]{32}$"),
+        minutes_format_id: str | None = Form(default=None, pattern=r"^(?:[a-f0-9]{32}|default)$"),
     ) -> dict[str, Any]:
         try:
             if not title.strip():
                 raise MeetingError("请输入会议名称", 422)
-            return await audio_imports.create(file, title.strip(), language, department_id, request.state.user["id"])
+            return await audio_imports.create(file, title.strip(), language, department_id,
+                                              request.state.user["id"], minutes_format_id)
         finally:
             for item in file:
                 await item.close()
@@ -256,7 +310,7 @@ def create_app(
             "chunk_size": payload.chunk_size,
         }]
         return await audio_imports.start_chunked(
-            payload.title, payload.language, files, request.state.user["id"],
+            payload.title, payload.language, files, request.state.user["id"], payload.minutes_format_id,
         )
 
     @app.put("/api/meetings/import/chunked/{upload_id}/{index}")
@@ -285,24 +339,57 @@ def create_app(
 
     @app.get("/api/departments")
     def list_departments(request: Request) -> list[dict[str, Any]]:
+        require_admin(request)
         return store.list_departments()
 
     @app.post("/api/departments", status_code=201)
     def create_department(payload: DepartmentInput, request: Request) -> dict[str, Any]:
+        require_admin(request)
         return store.save_department(payload.name)
 
     @app.put("/api/departments/{department_id}")
     def update_department(department_id: str, payload: DepartmentInput, request: Request) -> dict[str, Any]:
+        require_admin(request)
         return store.save_department(payload.name, department_id)
 
     @app.delete("/api/departments/{department_id}", status_code=204)
     def delete_department(department_id: str, request: Request) -> Response:
+        require_admin(request)
         store.delete_department(department_id)
+        return Response(status_code=204)
+
+    @app.get("/api/minutes-formats")
+    def list_minutes_formats(request: Request) -> list[dict[str, Any]]:
+        return store.list_minutes_formats()
+
+    @app.post("/api/minutes-formats/generate")
+    async def generate_minutes_format(payload: MinutesFormatGenerateInput, request: Request) -> dict[str, str]:
+        require_admin(request)
+        try:
+            prompt = await minutes.generate_format_prompt(payload.name, payload.requirement)
+        except MinutesGenerationError as exc:
+            raise MeetingError(str(exc), 503) from exc
+        return {"prompt": prompt}
+
+    @app.post("/api/minutes-formats", status_code=201)
+    def create_minutes_format(payload: MinutesFormatInput, request: Request) -> dict[str, Any]:
+        require_admin(request)
+        return store.save_minutes_format(payload.name, payload.prompt)
+
+    @app.put("/api/minutes-formats/{format_id}")
+    def update_minutes_format(format_id: str, payload: MinutesFormatInput, request: Request) -> dict[str, Any]:
+        require_admin(request)
+        return store.save_minutes_format(payload.name, payload.prompt, format_id)
+
+    @app.delete("/api/minutes-formats/{format_id}", status_code=204)
+    def delete_minutes_format(format_id: str, request: Request) -> Response:
+        require_admin(request)
+        store.delete_minutes_format(format_id)
         return Response(status_code=204)
 
     @app.get("/api/meetings/{meeting_id}")
     def get_meeting(meeting_id: str, request: Request) -> dict[str, Any]:
-        meeting = store.get(meeting_id, request.state.user["id"])
+        meeting = store.get(meeting_id, meeting_user_id(request))
         if meeting is None:
             raise HTTPException(404, "会议不存在")
         return meeting
@@ -323,7 +410,7 @@ def create_app(
         if meeting.get("import_job") and meeting["import_job"]["status"] != "ready":
             raise MeetingError("请先完成导入处理，失败时请重试导入任务")
         await diarization.finish(meeting_id, retry=True)
-        return await asyncio.to_thread(store.get, meeting_id, request.state.user["id"])
+        return await asyncio.to_thread(store.get, meeting_id, meeting_user_id(request))
 
     @app.delete("/api/meetings/{meeting_id}", status_code=204)
     async def delete_meeting(meeting_id: str, request: Request):
@@ -346,6 +433,30 @@ def create_app(
         error = diarization.workers[0].readiness()
         return {"available": error is None, "error": error or ""}
 
+    @app.get("/api/voiceprints")
+    def list_voiceprints(request: Request):
+        if not request.state.user.get("is_admin"):
+            raise HTTPException(403, "只有管理员可以管理声纹")
+        return voiceprints.list()
+
+    @app.post("/api/voiceprints", status_code=201)
+    async def create_voiceprint(request: Request, file: UploadFile = File(...), name: str = Form(...),
+                                department_id: str = Form(...),
+                                source: Literal["recording", "import"] = Form("import")):
+        if not request.state.user.get("is_admin"):
+            raise HTTPException(403, "只有管理员可以管理声纹")
+        try:
+            return await voiceprints.create(file, name, department_id, request.state.user["id"], source)
+        finally:
+            await file.close()
+
+    @app.delete("/api/voiceprints/{voiceprint_id}", status_code=204)
+    def delete_voiceprint(voiceprint_id: str, request: Request):
+        if not request.state.user.get("is_admin"):
+            raise HTTPException(403, "只有管理员可以管理声纹")
+        voiceprints.delete(voiceprint_id)
+        return Response(status_code=204)
+
     @app.get("/api/meetings/{meeting_id}/minutes")
     async def get_minutes(meeting_id: str, request: Request) -> dict[str, Any]:
         get_meeting(meeting_id, request)
@@ -367,22 +478,78 @@ def create_app(
         get_meeting(meeting_id, request)
         return await minutes.start(meeting_id)
 
+    @app.head("/api/meetings/{meeting_id}/minutes/download")
     @app.get("/api/meetings/{meeting_id}/minutes/download")
-    def download_minutes(meeting_id: str, request: Request) -> Response:
+    def download_minutes(meeting_id: str, request: Request,
+                         format: Literal["markdown", "docx"] = Query("markdown")) -> Response:
         meeting = get_meeting(meeting_id, request)
         result = store.get_minutes(meeting_id)
         if not result["text"]:
             raise HTTPException(404, "会议纪要尚未生成")
+        if format == "docx":
+            content = build_docx(meeting["title"], result["text"])
+            filename = meeting["title"] + "-会议纪要.docx"
+            fallback_filename = "meeting-minutes.docx"
+            media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        else:
+            content = (result["text"] + "\n").encode("utf-8")
+            filename = meeting["title"] + "-会议纪要.md"
+            fallback_filename = "meeting-minutes.md"
+            media_type = "text/markdown; charset=utf-8"
         return Response(
-            result["text"] + "\n", media_type="text/markdown; charset=utf-8",
-            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(meeting['title'] + '-会议纪要.md', safe='')}"},
+            content if request.method != "HEAD" else None,
+            media_type=media_type,
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="{fallback_filename}"; '
+                    f"filename*=UTF-8''{quote(filename, safe='')}"
+                ),
+                "Content-Length": str(len(content)),
+                "Cache-Control": "no-store",
+            },
+        )
+
+    @app.head("/api/meetings/{meeting_id}/stage-summaries/download")
+    @app.get("/api/meetings/{meeting_id}/stage-summaries/download")
+    async def download_stage_summaries(meeting_id: str, request: Request) -> Response:
+        meeting = get_meeting(meeting_id, request)
+        summaries = [
+            summary for summary in await stage_summaries.list(meeting_id)
+            if summary["status"] == "ready" and summary["text"].strip()
+        ]
+        if not summaries:
+            raise HTTPException(404, "阶段总结尚未生成")
+
+        def stage_time(seconds: float) -> str:
+            total = max(0, int(seconds))
+            return f"{total // 60:02d}:{total % 60:02d}"
+
+        sections = [
+            f"## {stage_time(summary['start_seconds'])}–{stage_time(summary['end_seconds'])}\n\n{summary['text'].strip()}"
+            for summary in summaries
+        ]
+        content = f"# {meeting['title']} - 阶段总结\n\n" + "\n\n".join(sections) + "\n"
+        encoded = content.encode("utf-8")
+        return Response(
+            encoded if request.method != "HEAD" else None,
+            media_type="text/markdown; charset=utf-8",
+            headers={
+                "Content-Disposition": f"attachment; filename*=UTF-8''{quote(meeting['title'] + '-阶段总结.md', safe='')}",
+                "Content-Length": str(len(encoded)),
+                "Cache-Control": "no-store",
+            },
         )
 
     @app.head("/api/meetings/{meeting_id}/download")
     @app.get("/api/meetings/{meeting_id}/download")
     def download_meeting(meeting_id: str, request: Request) -> Response:
         meeting = get_meeting(meeting_id, request)
-        content = (meeting["text"] + "\n").encode("utf-8")
+        transcript = (
+            plain_text(store.transcript(meeting_id).read())
+            if meeting["text_path"].startswith("meetings/")
+            else meeting["text"]
+        )
+        content = (transcript + "\n").encode("utf-8")
         return Response(
             content if request.method != "HEAD" else None,
             media_type="text/plain; charset=utf-8",
@@ -424,7 +591,8 @@ def create_app(
             return
         await meeting_socket(websocket, meeting_id, store, models, minutes, stream_factory,
                              settings=app_settings, diarization=diarization, events=events,
-                             stage_summaries=stage_summaries, user_id=user["id"])
+                             stage_summaries=stage_summaries,
+                             user_id=None if user.get("is_admin") else user["id"])
 
     @app.websocket("/ws/meetings/{meeting_id}/stage-summaries")
     async def summarize_meeting_stages(websocket: WebSocket, meeting_id: str) -> None:
@@ -432,7 +600,8 @@ def create_app(
         if user is None:
             await websocket.close(code=1008, reason="请先登录")
             return
-        await stage_summary_socket(websocket, meeting_id, store, stage_summaries, user_id=user["id"])
+        await stage_summary_socket(websocket, meeting_id, store, stage_summaries,
+                                   user_id=None if user.get("is_admin") else user["id"])
 
     # Mounts also match WebSockets, but StaticFiles only handles HTTP scopes.
     # Keep this fallback after the meeting socket and before the static mount.

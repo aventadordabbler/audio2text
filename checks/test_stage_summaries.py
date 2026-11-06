@@ -13,6 +13,8 @@ from app.stage_summaries import STAGE_PROMPT, StageSummaryService
 def test_stage_prompt_requests_a_plain_conversation_summary():
     assert "总结概括" in STAGE_PROMPT
     assert "固定栏目" in STAGE_PROMPT
+    for fact in ("讲话人", "数字", "日期", "人员", "责任人", "截止时间", "决策", "未解决问题"):
+        assert fact in STAGE_PROMPT
     assert "按照用户指定的方式" in SYSTEM_PROMPT
     for section in ("本阶段主题与进展", "已明确的结论或决策", "待办、风险"):
         assert section not in STAGE_PROMPT
@@ -96,8 +98,8 @@ async def test_fixed_windows_generate_in_background_and_persist(tmp_path):
         await until(all_ready)
 
         assert generator.calls == [
-            ("阶段总结会议", "第一阶段内容。", 0, 10),
-            ("阶段总结会议", "尾段内容。", 10, 12),
+            ("阶段总结会议", "[说话人待确认] 第一阶段内容。", 0, 10),
+            ("阶段总结会议", "[说话人待确认] 尾段内容。", 10, 12),
         ]
         rows = await service.list(meeting["id"])
         assert [(row["start_seconds"], row["end_seconds"]) for row in rows] == [
@@ -105,9 +107,47 @@ async def test_fixed_windows_generate_in_background_and_persist(tmp_path):
             (10, 12),
         ]
         assert [row["text"] for row in rows] == [
-            "0-10 秒：第一阶段内容。",
-            "10-12 秒：尾段内容。",
+            "0-10 秒：[说话人待确认] 第一阶段内容。",
+            "10-12 秒：[说话人待确认] 尾段内容。",
         ]
+    finally:
+        await service.close()
+
+
+async def test_stage_summary_input_preserves_speaker_association(tmp_path):
+    store = MeetingStore(tmp_path / "meetings.sqlite3")
+    meeting = store.create("说话人关联")
+    transcript = store.transcript(meeting["id"])
+    transcript.final(0, "预算为100万元。", 0, 1000, "capture")
+    transcript.final(1, "截止时间是12月31日。", 1000, 2000, "capture")
+    document = transcript.read()
+    transcript.update(
+        segments=[
+            {**document["segments"][0], "speaker_ids": ["speaker-1"], "speaker_status": "assigned"},
+            {**document["segments"][1], "speaker_ids": ["speaker-2"], "speaker_status": "assigned"},
+        ],
+        speakers={"speaker-1": {"name": "张三"}, "speaker-2": {"name": "李四"}},
+    )
+    generator = RecordingGenerator()
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path,
+        database_path=store.path,
+        stage_summary_window_seconds=10,
+    )
+    service = StageSummaryService(store, None, settings, generator)
+    await service.start()
+    try:
+        await service.finish(meeting["id"], 32000)
+
+        async def ready():
+            rows = await service.list(meeting["id"])
+            return bool(rows and rows[0]["status"] == "ready")
+
+        await until(ready)
+        assert generator.calls[0][1] == (
+            "[张三] 预算为100万元。\n\n[李四] 截止时间是12月31日。"
+        )
     finally:
         await service.close()
 
@@ -137,7 +177,7 @@ async def test_generating_window_recovers_after_service_restart(tmp_path):
             return bool(rows and rows[0]["status"] == "ready")
 
         await until(recovered)
-        assert (await second.list(meeting["id"]))[0]["text"] == "0-1 秒：重启后仍需总结。"
+        assert (await second.list(meeting["id"]))[0]["text"] == "0-1 秒：[说话人待确认] 重启后仍需总结。"
     finally:
         await second.close()
 
@@ -171,7 +211,7 @@ async def test_failed_window_can_be_retried_after_model_configuration(tmp_path):
             return bool(rows and rows[0]["status"] == "ready")
 
         await until(recovered)
-        assert (await service.list(meeting["id"]))[0]["text"] == "0-1 秒：需要恢复的内容。"
+        assert (await service.list(meeting["id"]))[0]["text"] == "0-1 秒：[说话人待确认] 需要恢复的内容。"
     finally:
         await service.close()
 

@@ -70,14 +70,14 @@ for (const frontend of ["client", "web"]) {
       await page.locator(".import-progress").getByText("导入处理失败", { exact: true }).waitFor();
       await page.getByRole("button", { name: "重试处理", exact: true }).click();
       await page.locator(".import-progress").getByText("导入处理完成", { exact: true }).waitFor();
-      await page.getByRole("tab", { name: frontend === "web" ? "会议纪要" : "会议总结", exact: true }).click();
+      await page.getByRole("tab", { name: "会议纪要", exact: true }).click();
       await page.getByRole("heading", { name: "核心结论", exact: true }).waitFor();
       const regeneration = page.waitForResponse((response) => response.url().endsWith(`/api/meetings/${meeting.id}/minutes`) && response.request().method() === "POST");
       await page.getByRole("button", { name: "重新生成", exact: true }).click();
       assert.equal((await regeneration).status(), 202);
       await page.getByRole("button", { name: "重新生成", exact: true }).waitFor();
       await page.waitForFunction(() => [...document.querySelectorAll("button")].some((button) => button.textContent.trim() === "重新生成" && !button.disabled));
-      await page.getByRole("tab", { name: "实时转写", exact: true }).click();
+      await page.getByRole("tab", { name: "转写记录", exact: true }).click();
       await page.getByText("导入音频讨论了项目进度和下一步安排。", { exact: true }).first().waitFor();
       if (frontend === "web") {
         const downloading = page.waitForEvent("download");

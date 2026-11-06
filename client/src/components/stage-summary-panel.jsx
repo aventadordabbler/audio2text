@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ArrowUpRight, FileText, LoaderCircle, RefreshCw } from "lucide-react";
+import { ArrowUpRight, Download, FileText, LoaderCircle, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { summaryExcerpt } from "@/services/stage-summary-bubbles.js";
@@ -25,6 +25,8 @@ export function StageSummaryPanel({
   retrying = false,
   onRetry,
   onJump,
+  onExport,
+  exporting = false,
 }) {
   const [expandedKeys, setExpandedKeys] = useState(() => new Set());
   const statusLabel = STATUS_LABELS[status] || "等待会议";
@@ -53,7 +55,7 @@ export function StageSummaryPanel({
           {statusLabel}
         </span>
       </header>
-      <div className="ai-insight-scroll" aria-live="polite">
+      <div className="ai-insight-scroll panel-scroll" aria-live="polite">
         {error && (
           <div className="ai-insight-error" role="alert">
             <p>{error}</p>
@@ -171,6 +173,14 @@ export function StageSummaryPanel({
           </p>
         )}
       </div>
+      {onExport && summaries.some((summary) => summary.status === "ready" && summary.text?.trim()) && (
+        <footer className="ai-insight-footer">
+          <Button variant="ghost" size="sm" className="gap-1.5 text-xs" disabled={exporting} onClick={onExport}>
+            <Download size={14} />
+            {exporting ? "正在准备…" : "导出阶段总结"}
+          </Button>
+        </footer>
+      )}
     </aside>
   );
 }

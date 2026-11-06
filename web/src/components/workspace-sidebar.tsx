@@ -1,4 +1,4 @@
-import { AudioLines, FileText, FolderClosed, Settings2 } from "lucide-react"
+import { AudioLines, Building2, ClipboardList, FileText, FolderClosed, MicVocal, Settings2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { cn } from "@/lib/utils"
@@ -6,9 +6,10 @@ import type { Meeting } from "@/lib/meetings"
 
 interface Props {
   meetings: Meeting[]
-  page: "meetings" | "departments"
+  page: "meetings" | "departments" | "voiceprints" | "minutes-formats"
   busy: boolean
-  onPage: (page: "meetings" | "departments") => void
+  isAdmin: boolean
+  onPage: (page: "meetings" | "departments" | "voiceprints" | "minutes-formats") => void
   onConfigure: () => void
   onNavigate?: () => void
 }
@@ -20,9 +21,13 @@ export function WorkspaceSidebar({
   onPage,
   onConfigure,
   onNavigate,
+  isAdmin,
 }: Props) {
   const navigation = [
     { value: "meetings" as const, label: "会议管理", icon: FolderClosed },
+    ...(isAdmin ? [{ value: "departments" as const, label: "部门管理", icon: Building2 }] : []),
+    ...(isAdmin ? [{ value: "voiceprints" as const, label: "声纹管理", icon: MicVocal }] : []),
+    ...(isAdmin ? [{ value: "minutes-formats" as const, label: "纪要格式", icon: ClipboardList }] : []),
   ]
   return (
     <div className="sidebar-content">

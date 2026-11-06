@@ -15,16 +15,19 @@ from uuid import uuid4
 
 from .recordings import read_audio_summary
 from .transcripts import TranscriptStore, plain_text
+from .minutes_formats import DEFAULT_MINUTES_FORMAT_ID, DEFAULT_MINUTES_FORMAT_NAME, DEFAULT_MINUTES_PROMPT
 
 logger = logging.getLogger(__name__)
 MEETING_ID = re.compile(r"^[0-9a-f]{32}$")
 MEETING_SELECT = """SELECT meetings.*, departments.name AS department_name,
+    minutes_formats.name AS minutes_format_name, minutes_formats.prompt AS minutes_format_prompt,
     users.account AS creator_account, users.employee_id AS creator_employee_id,
     meeting_imports.status AS import_status, meeting_imports.stage AS import_stage,
     meeting_imports.filename AS import_filename, meeting_imports.error AS import_error,
     meeting_imports.processed_samples AS import_processed_samples,
     meeting_imports.total_samples AS import_total_samples
     FROM meetings LEFT JOIN departments ON departments.id = meetings.department_id
+    LEFT JOIN minutes_formats ON minutes_formats.id = meetings.minutes_format_id
     LEFT JOIN users ON users.id = meetings.user_id
     LEFT JOIN meeting_imports ON meeting_imports.meeting_id = meetings.id"""
 
@@ -65,6 +68,17 @@ class MeetingStore:
                 )
             """)
             db.execute("""
+                CREATE TABLE IF NOT EXISTS minutes_formats (
+                    id TEXT PRIMARY KEY, name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                    prompt TEXT NOT NULL, is_default INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                )
+            """)
+            now = _timestamp()
+            db.execute("""INSERT OR IGNORE INTO minutes_formats
+                (id, name, prompt, is_default, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?)""",
+                (DEFAULT_MINUTES_FORMAT_ID, DEFAULT_MINUTES_FORMAT_NAME, DEFAULT_MINUTES_PROMPT, now, now))
+            db.execute("""
                 CREATE TABLE IF NOT EXISTS meetings (
                     id TEXT PRIMARY KEY, title TEXT NOT NULL, language TEXT,
                     status TEXT NOT NULL CHECK(status IN ('created', 'recording', 'paused', 'ended')),
@@ -73,6 +87,7 @@ class MeetingStore:
                     duration_seconds REAL NOT NULL DEFAULT 0,
                     recording_since REAL, owner TEXT,
                     department_id TEXT REFERENCES departments(id),
+                    minutes_format_id TEXT REFERENCES minutes_formats(id),
                     user_id TEXT REFERENCES users(id)
                 )
             """)
@@ -80,9 +95,22 @@ class MeetingStore:
                 db.execute("ALTER TABLE meetings ADD COLUMN department_id TEXT REFERENCES departments(id)")
             if "user_id" not in {row["name"] for row in db.execute("PRAGMA table_info(meetings)")}:
                 db.execute("ALTER TABLE meetings ADD COLUMN user_id TEXT REFERENCES users(id)")
+            if "minutes_format_id" not in {row["name"] for row in db.execute("PRAGMA table_info(meetings)")}:
+                db.execute("ALTER TABLE meetings ADD COLUMN minutes_format_id TEXT REFERENCES minutes_formats(id)")
             db.execute("CREATE INDEX IF NOT EXISTS meetings_created ON meetings(created_at DESC, id DESC)")
             db.execute("CREATE INDEX IF NOT EXISTS meetings_department ON meetings(department_id, created_at DESC)")
             db.execute("CREATE INDEX IF NOT EXISTS meetings_user ON meetings(user_id, created_at DESC)")
+            db.execute("CREATE INDEX IF NOT EXISTS meetings_minutes_format ON meetings(minutes_format_id)")
+            db.execute("""CREATE TABLE IF NOT EXISTS voiceprints (
+                id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                name TEXT NOT NULL, department_id TEXT REFERENCES departments(id),
+                embedding TEXT NOT NULL, duration_seconds REAL NOT NULL,
+                source TEXT NOT NULL CHECK(source IN ('recording', 'import')),
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            )""")
+            if "department_id" not in {row["name"] for row in db.execute("PRAGMA table_info(voiceprints)")}:
+                db.execute("ALTER TABLE voiceprints ADD COLUMN department_id TEXT REFERENCES departments(id)")
+            db.execute("CREATE INDEX IF NOT EXISTS voiceprints_user ON voiceprints(user_id, created_at DESC)")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS meeting_minutes (
                     meeting_id TEXT PRIMARY KEY REFERENCES meetings(id),
@@ -206,6 +234,7 @@ class MeetingStore:
         return row
 
     def create(self, title: str, language: str | None = None, department_id: str | None = None,
+               minutes_format_id: str | None = None,
                *, imported_audio: Path | None = None, filename: str = "", user_id: str | None = None) -> dict[str, Any]:
         meeting_id, now = uuid4().hex, _timestamp()
         text_path = f"meetings/{meeting_id}/transcript.txt"
@@ -218,6 +247,9 @@ class MeetingStore:
                 department_id = user["department_id"]
             if department_id and not db.execute("SELECT 1 FROM departments WHERE id = ?", (department_id,)).fetchone():
                 raise MeetingError("部门不存在，请重新选择", 422)
+            minutes_format_id = minutes_format_id or DEFAULT_MINUTES_FORMAT_ID
+            if not db.execute("SELECT 1 FROM minutes_formats WHERE id = ?", (minutes_format_id,)).fetchone():
+                raise MeetingError("纪要格式不存在，请重新选择", 422)
             audio = read_audio_summary(imported_audio) if imported_audio else None
             directory = self.directory(meeting_id)
             if imported_audio:
@@ -229,9 +261,9 @@ class MeetingStore:
                 self.transcript(meeting_id).read()
                 db.execute(
                     """INSERT INTO meetings (id, title, language, status, text_path, created_at, updated_at,
-                       department_id, ended_at, duration_seconds, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       department_id, minutes_format_id, ended_at, duration_seconds, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (meeting_id, title.strip(), language or None, "ended" if audio else "created", text_path,
-                     now, now, department_id, now if audio else None, audio.duration_seconds if audio else 0, user_id),
+                     now, now, department_id, minutes_format_id, now if audio else None, audio.duration_seconds if audio else 0, user_id),
                 )
                 if audio:
                     db.execute("""INSERT INTO meeting_imports (meeting_id, filename, total_samples, updated_at)
@@ -320,6 +352,90 @@ class MeetingStore:
                 LEFT JOIN meetings ON meetings.department_id = departments.id
                 GROUP BY departments.id ORDER BY departments.created_at DESC, departments.id DESC
             """)]
+
+    def list_minutes_formats(self) -> list[dict[str, Any]]:
+        with self._connection() as db:
+            rows = [dict(row) for row in db.execute("""
+                SELECT minutes_formats.*, COUNT(meetings.id) AS meeting_count
+                FROM minutes_formats LEFT JOIN meetings ON meetings.minutes_format_id = minutes_formats.id
+                GROUP BY minutes_formats.id ORDER BY minutes_formats.is_default DESC, minutes_formats.updated_at DESC
+            """)]
+        for row in rows:
+            row["is_default"] = bool(row["is_default"])
+        return rows
+
+    def save_minutes_format(self, name: str, prompt: str, format_id: str | None = None) -> dict[str, Any]:
+        name, prompt = name.strip(), prompt.strip()
+        if not name or len(name) > 60:
+            raise MeetingError("纪要格式名称须为 1–60 个字符", 422)
+        if not prompt or len(prompt) > 20000:
+            raise MeetingError("模板提示词须为 1–20000 个字符", 422)
+        now = _timestamp()
+        with self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                if format_id:
+                    if not db.execute("UPDATE minutes_formats SET name = ?, prompt = ?, updated_at = ? WHERE id = ?",
+                                      (name, prompt, now, format_id)).rowcount:
+                        raise MeetingError("纪要格式不存在", 404)
+                else:
+                    format_id = uuid4().hex
+                    db.execute("INSERT INTO minutes_formats (id, name, prompt, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                               (format_id, name, prompt, now, now))
+            except sqlite3.IntegrityError as exc:
+                raise MeetingError("纪要格式名称已存在") from exc
+            row = dict(db.execute("SELECT * FROM minutes_formats WHERE id = ?", (format_id,)).fetchone())
+            row["meeting_count"] = db.execute("SELECT COUNT(*) FROM meetings WHERE minutes_format_id = ?", (format_id,)).fetchone()[0]
+            row["is_default"] = bool(row["is_default"])
+            return row
+
+    def delete_minutes_format(self, format_id: str) -> None:
+        with self._connection() as db:
+            row = db.execute("SELECT is_default FROM minutes_formats WHERE id = ?", (format_id,)).fetchone()
+            if row is None:
+                raise MeetingError("纪要格式不存在", 404)
+            if row["is_default"]:
+                raise MeetingError("通用会议格式不能删除")
+            if db.execute("SELECT 1 FROM meetings WHERE minutes_format_id = ? LIMIT 1", (format_id,)).fetchone():
+                raise MeetingError("该格式已有会议使用，不能删除")
+            db.execute("DELETE FROM minutes_formats WHERE id = ?", (format_id,))
+
+    def list_voiceprints(self, user_id: str | None = None) -> list[dict[str, Any]]:
+        with self._connection() as db:
+            query = """SELECT voiceprints.id, voiceprints.user_id, voiceprints.name,
+                voiceprints.department_id, departments.name AS department_name,
+                voiceprints.embedding, voiceprints.duration_seconds, voiceprints.source,
+                voiceprints.created_at, voiceprints.updated_at
+                FROM voiceprints LEFT JOIN departments ON departments.id = voiceprints.department_id"""
+            values: tuple[Any, ...] = ()
+            if user_id is not None:
+                query += " WHERE voiceprints.user_id = ?"
+                values = (user_id,)
+            rows = db.execute(query + " ORDER BY voiceprints.created_at DESC, voiceprints.id DESC", values).fetchall()
+        return [dict(row) for row in rows]
+
+    def create_voiceprint(self, user_id: str, name: str, department_id: str, embedding: list[float],
+                          duration_seconds: float, source: str) -> dict[str, Any]:
+        voiceprint_id, now = uuid4().hex, _timestamp()
+        with self._connection() as db:
+            department = db.execute("SELECT name FROM departments WHERE id = ?", (department_id,)).fetchone()
+            if department is None:
+                raise MeetingError("部门不存在，请重新选择", 422)
+            db.execute(
+                "INSERT INTO voiceprints (id, user_id, name, department_id, embedding, duration_seconds, source, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (voiceprint_id, user_id, name, department_id,
+                 json.dumps(embedding, separators=(",", ":")), duration_seconds, source, now, now),
+            )
+        return {"id": voiceprint_id, "user_id": user_id, "name": name,
+                "department_id": department_id, "department_name": department["name"],
+                "duration_seconds": duration_seconds, "source": source,
+                "created_at": now, "updated_at": now}
+
+    def delete_voiceprint(self, voiceprint_id: str) -> None:
+        with self._connection() as db:
+            if not db.execute("DELETE FROM voiceprints WHERE id = ?", (voiceprint_id,)).rowcount:
+                raise MeetingError("声纹记录不存在", 404)
 
     def save_department(self, name: str, department_id: str | None = None) -> dict[str, Any]:
         name = name.strip()

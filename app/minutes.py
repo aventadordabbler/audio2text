@@ -11,6 +11,7 @@ from .config import Settings
 from .meetings import MeetingError, MeetingStore
 from .model_configs import ModelConfig, ModelConfigStore
 from .transcripts import plain_text
+from .minutes_formats import DEFAULT_MINUTES_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -22,20 +23,20 @@ SYSTEM_PROMPT = """你是严谨的会议内容整理助手，请按照用户指�
 
 SYSTEM_PROMPT += "\n说话人编号仅用于区分发言，不代表真实姓名；多人、重叠或待确认片段不得推断个人责任归属。"
 
-MINUTES_PROMPT = """请将以下会议内容整理成正式会议纪要，使用 Markdown，包含以下六个二级标题：
-会议主题、核心结论、决策事项、待办事项、风险与阻塞、下一步安排。
-待办事项逐条列出任务、责任人、预计完成时间；原文未明确的字段写“未明确”。
-明确区分讨论中的建议与已达成的决策，没有依据的栏目写“未提及”。
-合并重复内容，保留关键数字、日期、分歧及未解决问题。"""
+MINUTES_PROMPT = DEFAULT_MINUTES_PROMPT
 
 EXTRACT_PROMPT = """这是长会议的一个片段或若干片段的摘要，请提取事实要点，供最终纪要使用。
 保留主题、结论、明确决策、待办及责任人和日期、风险、分歧、下一步安排。
 保留关键数字和未明确的信息，合并重复项，不得将建议改写为决策。
 请尽量简洁，不添加开场说明。"""
 
+FORMAT_PROMPT_SYSTEM = """你是会议纪要模板设计助手。根据用户提供的会议类型和格式要求，生成一段可直接交给大语言模型使用的纪要生成提示词。
+提示词应明确纪要的输出结构、栏目、内容取舍、事实准确性和格式要求，适合中文会议纪要场景。
+只输出提示词正文，不要输出解释、标题、Markdown 代码块或思考过程。"""
+
 
 class MinutesGenerator(Protocol):
-    async def generate(self, title: str, transcript: str) -> str:
+    async def generate_with_prompt(self, title: str, transcript: str, prompt: str | None = None) -> str:
         ...
 
 
@@ -96,7 +97,37 @@ class OpenAIMinutesGenerator:
             raise MinutesGenerationError("纪要服务返回了空结果，请重试。")
         return content
 
-    async def generate(self, title: str, transcript: str) -> str:
+    async def generate_format_prompt(self, name: str, requirement: str) -> str:
+        response = await self.client.chat.completions.create(
+            model=self.config.model,
+            messages=[
+                {"role": "system", "content": FORMAT_PROMPT_SYSTEM},
+                {"role": "user", "content": f"会议类型：{name}\n用户要求：{requirement}"},
+            ],
+            temperature=0.2,
+            max_tokens=min(self.settings.llm_max_tokens, 4096),
+        )
+        if not response.choices:
+            raise MinutesGenerationError("纪要服务返回了空结果，请重试。")
+        choice = response.choices[0]
+        if choice.finish_reason == "length":
+            raise MinutesGenerationError("提示词生成结果被截断，请重试。")
+        if choice.finish_reason not in {"stop", None}:
+            raise MinutesGenerationError("纪要服务未返回完整文本，请重试。")
+        content = choice.message.content
+        if not isinstance(content, str):
+            raise MinutesGenerationError("纪要服务返回了空结果，请重试。")
+        content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+        if "<think>" in content or not content:
+            raise MinutesGenerationError("纪要服务未返回有效正文，请重试。")
+        if content.startswith("```") and content.endswith("```"):
+            content = re.sub(r"^```(?:markdown|text)?\s*", "", content)
+            content = re.sub(r"\s*```$", "", content).strip()
+        if not content:
+            raise MinutesGenerationError("纪要服务返回了空结果，请重试。")
+        return content
+
+    async def generate_with_prompt(self, title: str, transcript: str, prompt: str | None = None) -> str:
         text = transcript.strip()
         if not text:
             raise ValueError("没有转写内容，无法生成会议纪要")
@@ -105,7 +136,7 @@ class OpenAIMinutesGenerator:
         for _ in range(5):
             if len(text) <= limit:
                 return await self.generate_from_prompt(
-                    title, text, MINUTES_PROMPT, self.settings.llm_max_tokens
+                    title, text, prompt or MINUTES_PROMPT, self.settings.llm_max_tokens
                 )
             summaries = []
             for offset in range(0, len(text), limit):
@@ -122,6 +153,9 @@ class OpenAIMinutesGenerator:
                 raise MinutesGenerationError("长会议摘要未能压缩，请调整模型或 LLM_CHUNK_CHARS 后重试。")
             text = reduced
         raise MinutesGenerationError("会议内容过长，请调大 LLM_CHUNK_CHARS 后重试。")
+
+    async def generate(self, title: str, transcript: str) -> str:
+        return await self.generate_with_prompt(title, transcript)
 
 
 class MinutesService:
@@ -142,6 +176,36 @@ class MinutesService:
 
     async def get(self, meeting_id: str) -> dict[str, Any]:
         return {**await asyncio.to_thread(self.store.get_minutes, meeting_id), "available": self.available}
+
+    async def generate_format_prompt(self, name: str, requirement: str) -> str:
+        if not name.strip() or not requirement.strip():
+            raise MeetingError("请输入会议类型和生成要求", 422)
+        if not self.available:
+            raise MeetingError("尚未配置大语言模型，请在模型配置中添加。", 503)
+        generator = self.generator
+        temporary = False
+        if generator is None or not hasattr(generator, "generate_format_prompt"):
+            generator = build_minutes_generator(
+                await asyncio.to_thread(self.models.require, "llm"), self.settings,
+            )
+            temporary = True
+        try:
+            result = await generator.generate_format_prompt(name.strip(), requirement.strip())
+            if not result.strip():
+                raise MinutesGenerationError("纪要服务返回了空结果，请重试。")
+            return result.strip()
+        except MeetingError:
+            raise
+        except MinutesGenerationError:
+            raise
+        except Exception as exc:
+            logger.exception("Minutes format prompt generation failed")
+            raise MinutesGenerationError("纪要提示词生成失败，请检查大语言模型配置后重试。") from exc
+        finally:
+            if temporary:
+                close = getattr(generator, "close", None)
+                if close is not None:
+                    await close()
 
     async def start(self, meeting_id: str, *, automatic=False) -> dict[str, Any]:
         async with self._lock:
@@ -199,7 +263,13 @@ class MinutesService:
 
     async def _generate(self, meeting: dict[str, Any], generator: MinutesGenerator) -> None:
         try:
-            text = await generator.generate(meeting["title"], meeting["text"])
+            generate_with_prompt = getattr(generator, "generate_with_prompt", None)
+            if generate_with_prompt is None:
+                text = await generator.generate(meeting["title"], meeting["text"])
+            else:
+                text = await generate_with_prompt(
+                    meeting["title"], meeting["text"], meeting.get("minutes_format_prompt")
+                )
             if not text.strip():
                 raise MinutesGenerationError("纪要服务返回了空结果，请重试。")
             await asyncio.to_thread(self.store.save_minutes, meeting["id"], text)

@@ -95,11 +95,11 @@ export function DepartmentManagement({
       </div>
       {(error || !api) && (
         <div role="alert" className="management-error">
-          {error || "请在模型设置中配置会议服务地址。"}
+          {error || "请先配置会议服务地址。"}
         </div>
       )}
       <Card className="history-table-card">
-        <div className="history-table-scroll panel-scroll department-table">
+        <div className="history-table-scroll panel-scroll management-table department-table">
           <Table>
             <TableHeader>
               <TableRow>
@@ -174,10 +174,6 @@ export function DepartmentManagement({
               )}
             </TableBody>
           </Table>
-        </div>
-        <div className="document-footer">
-          <span>共 {departments.length} 个部门</span>
-          <span>已有会议的部门可重命名</span>
         </div>
       </Card>
       <Dialog

@@ -14,7 +14,6 @@ import {
   LoaderCircle,
   AudioLines,
   CalendarDays,
-  CheckCheck,
   ChevronRight,
   FolderClosed,
   Languages,
@@ -22,11 +21,11 @@ import {
   MicOff,
   PanelLeft,
   RefreshCw,
-  Save,
   Sparkles,
-  ArrowUpRight,
+  Copy,
   Download,
   Plus,
+  MicVocal,
 } from "lucide-react";
 import {
   WorkspaceBrand,
@@ -36,23 +35,20 @@ import {
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
-import {
-  Select,
-  SelectTrigger,
-  SelectValue,
-  SelectContent,
-  SelectItem,
-} from "@/components/ui/select";
 import MinutesMarkdown from "@/components/minutes-markdown";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DesktopStore } from "@/services/desktop-store.js";
@@ -76,12 +72,9 @@ import {
   CreateMeetingDialog,
 } from "@/components/meeting-management.jsx";
 import { DepartmentManagement } from "@/components/department-management.jsx";
-import { MicrophoneLevelTest } from "@/components/microphone-level-test.jsx";
+import { VoiceprintManagement } from "@/components/voiceprint-management.jsx";
+import { MinutesFormatManagement } from "@/components/minutes-format-management.jsx";
 import { StageSummaryPanel } from "@/components/stage-summary-panel.jsx";
-import {
-  LLM_SETTINGS_FORM_ID,
-  ServerModelSettings,
-} from "@/components/server-model-settings.jsx";
 
 const store = new DesktopStore();
 const recorder = new MeetingRecorder();
@@ -156,23 +149,24 @@ export function App() {
   const [authError, setAuthError] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
   const [authNotice, setAuthNotice] = useState("");
+  const [passwordSetup, setPasswordSetup] = useState("");
+  const [passwordConfirmation, setPasswordConfirmation] = useState("");
+  const [connectionSettingsOpen, setConnectionSettingsOpen] = useState(false);
+  const [connectionUrl, setConnectionUrl] = useState(DEFAULT_CONFIG.stt.baseUrl);
+  const [connectionSettingsError, setConnectionSettingsError] = useState("");
+  const [connectionSettingsBusy, setConnectionSettingsBusy] = useState(false);
   const [slogan, setSlogan] = useState("");
   const [uploadProgress, setUploadProgress] = useState(null);
   const [config, setConfig] = useState(DEFAULT_CONFIG);
-  const [formConfig, setFormConfig] = useState(DEFAULT_CONFIG);
   const [session, setSession] = useState(null);
   const [sessionSelection, setSessionSelection] = useState(0);
   const [sessions, setSessions] = useState([]);
   const [activeView, setActiveView] = useState("history");
   const [activeFocusTab, setActiveFocusTab] = useState("transcript");
-  const [settingsTab, setSettingsTab] = useState("stt");
-  const [llmSaveState, setLlmSaveState] = useState({
-    canSave: false,
-    busy: false,
-  });
   const [departments, setDepartments] = useState([]);
   const [departmentsLoading, setDepartmentsLoading] = useState(false);
   const [departmentsError, setDepartmentsError] = useState("");
+  const [minutesFormats, setMinutesFormats] = useState([]);
   const [catalogRevision, setCatalogRevision] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const meetingApi = useMemo(() => {
@@ -186,12 +180,7 @@ export function App() {
   const [transcriptFollowing, setTranscriptFollowing] = useState(true);
   const transcriptScrollRef = useRef(null);
   const [statusLine, setStatusLine] = useState("待命");
-  const [settingsSavedAtLabel, setSettingsSavedAtLabel] = useState("");
   const [isMaximized, setIsMaximized] = useState(false);
-  const [providerProbe, setProviderProbe] = useState({
-    stt: { tone: "", text: "尚未测试语音转写服务。" },
-    llm: { tone: "", text: "尚未测试大语言模型服务。" },
-  });
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [asrDiagnostics, setAsrDiagnostics] = useState(null);
   const [stageSummaries, setStageSummaries] = useState([]);
@@ -212,6 +201,10 @@ export function App() {
   const [importPollRevision, setImportPollRevision] = useState(0);
   const [exportingAudio, setExportingAudio] = useState(false);
   const [exportingText, setExportingText] = useState(false);
+  const [exportingMinutes, setExportingMinutes] = useState(false);
+  const [minutesExportOpen, setMinutesExportOpen] = useState(false);
+  const [exportingStageSummaries, setExportingStageSummaries] = useState(false);
+  const [exportSuccessMessage, setExportSuccessMessage] = useState("");
   const [startedAtMs, setStartedAtMs] = useState(0);
   const [elapsedLabel, setElapsedLabel] = useState("00:00:00");
   const [reportTask, setReportTask] = useState({
@@ -229,11 +222,28 @@ export function App() {
   const recordingRef = useRef(isRecording);
   const configRef = useRef(config);
   const pendingTranscriptRef = useRef("");
+  const exportSuccessTimerRef = useRef(null);
+
+  useEffect(() => () => clearTimeout(exportSuccessTimerRef.current), []);
+
+  function showExportSuccess(message) {
+    clearTimeout(exportSuccessTimerRef.current);
+    setExportSuccessMessage(message);
+    exportSuccessTimerRef.current = setTimeout(() => {
+      setExportSuccessMessage("");
+      exportSuccessTimerRef.current = null;
+    }, 2000);
+  }
 
   useEffect(() => {
     setDepartments([]);
     setDepartmentsError("");
-    if (!authUser || !ready || !meetingApi) {
+    if (!authUser || authUser.must_change_password || !ready || !meetingApi) {
+      setDepartmentsLoading(false);
+      return;
+    }
+    if (!authUser.is_admin) {
+      setDepartments([]);
       setDepartmentsLoading(false);
       return;
     }
@@ -265,6 +275,23 @@ export function App() {
     createOpen,
     activeView === "departments",
   ]);
+
+  useEffect(() => {
+    setMinutesFormats([]);
+    if (!authUser || authUser.must_change_password || !ready || !meetingApi) return undefined;
+    const controller = new AbortController();
+    meetingApi.minutesFormats({ signal: controller.signal }).then((items) => {
+      if (!controller.signal.aborted) setMinutesFormats(items);
+    }).catch(() => {
+      if (!controller.signal.aborted) setMinutesFormats([]);
+    });
+    return () => controller.abort();
+  }, [ready, authUser, meetingApi, catalogRevision, createOpen]);
+
+  useEffect(() => {
+    if (authUser && !authUser.is_admin && (activeView === "departments" || activeView === "voiceprints" || activeView === "minutesFormats"))
+      setActiveView("history");
+  }, [authUser, activeView]);
 
   function refreshCatalog() {
     setCatalogRevision((value) => value + 1);
@@ -402,6 +429,47 @@ export function App() {
     }
   }
 
+  async function submitPasswordSetup(event) {
+    event.preventDefault();
+    if (passwordSetup !== passwordConfirmation) {
+      setAuthError("两次输入的密码不一致");
+      return;
+    }
+    setAuthBusy(true);
+    setAuthError("");
+    try {
+      if (!meetingApi) throw new Error("请先配置 audio2text 服务地址");
+      const result = await meetingApi.changePassword(passwordSetup);
+      setPasswordSetup("");
+      setPasswordConfirmation("");
+      setAuthUser(result.user);
+    } catch (error) {
+      setAuthError(error.message);
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function saveConnectionSettings(event) {
+    event.preventDefault();
+    setConnectionSettingsBusy(true);
+    setConnectionSettingsError("");
+    try {
+      const nextStt = normalizeSttConfig({
+        ...config.stt,
+        baseUrl: connectionUrl,
+      });
+      new MeetingApi(nextStt);
+      const saved = await saveConfig({ ...config, stt: nextStt });
+      setConnectionUrl(saved.stt.baseUrl);
+      setConnectionSettingsOpen(false);
+    } catch (error) {
+      setConnectionSettingsError(error.message || "服务端地址无效");
+    } finally {
+      setConnectionSettingsBusy(false);
+    }
+  }
+
   function logout() {
     recorder.disconnect();
     stageSummaryFeed.disconnect();
@@ -419,7 +487,7 @@ export function App() {
     const meetingId = session?.remoteMeetingId;
     const baseUrl = session?.remoteBaseUrl;
     setStageSummaryActionError("");
-    if (!ready || !meetingId || !baseUrl || session?.source === "wav") {
+    if (!ready || !meetingId || !baseUrl) {
       stageSummaryFeed.disconnect();
       setStageSummaries([]);
       setStageSummaryState({ status: "idle", windowSeconds: 0, error: "" });
@@ -462,7 +530,7 @@ export function App() {
       }
 
       setConfig(nextConfig);
-      setFormConfig(nextConfig);
+      setConnectionUrl(nextConfig.stt.baseUrl);
       setSessions([]);
       setStatusLine("准备就绪");
       setReady(true);
@@ -477,26 +545,8 @@ export function App() {
     };
   }, []);
 
-  function updateForm(path, value) {
-    setFormConfig((current) => {
-      const next = clone(current);
-      const segments = path.split(".");
-      let cursor = next;
-      for (let index = 0; index < segments.length - 1; index += 1) {
-        cursor = cursor[segments[index]];
-      }
-      cursor[segments[segments.length - 1]] = value;
-      return next;
-    });
-    setSettingsSavedAtLabel("");
-    setProviderProbe({
-      stt: { tone: "", text: "配置已修改，请重新测试语音转写服务。" },
-      llm: { tone: "", text: "配置已修改，请重新测试大语言模型服务。" },
-    });
-  }
-
   useEffect(() => {
-    if (!ready || !authUser) return;
+    if (!ready || !authUser || authUser.must_change_password) return;
     recorder.disconnect();
     sessionLoadRef.current++;
     setSessions([]);
@@ -546,7 +596,7 @@ export function App() {
   }
 
   async function saveConfig(nextConfigOverride) {
-    const nextConfig = clone(nextConfigOverride || formConfig);
+    const nextConfig = clone(nextConfigOverride || config);
     nextConfig.stt = normalizeSttConfig(nextConfig.stt);
     nextConfig.chunkSeconds = DEFAULT_CONFIG.chunkSeconds;
     if (!nextConfig.stt.baseUrl) {
@@ -562,9 +612,7 @@ export function App() {
     nextConfig.meetingTitle = "";
     await store.saveConfig(nextConfig);
     setConfig(nextConfig);
-    setFormConfig(nextConfig);
     configRef.current = nextConfig;
-    setSettingsSavedAtLabel(new Date().toLocaleTimeString());
     setStatusLine("配置已保存");
     return nextConfig;
   }
@@ -718,10 +766,23 @@ export function App() {
     try {
       await meetingApi.downloadTranscript(target.remoteMeetingId);
       setStatusLine("已发起文本下载，请在保存窗口中选择位置");
+      showExportSuccess("文本文件已开始下载，请在保存窗口中选择位置。");
     } catch (error) {
       setStatusLine(`导出文本失败：${error.message}`);
     } finally {
       setExportingText(false);
+    }
+  }
+
+  async function copyTranscript() {
+    const target = sessionRef.current;
+    const text = (target?.transcript || []).map((item) => item.text).join("\n").trim();
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setStatusLine("转写内容已复制");
+    } catch (error) {
+      setStatusLine(`复制转写失败：${error.message}`);
     }
   }
 
@@ -732,10 +793,42 @@ export function App() {
     try {
       await meetingApi.downloadAudio(target.remoteMeetingId);
       setStatusLine("已发起录音下载，请在保存窗口中选择位置");
+      showExportSuccess("原始音频已开始下载，请在保存窗口中选择位置。");
     } catch (error) {
       setStatusLine(`导出录音失败：${error.message}`);
     } finally {
       setExportingAudio(false);
+    }
+  }
+
+  async function exportMinutes(format) {
+    const target = sessionRef.current;
+    if (!meetingApi || !target?.remoteMeetingId || exportingMinutes) return;
+    setMinutesExportOpen(false);
+    setExportingMinutes(true);
+    try {
+      await meetingApi.downloadMinutes(target.remoteMeetingId, format);
+      setStatusLine("已发起会议纪要下载，请在保存窗口中选择位置");
+      showExportSuccess("会议纪要已开始下载，请在保存窗口中选择位置。");
+    } catch (error) {
+      setStatusLine(`导出会议纪要失败：${error.message}`);
+    } finally {
+      setExportingMinutes(false);
+    }
+  }
+
+  async function exportStageSummaries() {
+    const target = sessionRef.current;
+    if (!meetingApi || !target?.remoteMeetingId || exportingStageSummaries) return;
+    setExportingStageSummaries(true);
+    try {
+      await meetingApi.downloadStageSummaries(target.remoteMeetingId);
+      setStatusLine("已发起阶段总结下载，请在保存窗口中选择位置");
+      showExportSuccess("阶段总结已开始下载，请在保存窗口中选择位置。");
+    } catch (error) {
+      setStatusLine(`导出阶段总结失败：${error.message}`);
+    } finally {
+      setExportingStageSummaries(false);
     }
   }
 
@@ -750,7 +843,7 @@ export function App() {
     setIsStarting(true);
     setStatusLine("正在连接会议…");
     try {
-      const currentConfig = await saveConfig(formConfig);
+      const currentConfig = await saveConfig();
       if (current.remoteBaseUrl !== currentConfig.stt.baseUrl)
         throw new Error("会议服务已切换，请重新打开会议");
       await recorder.configure({
@@ -818,7 +911,7 @@ export function App() {
       setActiveFocusTab(currentSession.transcript.length ? "minutes" : "transcript");
       setStatusLine(
         currentSession.transcript.length
-          ? "会议已结束，后台将校正说话人并生成会议总结"
+          ? "会议已结束，后台将校正说话人并生成会议纪要"
           : "会议已结束，本次未检测到语音",
       );
       void reloadSessions();
@@ -924,7 +1017,7 @@ export function App() {
   async function generateReport() {
     const target = sessionRef.current;
     if (!meetingApi || !target?.remoteMeetingId || reportTask.running) return;
-    setReportTask({ running: true, text: "正在提交总结任务" });
+    setReportTask({ running: true, text: "正在提交纪要任务" });
     try {
       if (target.source === "wav") {
         const minutes = await meetingApi.generateMinutes(target.remoteMeetingId);
@@ -935,9 +1028,9 @@ export function App() {
         await recorder.generateMinutes();
       }
       refreshCatalog();
-      setStatusLine("总结任务已提交到服务端");
+      setStatusLine("纪要任务已提交到服务端");
     } catch (error) {
-      setStatusLine(`生成会议总结失败：${error.message}`);
+      setStatusLine(`生成会议纪要失败：${error.message}`);
     } finally {
       setReportTask({ running: false, text: "" });
     }
@@ -1002,43 +1095,6 @@ export function App() {
     }
   }
 
-  async function testProvider(kind) {
-    const currentConfig = await saveConfig(formConfig);
-    const targetConfig = currentConfig.stt;
-    const label = "语音转写服务";
-
-    setProviderProbe((current) => ({
-      ...current,
-      [kind]: {
-        tone: "",
-        text: `正在测试 ${label}...`,
-      },
-    }));
-
-    try {
-      const result = await recorder.probe(targetConfig);
-      const success = result.ok === true;
-      const text = success ? "连接成功" : "连接失败";
-      setProviderProbe((current) => ({
-        ...current,
-        [kind]: {
-          tone: success ? "ok" : "error",
-          text,
-        },
-      }));
-      setStatusLine(text);
-    } catch {
-      setProviderProbe((current) => ({
-        ...current,
-        [kind]: {
-          tone: "error",
-          text: "连接失败",
-        },
-      }));
-      setStatusLine("连接失败");
-    }
-  }
-
   function requestCreate() {
     if (startingRef.current || recordingRef.current || controllingRef.current) {
       setStatusLine("请先结束当前会议，再新建会议");
@@ -1047,7 +1103,7 @@ export function App() {
     setCreateOpen(true);
   }
 
-  async function createMeeting(title, departmentId, files = [], language) {
+  async function createMeeting(title, departmentId, files = [], language, minutesFormatId = null) {
     if (startingRef.current || recordingRef.current || controllingRef.current)
       throw new Error("请先结束当前会议");
     setUploadProgress(null);
@@ -1056,10 +1112,10 @@ export function App() {
       let next;
       if (meetingApi) {
         const remote = files.length
-          ? await meetingApi.importWav(title, departmentId, files, language, (completed, total) => setUploadProgress({ completed, total }))
-          : await meetingApi.create(title, departmentId);
+          ? await meetingApi.importWav(title, departmentId, files, language, (completed, total) => setUploadProgress({ completed, total }), minutesFormatId)
+          : await meetingApi.create(title, departmentId, minutesFormatId);
         next = sessionFromMeeting(remote, meetingApi.config.baseUrl);
-      } else throw new Error("请先在模型设置中配置有效的会议服务地址");
+      } else throw new Error("请先配置有效的会议服务地址");
       if (loadId !== sessionLoadRef.current) return;
       await updateSession(next, { syncView: false });
       showSession(next);
@@ -1252,7 +1308,7 @@ export function App() {
     Boolean(session),
     session?.remoteStatus,
   );
-  const sessionTitle = session ? deriveSessionTitle(session) : "会议工作台";
+  const sessionTitle = session ? deriveSessionTitle(session) : "会议详情";
   const transcripts = session?.transcript || [];
   const textCount = transcripts.reduce(
     (total, item) => total + Array.from(item.text).length,
@@ -1327,14 +1383,14 @@ export function App() {
     : [];
   const navigation = [
     { key: "history", label: "会议管理", icon: FolderClosed },
+    ...(authUser?.is_admin ? [{ key: "departments", label: "部门管理", icon: Building2 }] : []),
+    ...(authUser?.is_admin ? [{ key: "voiceprints", label: "声纹管理", icon: MicVocal }] : []),
+    ...(authUser?.is_admin ? [{ key: "minutesFormats", label: "纪要格式", icon: FileText }] : []),
   ];
   const selectedNavigation = activeView === "overview" ? "history" : activeView;
-  const currentPage =
-    activeView === "settings"
-      ? "模型设置"
-      : activeView === "overview"
-        ? "会议工作台"
-        : navigation.find((item) => item.key === activeView)?.label;
+  const currentPage = activeView === "overview"
+    ? "会议详情"
+    : navigation.find((item) => item.key === activeView)?.label;
   const dateLabel = new Date().toLocaleDateString("zh-CN", {
     month: "long",
     day: "numeric",
@@ -1343,8 +1399,8 @@ export function App() {
 
   function renderRecordingControl() {
     if (imported) return (
-      <Card className="recording-card recording-card--top">
-        <div className="recording-card-heading"><h2><FileText size={15} />导入音频</h2></div>
+      <Card className="recording-card recording-card--top recording-card--import">
+        <div className="recording-card-heading"><h2><FileText size={15} />导入音频</h2>{session?.audioAvailable && meetingApi && <div className="recording-heading-actions"><Button variant="ghost" size="icon-xs" aria-label="下载录音" title="下载录音" aria-busy={exportingAudio} disabled={exportingAudio} onClick={exportAudio}><Download size={13} /></Button></div>}</div>
         <div className="recording-timer"><strong>{formatElapsed((session.durationSeconds || 0) * 1000)}</strong></div>
         <div className="import-progress" role="status">
           <p className="import-filename" title={importJob?.filename}>{importJob?.filename}</p>
@@ -1364,6 +1420,7 @@ export function App() {
             录音控制
           </h2>
           <div className="recording-heading-actions">
+            {session?.audioAvailable && meetingApi && <Button variant="ghost" size="icon-xs" aria-label="下载录音" title="下载录音" aria-busy={exportingAudio} disabled={exportingAudio} onClick={exportAudio}><Download size={13} /></Button>}
             <Button
               variant="ghost"
               size="icon-xs"
@@ -1473,15 +1530,76 @@ export function App() {
       <div className="desktop-app auth-desktop-shell">
         {renderWindowTitlebar()}
         <main className="loading-screen auth-screen">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="auth-settings-button"
+            aria-label="设置服务端地址"
+            title="设置服务端地址"
+            onClick={() => {
+              setConnectionUrl(config.stt.baseUrl);
+              setConnectionSettingsError("");
+              setConnectionSettingsOpen(true);
+            }}
+          >
+            <Settings />
+          </Button>
           <form className="auth-panel" onSubmit={submitAuth}>
             <WorkspaceBrand />
             <div className="auth-tabs"><button type="button" className={authMode === "login" ? "active" : ""} onClick={() => { setAuthMode("login"); setAuthNotice(""); }}>登录</button><button type="button" className={authMode === "register" ? "active" : ""} onClick={() => { setAuthMode("register"); setAuthNotice(""); }}>注册</button></div>
-            <Field label="账号"><Input value={authForm.account} onChange={(event) => setAuthForm({ ...authForm, account: event.target.value })} required /></Field>
-            <Field label="密码"><Input type="password" value={authForm.password} onChange={(event) => setAuthForm({ ...authForm, password: event.target.value })} minLength={authMode === "register" ? 8 : 1} required /></Field>
-            {authMode === "register" && <><Field label="部门"><Input value={authForm.department} onChange={(event) => setAuthForm({ ...authForm, department: event.target.value })} required /></Field><Field label="工号"><Input value={authForm.employeeId} onChange={(event) => setAuthForm({ ...authForm, employeeId: event.target.value })} required /></Field></>}
+            <Field label={authMode === "register" ? <>账号<i className="required-mark" aria-hidden="true">*</i></> : "账号"}><Input value={authForm.account} onChange={(event) => setAuthForm({ ...authForm, account: event.target.value })} required /></Field>
+            <Field label={authMode === "register" ? <>密码<i className="required-mark" aria-hidden="true">*</i></> : "密码"}><Input type="password" value={authForm.password} onChange={(event) => setAuthForm({ ...authForm, password: event.target.value })} minLength={authMode === "register" ? 8 : 0} required={authMode === "register"} /></Field>
+            {authMode === "register" && <><Field label={<>部门<i className="required-mark" aria-hidden="true">*</i></>}><Input value={authForm.department} onChange={(event) => setAuthForm({ ...authForm, department: event.target.value })} required /></Field><Field label={<>工号<i className="required-mark" aria-hidden="true">*</i></>}><Input value={authForm.employeeId} onChange={(event) => setAuthForm({ ...authForm, employeeId: event.target.value })} required /></Field></>}
             {authNotice && <p className="auth-success" role="status">{authNotice}</p>}
             {authError && <p className="auth-error" role="alert">{authError}</p>}
             <Button type="submit" disabled={authBusy}>{authBusy ? "处理中…" : authMode === "register" ? "注册" : "登录"}</Button>
+          </form>
+        </main>
+        <Dialog open={connectionSettingsOpen} onOpenChange={setConnectionSettingsOpen}>
+          <DialogContent className="connection-settings-dialog">
+            <DialogHeader>
+              <DialogTitle>服务连接设置</DialogTitle>
+              <DialogDescription>配置登录和会议操作使用的 audio2text 服务地址。</DialogDescription>
+            </DialogHeader>
+            <form className="connection-settings-form" onSubmit={saveConnectionSettings}>
+              <Field label="服务端地址">
+                <Input
+                  type="url"
+                  value={connectionUrl}
+                  onChange={(event) => setConnectionUrl(event.target.value)}
+                  placeholder="http://127.0.0.1:8000"
+                  autoFocus
+                  required
+                />
+              </Field>
+              {connectionSettingsError && <p className="auth-error" role="alert">{connectionSettingsError}</p>}
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setConnectionSettingsOpen(false)}>取消</Button>
+                <Button type="submit" disabled={connectionSettingsBusy}>
+                  {connectionSettingsBusy ? "保存中…" : "保存"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+      </div>
+    );
+  }
+
+  if (authUser.must_change_password) {
+    return (
+      <div className="desktop-app auth-desktop-shell">
+        {renderWindowTitlebar()}
+        <main className="loading-screen auth-screen">
+          <form className="auth-panel" onSubmit={submitPasswordSetup}>
+            <WorkspaceBrand />
+            <h2>首次登录</h2>
+            <p className="auth-help">管理员当前使用默认空密码，请设置一个新的登录密码。</p>
+            <Field label="新密码"><Input type="password" value={passwordSetup} onChange={(event) => setPasswordSetup(event.target.value)} minLength={8} maxLength={128} required disabled={authBusy} autoFocus /></Field>
+            <Field label="确认密码"><Input type="password" value={passwordConfirmation} onChange={(event) => setPasswordConfirmation(event.target.value)} minLength={8} maxLength={128} required disabled={authBusy} /></Field>
+            {authError && <p className="auth-error" role="alert">{authError}</p>}
+            <Button type="submit" disabled={authBusy}>{authBusy ? "保存中…" : "保存新密码"}</Button>
           </form>
         </main>
       </div>
@@ -1492,10 +1610,25 @@ export function App() {
     <div className="desktop-app">
       {renderWindowTitlebar()}
 
+      <Dialog
+        open={Boolean(exportSuccessMessage)}
+        onOpenChange={(open) => {
+          if (!open) setExportSuccessMessage("");
+        }}
+      >
+        <DialogContent className="export-success-dialog" showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>导出成功</DialogTitle>
+            <DialogDescription>{exportSuccessMessage}</DialogDescription>
+          </DialogHeader>
+        </DialogContent>
+      </Dialog>
+
       <CreateMeetingDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
         departments={departments}
+        minutesFormats={minutesFormats}
         loading={departmentsLoading}
         departmentError={departmentsError}
         uploadProgress={uploadProgress}
@@ -1504,6 +1637,22 @@ export function App() {
         initialTitle={""}
         initialLanguage={config.stt.language}
       />
+      <Dialog open={minutesExportOpen} onOpenChange={setMinutesExportOpen}>
+        <DialogContent className="export-format-dialog">
+          <DialogHeader>
+            <DialogTitle>选择纪要格式</DialogTitle>
+            <DialogDescription>请选择要导出的文件格式。</DialogDescription>
+          </DialogHeader>
+          <div className="export-format-options">
+            <Button type="button" variant="outline" onClick={() => void exportMinutes("markdown")} disabled={exportingMinutes}>
+              Markdown（.md）
+            </Button>
+            <Button type="button" variant="outline" onClick={() => void exportMinutes("docx")} disabled={exportingMinutes}>
+              Word 文档（.docx）
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
       <div className="app-layout">
         <aside className="workspace-sidebar">
           <WorkspaceBrand />
@@ -1540,15 +1689,6 @@ export function App() {
               <p>你的会议记录会出现在这里</p>
             )}
           </div>
-          <div className="sidebar-bottom">
-            <button
-              className={`nav-item${activeView === "settings" ? " selected" : ""}`}
-              onClick={() => setActiveView("settings")}
-            >
-              <Settings size={16} />
-              <span>模型设置</span>
-            </button>
-          </div>
         </aside>
 
         <main className="main-workspace">
@@ -1582,13 +1722,6 @@ export function App() {
                 {label}
               </button>
             ))}
-            <button
-              onClick={() => setActiveView("settings")}
-              aria-current={activeView === "settings" ? "page" : undefined}
-            >
-              <Settings size={16} />
-              模型设置
-            </button>
           </nav>
 
           {statusError && (
@@ -1619,30 +1752,6 @@ export function App() {
                   </div>
                   <div className="meeting-title-row">
                     <h1 title={sessionTitle}>{sessionTitle}</h1>
-                    {session?.transcript?.some((row) => row.text?.trim()) && meetingApi && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="meeting-title-export"
-                        disabled={exportingText}
-                        onClick={exportText}
-                      >
-                        <Download size={15} />
-                        {exportingText ? "正在准备…" : "导出文本（TXT）"}
-                      </Button>
-                    )}
-                    {session?.audioAvailable && meetingApi && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="meeting-title-export"
-                        disabled={exportingAudio}
-                        onClick={exportAudio}
-                      >
-                        <Download size={15} />
-                        {exportingAudio ? "正在准备…" : "导出录音（WAV）"}
-                      </Button>
-                    )}
                   </div>
                   <div className="meeting-meta">
                     {session ? (
@@ -1668,7 +1777,7 @@ export function App() {
                         </span>
                       </>
                     ) : (
-                      <p>开启录音，实时记录讨论内容。结束后生成会议总结。</p>
+                      <p>开启录音，实时记录讨论内容。结束后生成会议纪要。</p>
                     )}
                   </div>
                   {session && (
@@ -1703,7 +1812,7 @@ export function App() {
                 </div>
               </div>
 
-              <div className={`meeting-workspace${imported ? " meeting-workspace--import" : ""}`}>
+              <div className="meeting-workspace">
                 <Tabs
                   value={activeFocusTab}
                   onValueChange={setActiveFocusTab}
@@ -1712,67 +1821,15 @@ export function App() {
                   <TabsList className="w-fit">
                     <TabsTrigger value="transcript">
                       <AudioLines size={14} />
-                      实时转写
+                      转写记录
                     </TabsTrigger>
                     <TabsTrigger value="minutes">
                       <Sparkles size={14} />
-                      会议总结
+                      会议纪要
                     </TabsTrigger>
                   </TabsList>
                   <TabsContent value="transcript" className="meeting-panel">
                     <Card className="document-card">
-                      <div className="document-heading">
-                        <h2>
-                          <FileText size={16} />
-                          转写记录
-                          {recordingActive && (
-                            <span className="live-label">
-                              <i />
-                              实时
-                            </span>
-                          )}
-                          {processingText && (
-                            <span
-                              className={speakerStatusClassName}
-                              role="status"
-                              aria-label={speakerStatusLabel}
-                              title={speakerStatusError || processingText}
-                              tabIndex={speakerStatusError ? 0 : undefined}
-                            >
-                              <i className="speaker-status-dot" />
-                              <span>{processingText}</span>
-                              {canRetryDiarization && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon-xs"
-                                  disabled={retryingDiarization || correcting}
-                                  onClick={retryDiarization}
-                                  aria-label="重试说话人校正"
-                                  title="重试说话人校正"
-                                >
-                                  {retryingDiarization ? (
-                                    <LoaderCircle
-                                      size={12}
-                                      className="animate-spin"
-                                    />
-                                  ) : (
-                                    <RefreshCw size={12} />
-                                  )}
-                                </Button>
-                              )}
-                            </span>
-                          )}
-                        </h2>
-                        <label className="scroll-toggle">
-                          <span>自动跟随</span>
-                          <Switch
-                            size="sm"
-                            checked={autoScroll}
-                            onCheckedChange={setAutoScroll}
-                            aria-label="自动跟随转写"
-                          />
-                        </label>
-                      </div>
                       <div
                         className="document-scroll panel-scroll"
                         ref={transcriptScrollRef}
@@ -1827,49 +1884,46 @@ export function App() {
                         <ChevronRight size={13} />
                       </button>
                       <div className="document-footer">
-                        <span>
-                          <CheckCheck size={13} />
-                          {transcripts.length
-                            ? "转写内容已保存"
-                            : imported ? "等待音频转写" : "等待会议开始"}
-                        </span>
-                        <span>
-                          {textCount.toLocaleString()} 字 · {transcripts.length}{" "}
-                          段
-                        </span>
+                        <div className="document-footer-actions">
+                          <label className="scroll-toggle">
+                            <span>自动滚动</span>
+                            <Switch
+                              size="sm"
+                              checked={autoScroll}
+                              onCheckedChange={setAutoScroll}
+                              aria-label="自动滚动转写"
+                            />
+                          </label>
+                          <span>
+                            {textCount.toLocaleString()} 字
+                          </span>
+                          {transcripts.length > 0 && meetingApi && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={exportingText}
+                              onClick={exportText}
+                            >
+                              <Download size={14} />
+                              {exportingText ? "正在准备…" : "导出转写"}
+                            </Button>
+                          )}
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            disabled={!transcripts.length}
+                            onClick={copyTranscript}
+                            aria-label="复制转写"
+                            title="复制转写"
+                          >
+                            <Copy size={13} />
+                          </Button>
+                        </div>
                       </div>
                     </Card>
                   </TabsContent>
                   <TabsContent value="minutes" className="meeting-panel">
                     <Card className="document-card">
-                      <div className="document-heading">
-                        <h2>
-                          <Sparkles size={16} />
-                          会议总结
-                        </h2>
-                        {session && !isRecording && transcripts.length > 0 && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            disabled={
-                              summaryBusy || importPending ||
-                              session?.remoteStatus !== "ended" ||
-                              !transcripts.length
-                            }
-                            onClick={() => generateReport()}
-                          >
-                            {summaryBusy ? (
-                              <LoaderCircle
-                                size={14}
-                                className="animate-spin"
-                              />
-                            ) : (
-                              <RefreshCw size={14} />
-                            )}
-                            {session.minutes ? "重新生成" : "生成总结"}
-                          </Button>
-                        )}
-                      </div>
                       <div className="document-scroll panel-scroll">
                         {session?.minutesStale && <p className="minutes-notice" role="status">转写已更新，可重新生成纪要。</p>}
                         {session?.minutesError && (
@@ -1880,7 +1934,7 @@ export function App() {
                         {session?.minutes ? (
                           <article
                             className="minutes-document"
-                            aria-label="会议总结正文"
+                            aria-label="会议纪要正文"
                             tabIndex={0}
                           >
                             <MinutesMarkdown text={session.minutes} />
@@ -1888,16 +1942,17 @@ export function App() {
                         ) : (
                           <EmptyDocument
                             icon={summaryBusy ? LoaderCircle : Sparkles}
+                            iconClassName={summaryBusy ? "animate-spin" : undefined}
                             title={
                               importPending ? importStatusLabel(importJob) : correcting
                                 ? "正在校正说话人"
                                 : summaryBusy
-                                ? "正在整理会议内容"
+                                ? "正在整理会议纪要"
                                 : "让会议有清晰的下一步"
                             }
                             description={
-                              importPending ? (importJob.status === "failed" ? "请点击音频卡片中的重试处理，已保存的内容会保留。" : "后台处理完成后将自动展示会议总结。") : correcting
-                                ? "校正完成后将生成会议总结。"
+                              importPending ? (importJob.status === "failed" ? "请点击音频卡片中的重试处理，已保存的内容会保留。" : "后台处理完成后将自动展示会议纪要。") : correcting
+                                ? "校正完成后将生成会议纪要。"
                                 : summaryBusy
                                 ? "正在提炼核心结论、决策与待办，请稍候。"
                                 : "结束会议后，将完整转写整理为核心结论、决策、待办和下一步安排。"
@@ -1906,32 +1961,50 @@ export function App() {
                         )}
                       </div>
                       <div className="document-footer">
-                        <span>
-                          <CheckCheck size={13} />
-                          {importPending ? importStatusLabel(importJob) : correcting
-                            ? "正在校正说话人"
-                            : summaryBusy
-                            ? "正在生成总结"
-                            : session?.minutes
-                              ? "会议总结已保存"
-                              : "等待生成总结"}
-                        </span>
-                        {session?.minutes && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={openMinutesWindow}
-                          >
-                            <ArrowUpRight size={14} />
-                            独立窗口
-                          </Button>
-                        )}
+                        <div className="document-footer-actions">
+                          {session && !isRecording && transcripts.length > 0 && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              disabled={
+                                summaryBusy || importPending ||
+                                session?.remoteStatus !== "ended" ||
+                                !transcripts.length
+                              }
+                              onClick={() => generateReport()}
+                            >
+                              {summaryBusy ? (
+                                <LoaderCircle
+                                  size={14}
+                                  className="animate-spin"
+                                />
+                              ) : (
+                                <RefreshCw size={14} />
+                              )}
+                              {session.minutes ? "重新生成" : "生成纪要"}
+                            </Button>
+                          )}
+                          {session?.minutes && (
+                            <>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="gap-1.5 text-xs"
+                                disabled={exportingMinutes}
+                                onClick={() => setMinutesExportOpen(true)}
+                              >
+                                <Download size={14} />
+                                {exportingMinutes ? "正在准备…" : "导出纪要"}
+                              </Button>
+                            </>
+                          )}
+                        </div>
                       </div>
                     </Card>
                   </TabsContent>
                 </Tabs>
 
-                {!imported && <div className="meeting-aside">
+                <div className="meeting-aside">
                   <StageSummaryPanel
                     key={session?.remoteMeetingId || "no-meeting"}
                     summaries={stageSummaries}
@@ -1942,8 +2015,10 @@ export function App() {
                     retrying={retryingStageSummaries}
                     onRetry={retryStageSummaries}
                     onJump={jumpToStageSummary}
+                    onExport={exportStageSummaries}
+                    exporting={exportingStageSummaries}
                   />
-                </div>}
+                </div>
               </div>
             </section>
           )}
@@ -1961,7 +2036,7 @@ export function App() {
               busy={isStarting || isRecording}
             />
           )}
-          {activeView === "departments" && (
+          {activeView === "departments" && authUser?.is_admin && (
             <DepartmentManagement
               key={config.stt.baseUrl}
               api={meetingApi}
@@ -1971,152 +2046,16 @@ export function App() {
               onChanged={refreshCatalog}
             />
           )}
-
-          {activeView === "settings" && (
-            <section className="page-content settings-page">
-              <div className="page-heading">
-                <div>
-                  <h1>模型设置</h1>
-                  <p>连接语音转写与大语言模型，搭建你的会议工作流。</p>
-                </div>
-                {settingsTab === "stt" ? (
-                  <Button size="sm" onClick={() => saveConfig()}>
-                    <Save size={14} />
-                    保存配置
-                  </Button>
-                ) : (
-                  <Button
-                    size="sm"
-                    type="submit"
-                    form={LLM_SETTINGS_FORM_ID}
-                    disabled={!llmSaveState.canSave}
-                  >
-                    {llmSaveState.busy ? (
-                      <LoaderCircle size={14} className="animate-spin" />
-                    ) : (
-                      <Save size={14} />
-                    )}
-                    {llmSaveState.busy ? "正在保存…" : "保存配置"}
-                  </Button>
-                )}
-              </div>
-              <Tabs
-                value={settingsTab}
-                onValueChange={setSettingsTab}
-                className="settings-tabs"
-              >
-                <TabsList className="w-fit">
-                  <TabsTrigger value="stt">
-                    <AudioLines size={14} />
-                    语音转写
-                  </TabsTrigger>
-                  <TabsTrigger value="llm">
-                    <Sparkles size={14} />
-                    大语言模型
-                  </TabsTrigger>
-                </TabsList>
-                <TabsContent
-                  value="stt"
-                  className="settings-panel panel-scroll"
-                >
-                  <Card className="settings-card">
-                    <CardHeader>
-                      <div className="settings-card-heading">
-                        <span className="settings-icon">
-                          <AudioLines size={20} />
-                        </span>
-                        <div>
-                          <CardTitle>语音转写服务</CardTitle>
-                          <CardDescription>
-                            将会议录音实时转换为文字。
-                          </CardDescription>
-                        </div>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => testProvider("stt")}
-                        >
-                          测试连接
-                        </Button>
-                      </div>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="settings-form-grid">
-                        <Field label="接口地址">
-                          <Input
-                            value={formConfig.stt.baseUrl}
-                            onChange={(event) =>
-                              updateForm("stt.baseUrl", event.target.value)
-                            }
-                            placeholder="http://127.0.0.1:8000"
-                          />
-                        </Field>
-                        <Field label="识别语言">
-                          <Select
-                            value={formConfig.stt.language}
-                            onValueChange={(value) =>
-                              updateForm("stt.language", value)
-                            }
-                          >
-                            <SelectTrigger aria-label="识别语言">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {STT_LANGUAGE_OPTIONS.map((option) => (
-                                <SelectItem
-                                  key={option.value}
-                                  value={option.value}
-                                >
-                                  {option.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </Field>
-                      </div>
-                      <div
-                        className={`provider-status ${providerProbe.stt.tone}`}
-                        role="status"
-                      >
-                        <i />
-                        {providerProbe.stt.text}
-                      </div>
-                    </CardContent>
-                  </Card>
-                  <MicrophoneLevelTest />
-                </TabsContent>
-                <TabsContent
-                  value="llm"
-                  className="settings-panel panel-scroll"
-                >
-                  <ServerModelSettings
-                    api={meetingApi}
-                    onSaveStateChange={setLlmSaveState}
-                  />
-                </TabsContent>
-              </Tabs>
-              <div className="settings-save-note">
-                <CheckCheck size={13} />
-                {settingsTab === "llm"
-                  ? "大语言模型配置由会议服务统一管理。"
-                  : settingsSavedAtLabel
-                    ? `配置已保存于 ${settingsSavedAtLabel}`
-                    : "修改后点击「保存配置」，下次会议将使用新配置。"}
-              </div>
-            </section>
+          {activeView === "voiceprints" && authUser?.is_admin && (
+            <VoiceprintManagement
+              key={config.stt.baseUrl}
+              api={meetingApi}
+              departments={departments}
+            />
           )}
-
-          <footer
-            className="workspace-statusbar"
-            role="status"
-            aria-live="polite"
-          >
-            <span>
-              <i className={recordingActive ? "pulsing" : ""} />
-              {statusError ? "操作未完成，请查看上方提示" : statusLine}
-            </span>
-            <span>会议助手</span>
-          </footer>
+          {activeView === "minutesFormats" && authUser?.is_admin && (
+            <MinutesFormatManagement key={config.stt.baseUrl} api={meetingApi} formats={minutesFormats} onChanged={refreshCatalog} />
+          )}
         </main>
       </div>
     </div>

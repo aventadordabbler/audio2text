@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { ArrowUpRight, FileText, LoaderCircle, RefreshCw } from "lucide-react"
+import { ArrowUpRight, Download, FileText, LoaderCircle, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import type { StageSummary, StageSummaryStatus } from "@/lib/stage-summary"
 
@@ -37,6 +37,7 @@ export function StageSummaryPanel({
   retrying = false,
   onRetry,
   onJump,
+  downloadUrl,
 }: {
   summaries: StageSummary[]
   status?: StageSummaryStatus
@@ -45,6 +46,7 @@ export function StageSummaryPanel({
   retrying?: boolean
   onRetry?: () => void
   onJump?: (summary: StageSummary) => void
+  downloadUrl?: string
 }) {
   const [expandedKeys, setExpandedKeys] = useState(() => new Set<string>())
   const statusLabel = STATUS_LABELS[status] || STATUS_LABELS.idle
@@ -163,6 +165,16 @@ export function StageSummaryPanel({
           </p>
         )}
       </div>
+      {downloadUrl && summaries.some((summary) => summary.status === "ready" && summary.text?.trim()) && (
+        <footer className="ai-insight-footer">
+          <Button variant="ghost" size="sm" asChild className="gap-1.5 text-xs">
+            <a id="download-stage-summaries" href={downloadUrl}>
+              <Download />
+              导出阶段总结
+            </a>
+          </Button>
+        </footer>
+      )}
     </aside>
   )
 }

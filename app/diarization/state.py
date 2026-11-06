@@ -13,7 +13,7 @@ from ..transcripts import atomic_json
 
 
 class SpeakerState:
-    def __init__(self, directory: Path):
+    def __init__(self, directory: Path, voiceprints=()):
         self.directory = directory
         self.path = directory / "speaker-state.json"
         self.log = directory / "speaker-features.jsonl"
@@ -36,11 +36,20 @@ class SpeakerState:
                     entry = json.loads(line)
                     self.value = entry["state"]
                     self.value["offset"] = source.tell()
+        for row in voiceprints:
+            if row.get("embedding"):
+                self.value["speakers"].setdefault(
+                    row["id"], {"name": row["name"], "embedding": json.loads(row["embedding"]),
+                                  "weight": 60000, "registered": True},
+                )
+        if voiceprints:
             atomic_json(self.path, self.value)
 
     @property
     def names(self):
-        return {key: {"name": s["name"]} for key, s in self.value["speakers"].items()}
+        active = {speaker for turn in self.value["turns"] for speaker in turn["speaker_ids"]}
+        return {key: {"name": s["name"]} for key, s in self.value["speakers"].items()
+                if key in active or not s.get("registered")}
 
     def accept(self, result):
         if self.value["model_tag"] not in (None, result["model_tag"]):

@@ -36,9 +36,10 @@ async def _disk(function, *args, **kwargs):
 
 
 class AudioImportService:
-    def __init__(self, store, models, settings, diarization, minutes, decoder_factory=None):
+    def __init__(self, store, models, settings, diarization, minutes, decoder_factory=None, stage_summaries=None):
         self.store, self.models, self.settings = store, models, settings
         self.diarization, self.minutes = diarization, minutes
+        self.stage_summaries = stage_summaries
         self.decoder_factory = decoder_factory
         self.tasks = {}
         self.lock = asyncio.Lock()
@@ -67,7 +68,7 @@ class AudioImportService:
             raise MeetingError("请选择 WAV 或 MP3 音频文件", 422)
         return f"source{f'-{index}' if index is not None else ''}{suffix}"
 
-    async def create(self, upload, title, language, department_id, user_id=None):
+    async def create(self, upload, title, language, department_id, user_id=None, minutes_format_id=None):
         uploads = upload if isinstance(upload, (list, tuple)) else [upload]
         if not uploads:
             raise MeetingError("请至少选择一个音频文件", 422)
@@ -100,7 +101,7 @@ class AudioImportService:
                     await self._decode(directory, source_name, continue_capture=index > 0)
                 # Publish the meeting only after its complete archive and exact duration exist.
                 publishing = asyncio.create_task(self._publish(directory, title, language, department_id,
-                                                               "、".join(filenames), user_id))
+                                                               "、".join(filenames), user_id, minutes_format_id))
                 try:
                     return await asyncio.shield(publishing)
                 except asyncio.CancelledError:
@@ -123,7 +124,7 @@ class AudioImportService:
             raise MeetingError("上传会话不存在", 404)
         return directory, meta
 
-    async def start_chunked(self, title, language, files, user_id=None):
+    async def start_chunked(self, title, language, files, user_id=None, minutes_format_id=None):
         if not files:
             raise MeetingError("请至少选择一个音频文件", 422)
         normalized = []
@@ -154,7 +155,7 @@ class AudioImportService:
         directory.mkdir()
         meta = {
             "upload_id": upload_id, "title": title.strip(), "language": language,
-            "files": normalized, "user_id": user_id,
+            "files": normalized, "user_id": user_id, "minutes_format_id": minutes_format_id,
         }
         (directory / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
         result = {"upload_id": upload_id, "files": [
@@ -248,15 +249,16 @@ class AudioImportService:
                         chunk_path.unlink()
                 (directory / "metadata.json").unlink(missing_ok=True)
                 return await self._publish(directory, meta["title"], meta["language"], None,
-                                           "、".join(item["filename"] for item in files), user_id)
+                                           "、".join(item["filename"] for item in files), user_id,
+                                           meta.get("minutes_format_id"))
             except BaseException:
                 if directory.exists():
                     shutil.rmtree(directory, ignore_errors=True)
                 raise
 
-    async def _publish(self, directory, title, language, department_id, filename, user_id=None):
+    async def _publish(self, directory, title, language, department_id, filename, user_id=None, minutes_format_id=None):
         async with self.lock:
-            meeting = await _disk(self.store.create, title, language, department_id,
+            meeting = await _disk(self.store.create, title, language, department_id, minutes_format_id,
                                   imported_audio=directory, filename=filename, user_id=user_id)
             self._schedule(meeting["id"])
             return meeting
@@ -394,6 +396,8 @@ class AudioImportService:
                     stage = "diarizing"
                 if job["stage"] == "diarizing":
                     await self.diarization.correct_import(meeting_id)
+                    if self.stage_summaries is not None:
+                        await self.stage_summaries.finish(meeting_id, job["total_samples"])
                     await _disk(self._update, meeting_id, stage="summarizing")
                     stage = "summarizing"
                 result = await self.minutes.get(meeting_id)

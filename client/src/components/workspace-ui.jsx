@@ -16,6 +16,7 @@ export function WorkspaceBrand() {
 
 export function EmptyDocument({
   icon: Icon = FileText,
+  iconClassName,
   title,
   description,
   children,
@@ -23,7 +24,7 @@ export function EmptyDocument({
   return (
     <div className="document-empty">
       <div className="document-empty-icon">
-        <Icon size={26} strokeWidth={1.5} />
+        <Icon size={26} strokeWidth={1.5} className={iconClassName} />
       </div>
       <h3>{title}</h3>
       <p>{description}</p>

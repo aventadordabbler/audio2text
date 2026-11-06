@@ -16,10 +16,15 @@ from .meetings import MeetingError, MeetingStore
 from .minutes import MinutesGenerationError, OpenAIMinutesGenerator
 from .model_configs import ModelConfig, ModelConfigStore
 from .recordings import SAMPLE_RATE, read_audio_summary
+from .transcripts import plain_text
 
 logger = logging.getLogger(__name__)
 
 STAGE_PROMPT = """请对下面时间段内的聊天内容进行简洁、忠实的总结概括。
+输入中的[讲话人]标记表示对应的发言人。必须保留每条观点、建议、结论与讲话人的对应关系，
+例如“张三认为……”或“李四提出……”，不要把不同人的发言合并成没有主语的结论。
+必须准确保留原文明确出现的数字、日期、人员、责任人、截止时间、决策和未解决问题，
+不要遗漏、改写或臆测这些事实。
 只总结本阶段实际讨论的内容，不要按照预设目标、固定栏目或任务类型整理，
 也不要推断原文没有明确表达的信息。请使用自然连贯的中文段落，
 不要重复会议名称或时间范围，不要添加开场说明。"""
@@ -132,7 +137,9 @@ class StageSummaryStore:
                     FROM stage_summary_sessions JOIN meetings
                     ON meetings.id = stage_summary_sessions.meeting_id
                     WHERE meetings.status IN ('paused', 'ended')
-                    AND NOT EXISTS (SELECT 1 FROM meeting_imports WHERE meeting_imports.meeting_id = meetings.id)
+                    AND NOT EXISTS (SELECT 1 FROM meeting_imports
+                        WHERE meeting_imports.meeting_id = stage_summary_sessions.meeting_id
+                        AND meeting_imports.status != 'ready')
                     AND meetings.updated_at != stage_summary_sessions.reconciled_updated_at""")
             ]
 
@@ -340,6 +347,11 @@ class StageSummaryService:
                 self.settings.stage_summary_window_seconds * SAMPLE_RATE,
                 True,
             )
+            meeting = await asyncio.to_thread(self.meetings.get, meeting_id)
+            if meeting is not None:
+                await asyncio.to_thread(
+                    self.store.mark_reconciled, meeting_id, meeting["updated_at"]
+                )
         except Exception:
             # Do not turn a successful recording control into a failure. The worker
             # retains the exact boundary and retries the database operation.
@@ -462,11 +474,12 @@ class StageSummaryService:
             document = await asyncio.to_thread(self.meetings.transcript(row["meeting_id"]).read)
             start_ms = row["start_sample"] * 1000 / SAMPLE_RATE
             end_ms = row["end_sample"] * 1000 / SAMPLE_RATE
-            text = "\n\n".join(
-                segment["text"].strip()
+            segments = [
+                segment
                 for segment in document["segments"]
                 if segment["text"].strip() and start_ms <= segment.get("start_ms", 0) < end_ms
-            )
+            ]
+            text = plain_text({**document, "segments": segments}, labels=True)
             if not text:
                 await asyncio.to_thread(
                     self.store.save,

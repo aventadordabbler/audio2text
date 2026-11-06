@@ -70,10 +70,10 @@ export function DepartmentManagement({ departments, onChanged }: {
           <Plus className="size-4" />新增部门
         </Button>
       </div>
-      <Card className="department-table-card gap-0 overflow-hidden rounded-xl py-0 shadow-none">
+      <Card className="meeting-table-card department-table-card gap-0 overflow-hidden rounded-xl py-0 shadow-none">
         <Table>
           <TableHeader>
-            <TableRow>
+            <TableRow className="bg-muted/45 hover:bg-muted/45">
               <TableHead>部门名称</TableHead>
               <TableHead className="w-24">会议数</TableHead>
               <TableHead className="department-date-column w-36">创建时间</TableHead>
@@ -82,12 +82,12 @@ export function DepartmentManagement({ departments, onChanged }: {
           </TableHeader>
           <TableBody>
             {departments.map((department) => (
-              <TableRow key={department.id}>
+              <TableRow key={department.id} className="meeting-row">
                 <TableCell><span className="department-name"><Building2 className="size-4 shrink-0 text-muted-foreground" />{department.name}</span></TableCell>
                 <TableCell className="text-muted-foreground">{department.meeting_count}</TableCell>
                 <TableCell className="department-date-column text-xs text-muted-foreground">{formatDate(department.created_at, false)}</TableCell>
                 <TableCell>
-                  <div className="flex justify-end gap-1">
+                  <div className="flex justify-center gap-1">
                     <Button variant="ghost" size="icon-sm" aria-label={`编辑${department.name}`} onClick={() => edit(department)}><Pencil /></Button>
                     <Button
                       variant="ghost" size="icon-sm" aria-label={`删除${department.name}`}
@@ -100,7 +100,7 @@ export function DepartmentManagement({ departments, onChanged }: {
               </TableRow>
             ))}
             {!departments.length && (
-              <TableRow><TableCell colSpan={4}>
+              <TableRow className="hover:bg-transparent"><TableCell colSpan={4}>
                 <div className="empty-state">
                   <Building2 className="mb-4 size-8 text-neutral-400" />
                   <h3>还没有部门</h3>
@@ -111,7 +111,6 @@ export function DepartmentManagement({ departments, onChanged }: {
             )}
           </TableBody>
         </Table>
-        <div className="table-footer"><span>共 {departments.length} 个部门</span><span>已有会议的部门可重命名</span></div>
       </Card>
       <Dialog open={editing !== null} onOpenChange={(open) => { if (!open && !busy) setEditing(null) }}>
         <DialogContent className="sm:max-w-md">

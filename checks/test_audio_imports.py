@@ -6,6 +6,7 @@ import logging
 import subprocess
 import threading
 import wave
+from zipfile import ZipFile
 
 import httpx
 import numpy as np
@@ -85,6 +86,9 @@ class Minutes:
     def __init__(self, fail=False):
         self.fail, self.calls = fail, []
 
+    async def generate_format_prompt(self, name, requirement):
+        return f"{name}：{requirement}"
+
     async def generate(self, title, text):
         self.calls.append(text)
         if self.fail:
@@ -92,10 +96,20 @@ class Minutes:
         return f"# {title}\n\n{text}"
 
 
-def build(tmp_path, *, decoder=None, minutes=None, **settings):
+class StageSummary:
+    def __init__(self):
+        self.calls = []
+
+    async def generate(self, title, transcript, start_seconds, end_seconds):
+        self.calls.append((title, transcript, start_seconds, end_seconds))
+        return f"{start_seconds:g}-{end_seconds:g} 秒：{transcript}"
+
+
+def build(tmp_path, *, decoder=None, minutes=None, stage_summary=None, **settings):
     app = create_app(
         Settings(_env_file=None, data_dir=tmp_path, database_path=tmp_path / "meetings.sqlite3", **settings),
         minutes_generator=minutes or Minutes(), diarization_worker_factory=SpeakerWorker,
+        stage_summary_generator=stage_summary,
         import_decoder_factory=lambda _config: decoder or Decoder(),
     )
     app.state.model_configs.save("asr", ModelConfigInput(base_url="http://asr.invalid/v1", model="fixture"))
@@ -105,7 +119,18 @@ def build(tmp_path, *, decoder=None, minutes=None, **settings):
 async def login(client):
     await client.post("/api/auth/register", json={"account": "fixture", "password": "password1",
                                                   "department": "测试部门", "employee_id": "001"})
-    response = await client.post("/api/auth/login", json={"account": "fixture", "password": "password1"})
+    return await login_existing(client)
+
+
+async def login_existing(client, account="fixture", password="password1"):
+    response = await client.post("/api/auth/login", json={"account": account, "password": password})
+    client.headers["Authorization"] = f"Bearer {response.json()['token']}"
+    return response.json()["user"]
+
+
+async def admin_login(client):
+    response = await client.post("/api/auth/login", json={"account": "admin", "password": ""})
+    assert response.status_code == 200, response.text
     client.headers["Authorization"] = f"Bearer {response.json()['token']}"
     return response.json()["user"]
 
@@ -124,12 +149,24 @@ async def settled(client, meeting_id):
             await asyncio.sleep(0.02)
 
 
+async def stage_settled(client, meeting_id):
+    async with asyncio.timeout(10):
+        while True:
+            rows = (await client.get(f"/api/meetings/{meeting_id}/stage-summaries")).json()
+            if rows and all(row["status"] == "ready" for row in rows):
+                return rows
+            await asyncio.sleep(0.02)
+
+
 async def test_import_transcribes_labels_summarizes_and_exports_with_audio_duration(tmp_path):
     minutes = Minutes()
-    app = build(tmp_path, minutes=minutes)
+    stage_summary = StageSummary()
+    app = build(tmp_path, minutes=minutes, stage_summary=stage_summary, stage_summary_window_seconds=10)
     async with app.router.lifespan_context(app), httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
         await login(client)
+        await admin_login(client)
         department = (await client.post("/api/departments", json={"name": "研发部"})).json()
+        await login_existing(client)
         response = await imported(client, department_id=department["id"], language="zh")
         assert response.status_code == 202, response.text
         initial = response.json()
@@ -143,8 +180,32 @@ async def test_import_transcribes_labels_summarizes_and_exports_with_audio_durat
         assert "[说话人 1]" in minutes.calls[0]
         assert len(minutes.calls) == 1
         prefix = f"/api/meetings/{meeting['id']}"
-        assert (await client.get(prefix + "/download")).text == meeting["text"] + "\n"
+        exported = await client.get(prefix + "/download")
+        assert exported.text == meeting["text"] + "\n"
+        assert "# 导入会议" not in exported.text
         assert (await client.get(prefix + "/minutes")).json()["status"] == "ready"
+        assert (await client.head(prefix + "/minutes/download")).status_code == 200
+        docx = await client.get(prefix + "/minutes/download?format=docx")
+        assert docx.status_code == 200
+        assert docx.headers["content-type"].startswith(
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+        assert 'filename="meeting-minutes.docx"' in docx.headers["content-disposition"]
+        assert "%E4%BC%9A%E8%AE%AE%E7%BA%AA%E8%A6%81.docx" in docx.headers["content-disposition"]
+        with ZipFile(BytesIO(docx.content)) as archive:
+            assert archive.testzip() is None
+            assert "导入会议" in archive.read("word/document.xml").decode()
+        docx_head = await client.head(prefix + "/minutes/download?format=docx")
+        assert docx_head.status_code == 200
+        assert docx_head.headers["content-length"] == str(len(docx.content))
+        stage_rows = await stage_settled(client, meeting["id"])
+        assert len(stage_rows) == 1
+        assert stage_summary.calls
+        assert stage_summary.calls[0][1].startswith("[说话人 1] ")
+        stage_export = await client.get(prefix + "/stage-summaries/download")
+        assert stage_export.status_code == 200
+        assert "阶段总结" in stage_export.text
+        assert (await client.head(prefix + "/stage-summaries/download")).headers["content-length"] == str(len(stage_export.content))
         audio = (await client.get(prefix + "/audio/download")).content
         with wave.open(BytesIO(audio)) as archive:
             assert archive.getframerate() == 16000 and archive.getnchannels() == 1
@@ -256,6 +317,67 @@ async def test_invalid_import_creates_no_meeting(tmp_path, filename, content, st
         assert response.status_code == status, response.text
         assert (await client.get("/api/meetings")).json() == []
         assert not list((tmp_path / ".audio-uploads").glob("wav-*"))
+
+
+async def test_department_management_is_admin_only(tmp_path):
+    app = build(tmp_path)
+    async with app.router.lifespan_context(app), httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
+        await login(client)
+        assert (await client.get("/api/departments")).status_code == 403
+        assert (await client.post("/api/departments", json={"name": "普通用户不应创建"})).status_code == 403
+
+        regular_token = client.headers["Authorization"]
+        await admin_login(client)
+        created = await client.post("/api/departments", json={"name": "管理员部门"})
+        assert created.status_code == 201, created.text
+        department_id = created.json()["id"]
+        assert (await client.get("/api/departments")).status_code == 200
+        assert (await client.put(f"/api/departments/{department_id}", json={"name": "管理员部门二"})).status_code == 200
+        assert (await client.delete(f"/api/departments/{department_id}")).status_code == 204
+
+        client.headers["Authorization"] = regular_token
+        assert (await client.put(f"/api/departments/{department_id}", json={"name": "越权修改"})).status_code == 403
+        assert (await client.delete(f"/api/departments/{department_id}")).status_code == 403
+
+
+async def test_admin_can_view_all_users_meetings(tmp_path):
+    app = build(tmp_path)
+    async with app.router.lifespan_context(app), httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
+        await login(client)
+        fixture_meeting = await client.post("/api/meetings", json={"title": "Fixture meeting"})
+        assert fixture_meeting.status_code == 201
+
+        await client.post("/api/auth/register", json={
+            "account": "second-user", "password": "password1",
+            "department": "第二部门", "employee_id": "002",
+        })
+        await login_existing(client, "second-user")
+        second_meeting = await client.post("/api/meetings", json={"title": "Second meeting"})
+        assert second_meeting.status_code == 201
+        assert len((await client.get("/api/meetings")).json()) == 1
+
+        await admin_login(client)
+        meetings = await client.get("/api/meetings")
+        assert {item["title"] for item in meetings.json()} == {"Fixture meeting", "Second meeting"}
+        assert (await client.get(f"/api/meetings/{fixture_meeting.json()['id']}")).status_code == 200
+        assert (await client.get(f"/api/meetings/{second_meeting.json()['id']}")).status_code == 200
+
+
+async def test_admin_can_generate_minutes_format_prompt(tmp_path):
+    app = build(tmp_path)
+    async with app.router.lifespan_context(app), httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
+        await login(client)
+        denied = await client.post("/api/minutes-formats/generate", json={
+            "name": "项目评审会", "requirement": "包含结论和待办",
+        })
+        assert denied.status_code == 403
+
+        await admin_login(client)
+        response = await client.post("/api/minutes-formats/generate", json={
+            "name": "项目评审会", "requirement": "包含结论和待办",
+        })
+        assert response.status_code == 200
+        assert response.json() == {"prompt": "项目评审会：包含结论和待办"}
 
 
 async def test_decoded_duration_limit_and_department_bound_to_user(tmp_path):

@@ -13,25 +13,28 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { CreateMeetingDialog } from "@/components/create-meeting-dialog"
 import { DepartmentManagement } from "@/components/department-management"
+import { MinutesFormatManagement } from "@/components/minutes-format-management"
 import { MeetingDetail } from "@/components/meeting-detail"
 import { ModelConfigDialog } from "@/components/model-config-dialog"
 import { MeetingList } from "@/components/meeting-list"
 import { WorkspaceSidebar } from "@/components/workspace-sidebar"
-import { AuthScreen } from "@/components/auth-screen"
-import { api, authToken, emptyMeetingFilters, errorMessage, setAuthToken, type Department, type Meeting, type MeetingFilters } from "@/lib/meetings"
+import { VoiceprintManagement } from "@/components/voiceprint-management"
+import { AuthScreen, PasswordChangeScreen } from "@/components/auth-screen"
+import { api, authToken, emptyMeetingFilters, errorMessage, setAuthToken, type Department, type Meeting, type MeetingFilters, type MinutesFormat } from "@/lib/meetings"
 import { RecordingSession } from "@/lib/recording-session"
 
 export default function App() {
   const [session] = useState(() => new RecordingSession())
   const state = useSyncExternalStore(session.subscribe, session.getSnapshot)
   const [authReady, setAuthReady] = useState(false)
-  const [authUser, setAuthUser] = useState<Record<string, string> | null>(null)
+  const [authUser, setAuthUser] = useState<Record<string, unknown> | null>(null)
   const [meetings, setMeetings] = useState<Meeting[]>([])
   const [loading, setLoading] = useState(true)
   const [routing, setRouting] = useState(true)
   const [filters, setFilters] = useState<MeetingFilters>(emptyMeetingFilters)
   const [departments, setDepartments] = useState<Department[]>([])
-  const [page, setPage] = useState<"meetings" | "departments">("meetings")
+  const [minutesFormats, setMinutesFormats] = useState<MinutesFormat[]>([])
+  const [page, setPage] = useState<"meetings" | "departments" | "voiceprints" | "minutes-formats">("meetings")
   const [error, setError] = useState("")
   const [createOpen, setCreateOpen] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -72,14 +75,17 @@ export default function App() {
   }, [authUser])
 
   const refresh = useCallback(async () => {
-    if (!authUser) return
+    if (!authUser || authUser.must_change_password) return
     setLoading(true)
     try {
-      const [meetings, departments] = await Promise.all([
-        api<Meeting[]>("/api/meetings"), api<Department[]>("/api/departments"),
+      const [meetings, departments, minutesFormats] = await Promise.all([
+        api<Meeting[]>("/api/meetings"),
+        authUser.is_admin ? api<Department[]>("/api/departments") : Promise.resolve([] as Department[]),
+        api<MinutesFormat[]>("/api/minutes-formats"),
       ])
       setMeetings(meetings)
       setDepartments(departments)
+      setMinutesFormats(minutesFormats)
       setFilters((filters) =>
         filters.departmentId === "all" || filters.departmentId === "unassigned" || departments.some((department) => department.id === filters.departmentId)
           ? filters : { ...filters, departmentId: "all" },
@@ -93,7 +99,7 @@ export default function App() {
 
   useEffect(() => {
     let active = true
-    if (!authUser) {
+    if (!authUser || authUser.must_change_password) {
       setRouting(false)
       return () => { active = false }
     }
@@ -105,7 +111,7 @@ export default function App() {
           await session.leave()
           setError("")
           const match = location.hash.match(/^#meeting\/([a-f0-9]{32})$/)
-          if (active) setPage(location.hash === "#departments" ? "departments" : "meetings")
+          if (active) setPage(location.hash === "#departments" && authUser?.is_admin ? "departments" : location.hash === "#voiceprints" && authUser?.is_admin ? "voiceprints" : location.hash === "#minutes-formats" && authUser?.is_admin ? "minutes-formats" : "meetings")
           try {
             if (match) {
               const meeting = await api<Meeting>(`/api/meetings/${match[1]}`)
@@ -164,8 +170,8 @@ export default function App() {
       )
   }, [state.meeting])
 
-  function selectPage(value: "meetings" | "departments") {
-    location.hash = value === "departments" ? "departments" : ""
+  function selectPage(value: "meetings" | "departments" | "voiceprints" | "minutes-formats") {
+    location.hash = value === "meetings" ? "" : value
   }
   function created(meeting: Meeting) {
     setMeetings((meetings) => [meeting, ...meetings])
@@ -177,6 +183,7 @@ export default function App() {
     setAuthUser(null)
     setMeetings([])
     setDepartments([])
+    setMinutesFormats([])
     setError("")
     location.hash = ""
   }
@@ -190,11 +197,13 @@ export default function App() {
     busy: state.busy,
     onConfigure: configureModels,
     onPage: selectPage,
+    isAdmin: Boolean(authUser?.is_admin),
   }
   const visibleError = error || state.error
 
   if (!authReady) return <div className="auth-screen">正在检查登录状态…</div>
   if (!authUser) return <AuthScreen onAuthenticated={setAuthUser} />
+  if (authUser.must_change_password) return <PasswordChangeScreen user={authUser} onChanged={setAuthUser} />
 
   return (
     <TooltipProvider delayDuration={300}>
@@ -218,7 +227,7 @@ export default function App() {
                 </SheetTrigger>
                 <SheetContent side="left" className="w-[260px] gap-0 p-0">
                   <SheetTitle className="sr-only">会议助手导航</SheetTitle>
-                  <SheetDescription className="sr-only">会议管理与部门管理</SheetDescription>
+              <SheetDescription className="sr-only">会议管理、声纹管理与部门管理</SheetDescription>
                   <WorkspaceSidebar {...sidebarProps} onNavigate={() => setMobileOpen(false)} />
                 </SheetContent>
               </Sheet>
@@ -226,7 +235,7 @@ export default function App() {
               <nav aria-label="面包屑" className="breadcrumb">
                 <span>工作空间</span>
                 <ChevronRight />
-                <a href={page === "departments" ? "#departments" : "#"}>{page === "departments" ? "部门管理" : "会议管理"}</a>
+                <a href={page === "meetings" ? "#" : `#${page}`}>{page === "departments" ? "部门管理" : page === "voiceprints" ? "声纹管理" : page === "minutes-formats" ? "纪要格式" : "会议管理"}</a>
                 {state.meeting && (
                   <>
                     <ChevronRight />
@@ -281,8 +290,12 @@ export default function App() {
               <Skeleton className="mb-9 h-4 w-72 max-w-full" />
               <Skeleton className="h-80 w-full rounded-xl" />
             </div>
-          ) : page === "departments" ? (
+          ) : page === "departments" && authUser.is_admin ? (
               <DepartmentManagement departments={departments} onChanged={refresh} />
+          ) : page === "voiceprints" && authUser.is_admin ? (
+            <VoiceprintManagement departments={departments} />
+          ) : page === "minutes-formats" && authUser.is_admin ? (
+            <MinutesFormatManagement formats={minutesFormats} onChanged={refresh} />
           ) : state.meeting ? (
             <MeetingDetail
               key={state.meeting.id}
@@ -306,7 +319,7 @@ export default function App() {
           )}
         </main>
       </div>
-      <CreateMeetingDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={created} />
+      <CreateMeetingDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={created} minutesFormats={minutesFormats} />
       <ModelConfigDialog
         open={modelsOpen}
         onOpenChange={setModelsOpen}

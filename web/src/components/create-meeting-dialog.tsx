@@ -18,21 +18,24 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { api, errorMessage, importWav, STT_LANGUAGE_OPTIONS, type Meeting } from "@/lib/meetings"
+import { api, errorMessage, importWav, STT_LANGUAGE_OPTIONS, type Meeting, type MinutesFormat } from "@/lib/meetings"
 
 export function CreateMeetingDialog({
   open,
   onOpenChange,
   onCreated,
+  minutesFormats,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   onCreated: (meeting: Meeting) => void
+  minutesFormats: MinutesFormat[]
 }) {
   const [title, setTitle] = useState("")
   const [source, setSource] = useState("recording")
   const [files, setFiles] = useState<File[]>([])
   const [language, setLanguage] = useState("auto")
+  const [minutesFormatId, setMinutesFormatId] = useState("default")
   const [submitting, setSubmitting] = useState(false)
   const [uploadProgress, setUploadProgress] = useState<{ completed: number; total: number } | null>(null)
   const [error, setError] = useState("")
@@ -42,6 +45,7 @@ export function CreateMeetingDialog({
       setSource("recording")
       setFiles([])
       setLanguage("auto")
+      setMinutesFormatId(minutesFormats.find((item) => item.is_default)?.id || minutesFormats[0]?.id || "default")
       setUploadProgress(null)
       setError("")
     }
@@ -58,13 +62,14 @@ export function CreateMeetingDialog({
     setError("")
     try {
       const meeting = source === "wav"
-        ? await importWav(files, title.trim(), language, (completed, total) => setUploadProgress({ completed, total }))
+        ? await importWav(files, title.trim(), language, minutesFormatId, (completed, total) => setUploadProgress({ completed, total }))
         : await api<Meeting>("/api/meetings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: title.trim(),
           language: language === "auto" ? null : language,
+          minutes_format_id: minutesFormatId,
         }),
       })
       onCreated(meeting)
@@ -116,6 +121,15 @@ export function CreateMeetingDialog({
                   >
                     <SelectItem value="recording">实时录音</SelectItem>
                     <SelectItem value="wav">导入音频（WAV/MP3）</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2.5">
+                <Label htmlFor="minutes-format-input">纪要格式</Label>
+                <Select value={minutesFormatId} onValueChange={setMinutesFormatId} disabled={submitting}>
+                  <SelectTrigger id="minutes-format-input" className="h-11 w-full"><SelectValue placeholder="选择纪要格式" /></SelectTrigger>
+                  <SelectContent position="popper" side="bottom" align="start" sideOffset={4} avoidCollisions={false} className="meeting-filter-menu">
+                    {minutesFormats.map((format) => <SelectItem key={format.id} value={format.id}>{format.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>

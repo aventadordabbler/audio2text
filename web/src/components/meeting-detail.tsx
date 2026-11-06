@@ -21,9 +21,7 @@ import {
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { Label } from "@/components/ui/label"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Separator } from "@/components/ui/separator"
 import { Switch } from "@/components/ui/switch"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -148,11 +146,6 @@ export function MeetingDetail({
 
   useEffect(() => {
     setStageSummaries([])
-    if (imported) {
-      stageSummaryFeed.current.disconnect()
-      setStageSummaryState({ status: "idle", windowSeconds: 0, error: "" })
-      return
-    }
     setStageSummaryState({ status: "connecting", windowSeconds: 0, error: "" })
     stageSummaryFeed.current.connect(meeting.id, {
       onSummaries: setStageSummaries,
@@ -246,6 +239,23 @@ export function MeetingDetail({
     })
   }
 
+  function renderAudioDownloadButton() {
+    if (!meeting.audio_available) return null
+    return (
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        aria-label="下载录音"
+        title="下载录音"
+        aria-busy={exportingAudio}
+        disabled={exportingAudio}
+        onClick={() => void exportAudio()}
+      >
+        <Download />
+      </Button>
+    )
+  }
+
   const hints = {
     created: "准备好后，开启麦克风。转写内容会实时显示。",
     recording: state.localRecording
@@ -258,7 +268,7 @@ export function MeetingDetail({
   function renderRecordingControl() {
     if (imported) return (
       <Card className="recording-card recording-card--top gap-0 rounded-xl shadow-none">
-        <div className="recording-card-heading"><h2><FileText className="size-4" />导入音频</h2></div>
+        <div className="recording-card-heading"><h2><FileText className="size-4" />导入音频</h2><div className="recording-heading-actions">{renderAudioDownloadButton()}</div></div>
         <div className="recording-timer"><strong id="recording-time">{formatDuration(seconds)}</strong></div>
         <div className="import-progress" role="status">
           <p className="import-filename" title={importJob?.filename}>{importJob?.filename}</p>
@@ -277,7 +287,10 @@ export function MeetingDetail({
             <Mic className="size-4" />
             录音控制
           </h2>
-          <span className={recording ? "recording-indicator active" : "recording-indicator"} />
+          <div className="recording-heading-actions">
+            {renderAudioDownloadButton()}
+            <span className={recording ? "recording-indicator active" : "recording-indicator"} />
+          </div>
         </div>
         <div className="recording-timer">
           <strong id="recording-time">{formatDuration(seconds)}</strong>
@@ -434,64 +447,16 @@ export function MeetingDetail({
         </div>
         <div className="detail-toolbar">
           <TabsList className="meeting-tabs">
-            <TabsTrigger value="transcript">实时转写</TabsTrigger>
+            <TabsTrigger value="transcript">转写记录</TabsTrigger>
             <TabsTrigger value="minutes">会议纪要</TabsTrigger>
           </TabsList>
-          {meeting.text && (
-            <Button variant="outline" className="download-heading shrink-0 gap-2 bg-white" asChild>
-              <a id="download-link" href={`/api/meetings/${meeting.id}/download?token=${encodeURIComponent(authToken())}`}>
-                <Download className="size-4" />
-                导出文本（TXT）
-              </a>
-            </Button>
-          )}
-          {meeting.audio_available && (
-            <Button variant="outline" className="download-heading shrink-0 gap-2 bg-white"
-              id="audio-download-button" disabled={exportingAudio} onClick={exportAudio}>
-              <Download className="size-4" />
-              {exportingAudio ? "正在准备…" : "导出录音（WAV）"}
-            </Button>
-          )}
         </div>
       </div>
 
-      <div className={`meeting-workspace${imported ? " meeting-workspace--import" : ""}`}>
+      <div className="meeting-workspace">
         <div className="meeting-content">
           <TabsContent value="transcript" forceMount className="meeting-panel">
             <Card className="transcript-card gap-0 overflow-hidden rounded-xl py-0 shadow-none">
-              <div className="transcript-heading">
-                <div>
-                  <FileText className="size-4.5 text-muted-foreground" />
-                  <h2>转写记录</h2>
-                  {recording && (
-                    <span className="live-label">
-                      <span />
-                      实时
-                    </span>
-                  )}
-                </div>
-                <div className="scroll-toggle">
-                  <Label
-                    htmlFor="auto-scroll"
-                    className="text-xs font-normal text-muted-foreground"
-                  >
-                    自动滚动
-                  </Label>
-                  <Switch
-                    id="auto-scroll"
-                    checked={autoScroll}
-                    onCheckedChange={(checked) => {
-                      setAutoScroll(checked)
-                      if (checked) {
-                        following.current = true
-                        setShowLatest(false)
-                      }
-                      if (checked) requestAnimationFrame(scrollToBottom)
-                    }}
-                    size="sm"
-                  />
-                </div>
-              </div>
               <ScrollArea ref={scrollRoot} className="transcript-scroll">
                 <article
                   id="transcript"
@@ -555,39 +520,47 @@ export function MeetingDetail({
                 </Button>
               )}
               <div className="transcript-footer">
-                <span id="transcript-state">
-                  <span className={recording ? "saving-dot" : "saved-check"}>
-                    {recording ? <span /> : <CheckCheck className="size-3.5" />}
-                  </span>
-                  {state.notice}
-                  {meeting.processing?.status === "unavailable" && <span title={meeting.processing.error}> · 说话人识别未就绪</span>}
-                  {["queued", "running"].includes(meeting.processing?.status) && <span> · 正在校正说话人</span>}
-                  {meeting.processing?.status === "failed" && <span title={meeting.processing.error}> · 说话人校正未完成</span>}
-                  {meeting.processing?.status === "pending" && <span> · 说话人标注中</span>}
-                </span>
-                <div>
-                  {status === "ended" && (!imported || importJob?.status === "ready") && ["failed", "unavailable"].includes(meeting.processing?.status) && (
-                    <Button variant="ghost" size="sm" disabled={state.busy} onClick={() => void session.retryDiarization()}>重试说话人校正</Button>
-                  )}
+                <div className="document-footer-actions">
+                  <label className="scroll-toggle">
+                    <span>自动滚动</span>
+                    <Switch
+                      id="auto-scroll"
+                      checked={autoScroll}
+                      onCheckedChange={(checked) => {
+                        setAutoScroll(checked)
+                        if (checked) {
+                          following.current = true
+                          setShowLatest(false)
+                        }
+                        if (checked) requestAnimationFrame(scrollToBottom)
+                      }}
+                      size="sm"
+                    />
+                  </label>
                   <span id="text-count">{textLength.toLocaleString()} 字</span>
                   {meeting.text && (
-                    <>
-                      <Separator orientation="vertical" className="h-3!" />
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            onClick={copyText}
-                            aria-label={copied ? "已复制" : "复制全部文本"}
-                          >
-                            {copied ? <Check className="text-neutral-600" /> : <Copy />}
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>{copied ? "已复制" : "复制全部文本"}</TooltipContent>
-                      </Tooltip>
-                    </>
+                    <Button variant="ghost" size="sm" asChild className="gap-1.5 text-xs">
+                      <a id="download-link" href={`/api/meetings/${meeting.id}/download?token=${encodeURIComponent(authToken())}`}>
+                        <Download />
+                        导出转写
+                      </a>
+                    </Button>
                   )}
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        disabled={!meeting.text}
+                        onClick={copyText}
+                        aria-label={copied ? "已复制" : "复制全部文本"}
+                        title={copied ? "已复制" : "复制全部文本"}
+                      >
+                        {copied ? <Check className="text-neutral-600" /> : <Copy />}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>{copied ? "已复制" : "复制全部文本"}</TooltipContent>
+                  </Tooltip>
                 </div>
               </div>
             </Card>
@@ -601,7 +574,7 @@ export function MeetingDetail({
           </TabsContent>
         </div>
 
-        {!imported && <aside className="meeting-aside">
+        <aside className="meeting-aside">
           <StageSummaryPanel
             summaries={stageSummaries}
             status={stageSummaryState.status}
@@ -610,8 +583,9 @@ export function MeetingDetail({
             retrying={retryingStageSummaries}
             onRetry={() => void retryStageSummaries()}
             onJump={jumpToStageSummary}
+            downloadUrl={`/api/meetings/${meeting.id}/stage-summaries/download?token=${encodeURIComponent(authToken())}`}
           />
-        </aside>}
+        </aside>
       </div>
       <div className="detail-bottom-note">
         <ArrowDown className="size-3.5" />

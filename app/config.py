@@ -27,9 +27,12 @@ class Settings(BaseSettings):
     diarization_timeout_seconds: float = Field(default=120, ge=5, le=1800)
     diarization_final_timeout_seconds: float = Field(default=1800, ge=10, le=14400)
     audio_import_max_bytes: int = Field(default=5 * 1024 * 1024 * 1024, ge=1024)
-    audio_import_max_seconds: int = Field(default=8 * 3600, ge=1)
+    audio_import_max_seconds: int = Field(default=24 * 3600, ge=1)
     audio_import_workers: int = Field(default=1, ge=1, le=8)
     audio_import_decode_timeout_seconds: float = Field(default=600, ge=5, le=7200)
+    voiceprint_max_bytes: int = Field(default=100 * 1024 * 1024, ge=1024)
+    voiceprint_max_seconds: int = Field(default=120, ge=3, le=1800)
+    voiceprint_decode_timeout_seconds: float = Field(default=120, ge=5, le=1800)
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="", extra="ignore")
 

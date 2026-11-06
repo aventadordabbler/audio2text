@@ -326,6 +326,22 @@ app.whenReady().then(() => {
   rendererSession.setPermissionRequestHandler((_, permission, callback) => {
     callback(permission === "media");
   });
+  rendererSession.on("will-download", (_, item) => {
+    let url;
+    try {
+      url = new URL(item.getURL());
+    } catch {
+      return;
+    }
+    if (!url.pathname.endsWith("/minutes/download")) return;
+    const format = url.searchParams.get("format") === "docx" ? "docx" : "md";
+    const current = item.getFilename() || "meeting-minutes";
+    const stem = current.replace(/\.[^./\\]+$/, "");
+    item.setSaveDialogOptions({
+      defaultPath: `${stem}.${format}`,
+      filters: [{ name: format === "docx" ? "Word 文档" : "Markdown", extensions: [format] }],
+    });
+  });
 
   registerIpc();
   createMainWindow();

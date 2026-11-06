@@ -1,8 +1,6 @@
-import { lazy, memo, Suspense, useEffect, useRef, useState } from "react"
+import { lazy, memo, Suspense, useEffect, useState } from "react"
 import {
-  Check,
-  CheckCheck,
-  Copy,
+  ChevronDown,
   Download,
   FileText,
   LoaderCircle,
@@ -12,7 +10,8 @@ import {
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { api, ApiError, authToken, errorMessage, formatDate, importStatusLabel, type Meeting } from "@/lib/meetings"
+import { api, ApiError, authToken, errorMessage, importStatusLabel, type Meeting } from "@/lib/meetings"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 
 const MinutesMarkdown = lazy(() => import("./minutes-markdown"))
 
@@ -47,8 +46,6 @@ export const MeetingMinutes = memo(function MeetingMinutes({
   const [error, setError] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [revision, setRevision] = useState(0)
-  const [copied, setCopied] = useState(false)
-  const copyTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
   const generating = submitting || minutes?.status === "generating"
   const ended = meeting.status === "ended"
   const hasTranscript = !!meeting.text.trim()
@@ -81,13 +78,6 @@ export const MeetingMinutes = memo(function MeetingMinutes({
     }
   }, [meeting.id, meeting.source, meeting.status, meeting.minutes_version, meeting.processing?.status, revision, modelsVersion])
 
-  useEffect(
-    () => () => {
-      if (copyTimeout.current) clearTimeout(copyTimeout.current)
-    },
-    [],
-  )
-
   async function generate() {
     if (generating || correcting || importPending) return
     setSubmitting(true)
@@ -100,17 +90,6 @@ export const MeetingMinutes = memo(function MeetingMinutes({
       setError(minutesErrorMessage(error))
     } finally {
       setSubmitting(false)
-    }
-  }
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(minutes!.text)
-      setCopied(true)
-      if (copyTimeout.current) clearTimeout(copyTimeout.current)
-      copyTimeout.current = setTimeout(() => setCopied(false), 2000)
-    } catch (error) {
-      setError(`复制失败，请使用下载纪要：${errorMessage(error)}`)
     }
   }
 
@@ -131,37 +110,6 @@ export const MeetingMinutes = memo(function MeetingMinutes({
 
   return (
     <Card className="minutes-card gap-0 rounded-xl py-0 shadow-none" aria-busy={generating}>
-      <div className="transcript-heading minutes-heading">
-        <div>
-          <Sparkles className="size-4 text-muted-foreground" />
-          <h2>会议纪要</h2>
-        </div>
-        {ended && hasTranscript && minutes?.available && (
-          <Button
-            id="generate-minutes"
-            variant="outline"
-            size="sm"
-            disabled={generating || correcting || importPending}
-            onClick={generate}
-            className="gap-1.5 text-xs"
-          >
-            {generating ? (
-              <LoaderCircle className="animate-spin" />
-            ) : minutes.text ? (
-              <RefreshCw />
-            ) : (
-              <Sparkles />
-            )}
-            {importPending ? "等待导入完成" : correcting ? "等待校正" : generating
-              ? "生成中"
-              : minutes.status === "failed"
-                ? "重试生成"
-                : minutes.text
-                  ? "重新生成"
-                  : "生成纪要"}
-          </Button>
-        )}
-      </div>
       <ScrollArea className="minutes-scroll">
         {minutes?.stale && <p className="minutes-message" role="status">转写已更新，可重新生成纪要。</p>}
         {failure && (
@@ -218,43 +166,56 @@ export const MeetingMinutes = memo(function MeetingMinutes({
         )}
       </ScrollArea>
       <div className="transcript-footer minutes-footer">
-        <span id="minutes-status" role="status">
-          {generating ? (
-            <LoaderCircle className="size-3.5 shrink-0 animate-spin" />
-          ) : minutes?.text ? (
-            <CheckCheck className="size-3.5 shrink-0" />
-          ) : null}
-          {importPending ? importStatusLabel(meeting.import_job) : correcting ? "等待说话人校正" : generating
-            ? "后台生成中"
-            : minutes?.status === "failed"
-              ? "生成失败，可重试"
-              : minutes?.text
-                ? "纪要已保存"
-                : "等待生成纪要"}
-          {minutes?.status === "ready" && minutes.updated_at && (
-            <time className="minutes-updated" dateTime={minutes.updated_at}>
-              {formatDate(minutes.updated_at)}
-            </time>
-          )}
-        </span>
-        {minutes?.text && (
-          <div>
+        <div className="document-footer-actions">
+          {ended && hasTranscript && minutes?.available && (
             <Button
+              id="generate-minutes"
               variant="ghost"
-              size="icon-sm"
-              onClick={copy}
-              aria-label={copied ? "纪要已复制" : "复制会议纪要"}
+              size="sm"
+              disabled={generating || correcting || importPending}
+              onClick={generate}
+              className="gap-1.5 text-xs"
             >
-              {copied ? <Check /> : <Copy />}
+              {generating ? (
+                <LoaderCircle className="animate-spin" />
+              ) : minutes.text ? (
+                <RefreshCw />
+              ) : (
+                <Sparkles />
+              )}
+              {importPending ? "等待导入完成" : correcting ? "等待校正" : generating
+                ? "生成中"
+                : minutes.status === "failed"
+                  ? "重试生成"
+                  : minutes.text
+                    ? "重新生成"
+                    : "生成纪要"}
             </Button>
-            <Button variant="ghost" size="sm" asChild className="gap-1.5 text-xs">
-              <a id="download-minutes" href={`/api/meetings/${meeting.id}/minutes/download?token=${encodeURIComponent(authToken())}`}>
-                <Download />
-                下载纪要
-              </a>
-            </Button>
-          </div>
-        )}
+          )}
+          {minutes?.text && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm" className="gap-1.5 text-xs">
+                  <Download />
+                  导出纪要
+                  <ChevronDown />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem asChild>
+                  <a id="download-minutes-markdown" href={`/api/meetings/${meeting.id}/minutes/download?format=markdown&token=${encodeURIComponent(authToken())}`}>
+                    Markdown（.md）
+                  </a>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <a id="download-minutes-docx" href={`/api/meetings/${meeting.id}/minutes/download?format=docx&token=${encodeURIComponent(authToken())}`}>
+                    Word 文档（.docx）
+                  </a>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+        </div>
       </div>
     </Card>
   )

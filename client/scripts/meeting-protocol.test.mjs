@@ -524,11 +524,11 @@ test(
       );
       const remote = await api.get(paused.id);
       assert.equal(remote.department_name, "浏览器测试部门");
-      await page.getByRole("tab", { name: "实时转写", exact: true }).click();
+      await page.getByRole("tab", { name: "转写记录", exact: true }).click();
       const rendered = await page.getByLabel("会议转写文本").textContent();
       for (const paragraph of remote.text.split("\n\n"))
         assert.ok(rendered.includes(paragraph));
-      await page.getByRole("tab", { name: "会议总结", exact: true }).click();
+      await page.getByRole("tab", { name: "会议纪要", exact: true }).click();
       await page
         .getByRole("heading", { name: "核心结论", exact: true })
         .waitFor();

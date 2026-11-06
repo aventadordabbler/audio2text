@@ -65,6 +65,9 @@ export class MeetingApi {
   authLogin(account, password) {
     return this.request("/api/auth/login", { method: "POST", body: JSON.stringify({ account, password }) });
   }
+  changePassword(password) {
+    return this.request("/api/auth/password", { method: "POST", body: JSON.stringify({ password }) });
+  }
   authRegister(account, password, department, employeeId) {
     return this.request("/api/auth/register", { method: "POST", body: JSON.stringify({ account, password, department, employee_id: employeeId }) });
   }
@@ -91,6 +94,39 @@ export class MeetingApi {
 
   departments(options = {}) {
     return this.request("/api/departments", options);
+  }
+
+  voiceprints(options = {}) {
+    return this.request("/api/voiceprints", options);
+  }
+
+  minutesFormats(options = {}) {
+    return this.request("/api/minutes-formats", options);
+  }
+
+  saveMinutesFormat(name, prompt, id) {
+    return this.request(id ? `/api/minutes-formats/${encodeURIComponent(id)}` : "/api/minutes-formats", {
+      method: id ? "PUT" : "POST", body: JSON.stringify({ name: name.trim(), prompt: prompt.trim() }),
+    });
+  }
+
+  generateMinutesFormatPrompt(name, requirement) {
+    return this.request("/api/minutes-formats/generate", {
+      method: "POST",
+      body: JSON.stringify({ name: name.trim(), requirement: requirement.trim() }),
+    });
+  }
+
+  deleteMinutesFormat(id) {
+    return this.request(`/api/minutes-formats/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+
+  createVoiceprint(body) {
+    return this.request("/api/voiceprints", { method: "POST", body });
+  }
+
+  deleteVoiceprint(id) {
+    return this.request(`/api/voiceprints/${encodeURIComponent(id)}`, { method: "DELETE" });
   }
 
   saveDepartment(name, id) {
@@ -151,7 +187,7 @@ export class MeetingApi {
     return result;
   }
 
-  create(title, departmentId = null) {
+  create(title, departmentId = null, minutesFormatId = null) {
     return this.request("/api/meetings", {
       method: "POST",
       body: JSON.stringify({
@@ -159,6 +195,7 @@ export class MeetingApi {
           .slice(0, 80)
           .join(""),
         department_id: departmentId || null,
+        minutes_format_id: minutesFormatId || null,
         ...(this.config.language === "auto"
           ? {}
           : { language: this.config.language }),
@@ -166,24 +203,25 @@ export class MeetingApi {
     });
   }
 
-  importWav(title, departmentId, file, language = this.config.language, onProgress) {
+  importWav(title, departmentId, file, language = this.config.language, onProgress, minutesFormatId = null) {
     const files = Array.isArray(file) ? file : [file];
-    if (files.length > 1 || files[0].size > CHUNK_THRESHOLD) return this.importWavChunked(title, files, language, onProgress);
+    if (files.length > 1 || files[0].size > CHUNK_THRESHOLD) return this.importWavChunked(title, files, language, onProgress, minutesFormatId);
     const body = new FormData();
     body.set("title", title);
     body.set("file", files[0]);
     if (departmentId) body.set("department_id", departmentId);
     if (language && language !== "auto") body.set("language", language);
+    if (minutesFormatId) body.set("minutes_format_id", minutesFormatId);
     return this.request("/api/meetings/import", {
       method: "POST", body, signal: AbortSignal.timeout(900000),
     });
   }
 
-  async importWavChunked(title, files, language = this.config.language, onProgress) {
+  async importWavChunked(title, files, language = this.config.language, onProgress, minutesFormatId = null) {
     const totalChunks = files.reduce((total, file) => total + Math.ceil(file.size / CHUNK_SIZE), 0);
     const started = await this.request("/api/meetings/import/chunked", {
       method: "POST",
-      body: JSON.stringify({ title, language: language === "auto" ? null : language, files: files.map((file) => ({ filename: file.name, file_size: file.size, total_chunks: Math.ceil(file.size / CHUNK_SIZE), chunk_size: CHUNK_SIZE })) }),
+      body: JSON.stringify({ title, language: language === "auto" ? null : language, minutes_format_id: minutesFormatId, files: files.map((file) => ({ filename: file.name, file_size: file.size, total_chunks: Math.ceil(file.size / CHUNK_SIZE), chunk_size: CHUNK_SIZE })) }),
       signal: AbortSignal.timeout(900000),
     });
     let completed = 0;
@@ -253,6 +291,20 @@ export class MeetingApi {
     return this.downloadFile(
       `${this.url(`/api/meetings/${encodeURIComponent(id)}/download`)}?token=${encodeURIComponent(localStorage.getItem("meeting-auth-token") || "")}`,
       "转写文本",
+    );
+  }
+
+  downloadMinutes(id, format = "markdown") {
+    return this.downloadFile(
+      `${this.url(`/api/meetings/${encodeURIComponent(id)}/minutes/download`)}?format=${encodeURIComponent(format)}&token=${encodeURIComponent(localStorage.getItem("meeting-auth-token") || "")}`,
+      "会议纪要",
+    );
+  }
+
+  downloadStageSummaries(id) {
+    return this.downloadFile(
+      `${this.url(`/api/meetings/${encodeURIComponent(id)}/stage-summaries/download`)}?token=${encodeURIComponent(localStorage.getItem("meeting-auth-token") || "")}`,
+      "阶段总结",
     );
   }
 

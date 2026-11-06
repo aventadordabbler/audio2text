@@ -54,6 +54,7 @@ export function CreateMeetingDialog({
   open,
   onOpenChange,
   departments,
+  minutesFormats = [],
   loading,
   departmentError,
   onRefresh,
@@ -66,6 +67,7 @@ export function CreateMeetingDialog({
   const [source, setSource] = useState("recording");
   const [files, setFiles] = useState([]);
   const [language, setLanguage] = useState(initialLanguage);
+  const [minutesFormatId, setMinutesFormatId] = useState("default");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -74,6 +76,7 @@ export function CreateMeetingDialog({
       setSource("recording");
       setFiles([]);
       setLanguage(initialLanguage);
+      setMinutesFormatId(minutesFormats.find((item) => item.is_default)?.id || minutesFormats[0]?.id || "default");
       setError("");
     }
   }, [open, initialTitle, initialLanguage]);
@@ -88,6 +91,7 @@ export function CreateMeetingDialog({
         null,
         source === "wav" ? files : [],
         language,
+        minutesFormatId,
       );
       onOpenChange(false);
     } catch (error) {
@@ -160,6 +164,15 @@ export function CreateMeetingDialog({
               <p className="management-help">上传后自动转写、标注说话人并生成纪要，时长按音频计算。上传完成后可离开页面。</p>
             </>
           )}
+          <Label className="form-field">
+            <span>纪要格式</span>
+            <Select value={minutesFormatId} onValueChange={setMinutesFormatId} disabled={busy}>
+              <SelectTrigger aria-label="纪要格式"><SelectValue placeholder="选择纪要格式" /></SelectTrigger>
+              <SelectContent position="popper" side="bottom" align="start" sideOffset={4} avoidCollisions={false} className="meeting-filter-menu">
+                {minutesFormats.map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </Label>
           <Label className="form-field">
             <span>会议名称</span>
             <Input
@@ -252,7 +265,7 @@ export function MeetingManagement({
   const error =
     rangeError ||
     (!api
-      ? "请在模型设置中配置会议服务地址"
+      ? "请先配置会议服务地址"
       : result.key === key
         ? result.error
         : "");
@@ -477,10 +490,6 @@ export function MeetingManagement({
               )}
             </TableBody>
           </Table>
-        </div>
-        <div className="document-footer">
-          <span>{loading ? "查询中…" : `共 ${meetings.length} 场会议`}</span>
-          <span>服务端保存</span>
         </div>
       </Card>
     </section>

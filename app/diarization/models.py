@@ -132,3 +132,6 @@ class Models:
             else:
                 turns.append({"start_ms": low, "end_ms": high, "local_ids": ids})
         return {"model_tag": self.tag, "speakers": speakers, "turns": turns, "start": start, "end": end}
+
+    def embed_archive(self, directory, samples):
+        return self.embed(read_pcm(directory, 0, samples))

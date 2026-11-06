@@ -135,7 +135,7 @@ export function ServerModelSettings({ api, onSaveStateChange }) {
           ? "正在保存模型配置…"
           : !model
             ? "正在读取服务端配置…"
-            : notice || "修改后点击「保存配置」，会议总结将使用新配置。");
+            : notice || "修改后点击「保存配置」，会议纪要将使用新配置。");
   return (
     <Card className="settings-card">
       <CardHeader>

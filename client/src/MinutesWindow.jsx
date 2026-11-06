@@ -6,7 +6,7 @@ import { EmptyDocument } from "@/components/workspace-ui.jsx";
 
 export function MinutesWindow() {
   const [payload, setPayload] = useState({
-    title: "会议总结",
+    title: "会议纪要",
     minutes: "",
     startedAtLabel: "",
     endedAtLabel: "",
@@ -18,7 +18,7 @@ export function MinutesWindow() {
     function update(next) {
       if (disposed || !next) return;
       setPayload(next);
-      document.title = `${next.title || "会议总结"} - 会议助手`;
+      document.title = `${next.title || "会议纪要"} - 会议助手`;
     }
     async function bootstrap() {
       update(await window.meetingDesktop.getMinutesPayload());
@@ -41,14 +41,14 @@ export function MinutesWindow() {
         </span>
         <span>
           <FileText size={13} />
-          会议总结
+          会议纪要
         </span>
       </header>
       <div className="minutes-window-content">
         <div className="page-heading">
           <div>
-            <div className="heading-eyebrow">会议归档 / 总结</div>
-            <h1>{payload.title || "会议总结"}</h1>
+            <div className="heading-eyebrow">会议归档 / 纪要</div>
+            <h1>{payload.title || "会议纪要"}</h1>
             <div className="meeting-meta">
               <span>
                 <CalendarDays size={13} />
@@ -66,29 +66,29 @@ export function MinutesWindow() {
           <div className="document-heading">
             <h2>
               <FileText size={16} />
-              会议总结
+              会议纪要
             </h2>
           </div>
           <div className="document-scroll panel-scroll">
             {payload.minutes ? (
               <article
                 className="minutes-document"
-                aria-label="会议总结正文"
+                aria-label="会议纪要正文"
                 tabIndex={0}
               >
                 <MinutesMarkdown text={payload.minutes} />
               </article>
             ) : (
               <EmptyDocument
-                title="暂无会议总结"
-                description="会议结束后，可在工作台生成总结并在这里查看。"
+                title="暂无会议纪要"
+                description="会议结束后，可在会议详情生成纪要并在这里查看。"
               />
             )}
           </div>
           <div className="document-footer">
             <span>
               <CheckCheck size={13} />
-              {payload.minutes ? "会议总结已保存" : "等待生成总结"}
+              {payload.minutes ? "会议纪要已保存" : "等待生成纪要"}
             </span>
             <span>会议助手</span>
           </div>

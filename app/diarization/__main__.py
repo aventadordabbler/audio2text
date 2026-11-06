@@ -33,6 +33,9 @@ def main():
                 request = json.loads(line)
                 if request["type"] == "window":
                     result = models.window(request)
+                elif request["type"] == "embed":
+                    result = {"model_tag": models.tag,
+                              "embedding": models.embed_archive(request["directory"], int(request["samples"]))}
                 elif request["type"] == "cluster":
                     result = cluster_file(request["path"])
                 elif request["type"] == "stats":
