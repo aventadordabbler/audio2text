@@ -170,10 +170,6 @@
 .voiceprint-person strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .voiceprint-upload-button { display: inline-flex; align-items: center; gap: 7px; width: fit-content; min-height: 36px; padding: 8px 13px; border: 1px solid #e5e5e5; border-radius: 6px; background: #fff; color: #404040; font-size: 12px; cursor: pointer; }
 .voiceprint-upload-button:hover { background: #fafafa; border-color: #a3a3a3; }
-.key-speaker-options { display: grid; gap: 6px; max-height: 140px; overflow: auto; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; }
-.key-speaker-option { display: flex; align-items: center; gap: 8px; min-height: 28px; font-size: 13px; }
-.key-speaker-option input { width: 15px; height: 15px; accent-color: #171717; }
-.key-speaker-option small { margin-left: auto; color: var(--muted-foreground); }
 @media (max-width: 760px) {
   .voiceprint-grid,
   .voiceprint-filters { grid-template-columns: 1fr; }

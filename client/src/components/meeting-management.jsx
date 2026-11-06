@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import {
   Building2,
+  Check,
+  ChevronDown,
   Clock3,
   FileText,
   LoaderCircle,
@@ -104,6 +106,12 @@ export function CreateMeetingDialog({
       setBusy(false);
     }
   }
+  const selectedKeySpeakers = voiceprints.filter((voiceprint) => keySpeakerIds.includes(voiceprint.id));
+  const keySpeakerLabel = selectedKeySpeakers.length === 0
+    ? "选择重点人员"
+    : selectedKeySpeakers.length === 1
+      ? selectedKeySpeakers[0].name
+      : `已选择 ${selectedKeySpeakers.length} 人`;
   return (
     <Dialog
       open={open}
@@ -179,13 +187,21 @@ export function CreateMeetingDialog({
           </Label>
           <div className="form-field">
             <span>重点人员（可选）</span>
-            {voiceprints.length ? <div className="key-speaker-options">
-              {voiceprints.map((voiceprint) => <label key={voiceprint.id} className="key-speaker-option">
-                <input type="checkbox" checked={keySpeakerIds.includes(voiceprint.id)} disabled={busy}
-                  onChange={(event) => setKeySpeakerIds((current) => event.target.checked ? [...current, voiceprint.id] : current.filter((id) => id !== voiceprint.id))} />
-                <span>{voiceprint.name}</span>{voiceprint.department_name && <small>{voiceprint.department_name}</small>}
-              </label>)}
-            </div> : <p className="management-help">暂无可选声纹，可直接创建会议。</p>}
+            {voiceprints.length ? <details className="key-speaker-dropdown">
+              <summary className="key-speaker-trigger" aria-label="选择重点人员">
+                <span className={selectedKeySpeakers.length ? "" : "placeholder"}>{keySpeakerLabel}</span>
+                <ChevronDown size={15} />
+              </summary>
+              <div className="key-speaker-menu" role="group" aria-label="重点人员选项">
+                {voiceprints.map((voiceprint) => {
+                  const selected = keySpeakerIds.includes(voiceprint.id);
+                  return <button key={voiceprint.id} type="button" role="menuitemcheckbox" aria-checked={selected} className="key-speaker-menu-item" disabled={busy} onClick={() => setKeySpeakerIds((current) => selected ? current.filter((id) => id !== voiceprint.id) : [...current, voiceprint.id])}>
+                    <span className={`key-speaker-check${selected ? " selected" : ""}`}>{selected && <Check size={12} />}</span>
+                    <span className="key-speaker-menu-name">{voiceprint.name}</span>{voiceprint.department_name && <small>{voiceprint.department_name}</small>}
+                  </button>;
+                })}
+              </div>
+            </details> : <p className="management-help">暂无可选声纹，可直接创建会议。</p>}
           </div>
           <Label className="form-field">
             <span>会议名称</span>

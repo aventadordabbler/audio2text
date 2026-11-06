@@ -40,7 +40,7 @@ export function UserManagement({ api, users, loading, onChanged }) {
               {users.map((user) => {
                 const role = user.is_admin ? "系统管理员" : user.is_department_admin ? "部门管理员" : "普通用户";
                 return <TableRow key={user.id}>
-                  <TableCell><span className="department-name"><Users size={15} />{user.account}</span></TableCell>
+                  <TableCell className="text-center"><span className="department-name justify-center"><Users size={15} />{user.account}</span></TableCell>
                   <TableCell>{user.employee_id}</TableCell>
                   <TableCell>{user.department_name}</TableCell>
                   <TableCell className={user.is_admin || user.is_department_admin ? "" : "text-muted-foreground"}>{role}</TableCell>

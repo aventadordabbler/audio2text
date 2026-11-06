@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react"
-import { ArrowRight, AudioLines, LoaderCircle, Mic, Sparkles } from "lucide-react"
+import { ArrowRight, AudioLines, ChevronDown, LoaderCircle, Mic, Sparkles } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -18,6 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { api, errorMessage, importWav, STT_LANGUAGE_OPTIONS, type Meeting, type MinutesFormat, type Voiceprint } from "@/lib/meetings"
 
 export function CreateMeetingDialog({
@@ -87,6 +88,13 @@ export function CreateMeetingDialog({
     }
   }
 
+  const selectedKeySpeakers = voiceprints.filter((voiceprint) => keySpeakerIds.includes(voiceprint.id))
+  const keySpeakerLabel = selectedKeySpeakers.length === 0
+    ? "选择重点人员"
+    : selectedKeySpeakers.length === 1
+      ? selectedKeySpeakers[0].name
+      : `已选择 ${selectedKeySpeakers.length} 人`
+
   return (
     <Dialog
       open={open}
@@ -140,13 +148,25 @@ export function CreateMeetingDialog({
               </div>
               <div className="space-y-2.5">
                 <Label>重点人员（可选）</Label>
-                {voiceprints.length ? <div className="key-speaker-options">
-                  {voiceprints.map((voiceprint) => <label key={voiceprint.id} className="key-speaker-option">
-                    <input type="checkbox" checked={keySpeakerIds.includes(voiceprint.id)} disabled={submitting}
-                      onChange={(event) => setKeySpeakerIds((current) => event.target.checked ? [...current, voiceprint.id] : current.filter((id) => id !== voiceprint.id))} />
-                    <span>{voiceprint.name}</span>{voiceprint.department_name && <small>{voiceprint.department_name}</small>}
-                  </label>)}
-                </div> : <p className="text-xs leading-5 text-muted-foreground">暂无可选声纹，可直接创建会议。</p>}
+                {voiceprints.length ? <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button type="button" variant="outline" disabled={submitting} className="h-11 w-full justify-between font-normal">
+                      <span className={selectedKeySpeakers.length ? "text-foreground" : "text-muted-foreground"}>{keySpeakerLabel}</span>
+                      <ChevronDown className="size-4 text-muted-foreground" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="meeting-filter-menu w-(--radix-dropdown-menu-trigger-width) min-w-0">
+                    {voiceprints.map((voiceprint) => <DropdownMenuCheckboxItem
+                      key={voiceprint.id}
+                      checked={keySpeakerIds.includes(voiceprint.id)}
+                      disabled={submitting}
+                      onSelect={(event) => event.preventDefault()}
+                      onCheckedChange={(checked) => setKeySpeakerIds((current) => checked ? [...current, voiceprint.id] : current.filter((id) => id !== voiceprint.id))}
+                    >
+                      <span className="min-w-0 truncate">{voiceprint.name}</span>{voiceprint.department_name && <small className="ml-auto shrink-0 text-muted-foreground">{voiceprint.department_name}</small>}
+                    </DropdownMenuCheckboxItem>)}
+                  </DropdownMenuContent>
+                </DropdownMenu> : <p className="text-xs leading-5 text-muted-foreground">暂无可选声纹，可直接创建会议。</p>}
               </div>
               {source === "wav" && <div className="space-y-2.5">
                 <Label htmlFor="wav-input">音频文件</Label>

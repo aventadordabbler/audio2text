@@ -46,7 +46,7 @@ export function UserManagement({ users, onChanged }: {
             {users.map((user) => {
               const role = user.is_admin ? "系统管理员" : user.is_department_admin ? "部门管理员" : "普通用户"
               return <TableRow key={user.id} className="meeting-row">
-                <TableCell><span className="flex items-center gap-2"><Users className="size-4 text-muted-foreground" />{user.account}</span></TableCell>
+                <TableCell className="text-center"><span className="flex items-center justify-center gap-2"><Users className="size-4 text-muted-foreground" />{user.account}</span></TableCell>
                 <TableCell className="text-muted-foreground">{user.employee_id}</TableCell>
                 <TableCell>{user.department_name}</TableCell>
                 <TableCell><span className={user.is_admin || user.is_department_admin ? "font-medium text-foreground" : "text-muted-foreground"}>{role}</span></TableCell>
