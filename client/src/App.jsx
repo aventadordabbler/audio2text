@@ -27,6 +27,7 @@ import {
   Download,
   Plus,
   MicVocal,
+  Users,
 } from "lucide-react";
 import {
   WorkspaceBrand,
@@ -74,6 +75,7 @@ import {
 } from "@/components/meeting-management.jsx";
 import { DepartmentManagement } from "@/components/department-management.jsx";
 import { VoiceprintManagement } from "@/components/voiceprint-management.jsx";
+import { UserManagement } from "@/components/user-management.jsx";
 import { MinutesFormatManagement } from "@/components/minutes-format-management.jsx";
 import { StageSummaryPanel } from "@/components/stage-summary-panel.jsx";
 
@@ -168,6 +170,9 @@ export function App() {
   const [departmentsLoading, setDepartmentsLoading] = useState(false);
   const [departmentsError, setDepartmentsError] = useState("");
   const [minutesFormats, setMinutesFormats] = useState([]);
+  const [voiceprints, setVoiceprints] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [usersLoading, setUsersLoading] = useState(false);
   const [catalogRevision, setCatalogRevision] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
   const meetingApi = useMemo(() => {
@@ -290,7 +295,37 @@ export function App() {
   }, [ready, authUser, meetingApi, catalogRevision, createOpen]);
 
   useEffect(() => {
-    if (authUser && !authUser.is_admin && (activeView === "departments" || activeView === "voiceprints" || activeView === "minutesFormats"))
+    setUsers([]);
+    if (!authUser || authUser.must_change_password || !authUser.is_admin || !ready || !meetingApi) {
+      setUsersLoading(false);
+      return undefined;
+    }
+    const controller = new AbortController();
+    setUsersLoading(true);
+    meetingApi.users({ signal: controller.signal }).then((items) => {
+      if (!controller.signal.aborted) setUsers(items);
+    }).catch(() => {
+      if (!controller.signal.aborted) setUsers([]);
+    }).finally(() => {
+      if (!controller.signal.aborted) setUsersLoading(false);
+    });
+    return () => controller.abort();
+  }, [ready, authUser, meetingApi, catalogRevision, createOpen, activeView === "users"]);
+
+  useEffect(() => {
+    setVoiceprints([]);
+    if (!authUser || authUser.must_change_password || !ready || !meetingApi) return undefined;
+    const controller = new AbortController();
+    meetingApi.voiceprints({ signal: controller.signal }).then((items) => {
+      if (!controller.signal.aborted) setVoiceprints(items);
+    }).catch(() => {
+      if (!controller.signal.aborted) setVoiceprints([]);
+    });
+    return () => controller.abort();
+  }, [ready, authUser, meetingApi, catalogRevision, createOpen]);
+
+  useEffect(() => {
+    if (authUser && !authUser.is_admin && !authUser.is_department_admin && (activeView === "departments" || activeView === "users" || activeView === "voiceprints" || activeView === "minutesFormats"))
       setActiveView("history");
   }, [authUser, activeView]);
 
@@ -1104,7 +1139,7 @@ export function App() {
     setCreateOpen(true);
   }
 
-  async function createMeeting(title, departmentId, files = [], language, minutesFormatId = null) {
+  async function createMeeting(title, departmentId, files = [], language, minutesFormatId = null, keySpeakerIds = []) {
     if (startingRef.current || recordingRef.current || controllingRef.current)
       throw new Error("请先结束当前会议");
     setUploadProgress(null);
@@ -1113,8 +1148,8 @@ export function App() {
       let next;
       if (meetingApi) {
         const remote = files.length
-          ? await meetingApi.importWav(title, departmentId, files, language, (completed, total) => setUploadProgress({ completed, total }), minutesFormatId)
-          : await meetingApi.create(title, departmentId, minutesFormatId);
+          ? await meetingApi.importWav(title, departmentId, files, language, (completed, total) => setUploadProgress({ completed, total }), minutesFormatId, keySpeakerIds)
+          : await meetingApi.create(title, departmentId, minutesFormatId, keySpeakerIds);
         next = sessionFromMeeting(remote, meetingApi.config.baseUrl);
       } else throw new Error("请先配置有效的会议服务地址");
       if (loadId !== sessionLoadRef.current) return;
@@ -1385,7 +1420,8 @@ export function App() {
   const navigation = [
     { key: "history", label: "会议管理", icon: FolderClosed },
     ...(authUser?.is_admin ? [{ key: "departments", label: "部门管理", icon: Building2 }] : []),
-    ...(authUser?.is_admin ? [{ key: "voiceprints", label: "声纹管理", icon: MicVocal }] : []),
+    ...(authUser?.is_admin ? [{ key: "users", label: "用户管理", icon: Users }] : []),
+    ...(authUser?.is_admin || authUser?.is_department_admin ? [{ key: "voiceprints", label: "声纹管理", icon: MicVocal }] : []),
     ...(authUser?.is_admin ? [{ key: "minutesFormats", label: "纪要格式", icon: FileText }] : []),
   ];
   const selectedNavigation = activeView === "overview" ? "history" : activeView;
@@ -1630,6 +1666,7 @@ export function App() {
         onOpenChange={setCreateOpen}
         departments={departments}
         minutesFormats={minutesFormats}
+        voiceprints={voiceprints}
         loading={departmentsLoading}
         departmentError={departmentsError}
         uploadProgress={uploadProgress}
@@ -2048,11 +2085,21 @@ export function App() {
               onChanged={refreshCatalog}
             />
           )}
-          {activeView === "voiceprints" && authUser?.is_admin && (
+          {activeView === "users" && authUser?.is_admin && (
+            <UserManagement
+              key={config.stt.baseUrl}
+              api={meetingApi}
+              users={users}
+              loading={usersLoading}
+              onChanged={refreshCatalog}
+            />
+          )}
+          {activeView === "voiceprints" && (authUser?.is_admin || authUser?.is_department_admin) && (
             <VoiceprintManagement
               key={config.stt.baseUrl}
               api={meetingApi}
               departments={departments}
+              readOnly={!authUser?.is_admin}
             />
           )}
           {activeView === "minutesFormats" && authUser?.is_admin && (

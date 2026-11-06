@@ -18,24 +18,27 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { api, errorMessage, importWav, STT_LANGUAGE_OPTIONS, type Meeting, type MinutesFormat } from "@/lib/meetings"
+import { api, errorMessage, importWav, STT_LANGUAGE_OPTIONS, type Meeting, type MinutesFormat, type Voiceprint } from "@/lib/meetings"
 
 export function CreateMeetingDialog({
   open,
   onOpenChange,
   onCreated,
   minutesFormats,
+  voiceprints,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   onCreated: (meeting: Meeting) => void
   minutesFormats: MinutesFormat[]
+  voiceprints: Voiceprint[]
 }) {
   const [title, setTitle] = useState("")
   const [source, setSource] = useState("recording")
   const [files, setFiles] = useState<File[]>([])
   const [language, setLanguage] = useState("auto")
   const [minutesFormatId, setMinutesFormatId] = useState("default")
+  const [keySpeakerIds, setKeySpeakerIds] = useState<string[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [uploadProgress, setUploadProgress] = useState<{ completed: number; total: number } | null>(null)
   const [error, setError] = useState("")
@@ -46,6 +49,7 @@ export function CreateMeetingDialog({
       setFiles([])
       setLanguage("auto")
       setMinutesFormatId(minutesFormats.find((item) => item.is_default)?.id || minutesFormats[0]?.id || "default")
+      setKeySpeakerIds([])
       setUploadProgress(null)
       setError("")
     }
@@ -62,7 +66,7 @@ export function CreateMeetingDialog({
     setError("")
     try {
       const meeting = source === "wav"
-        ? await importWav(files, title.trim(), language, minutesFormatId, (completed, total) => setUploadProgress({ completed, total }))
+        ? await importWav(files, title.trim(), language, minutesFormatId, (completed, total) => setUploadProgress({ completed, total }), keySpeakerIds)
         : await api<Meeting>("/api/meetings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -70,6 +74,7 @@ export function CreateMeetingDialog({
           title: title.trim(),
           language: language === "auto" ? null : language,
           minutes_format_id: minutesFormatId,
+          key_speaker_ids: keySpeakerIds,
         }),
       })
       onCreated(meeting)
@@ -132,6 +137,16 @@ export function CreateMeetingDialog({
                     {minutesFormats.map((format) => <SelectItem key={format.id} value={format.id}>{format.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="space-y-2.5">
+                <Label>重点人员（可选）</Label>
+                {voiceprints.length ? <div className="key-speaker-options">
+                  {voiceprints.map((voiceprint) => <label key={voiceprint.id} className="key-speaker-option">
+                    <input type="checkbox" checked={keySpeakerIds.includes(voiceprint.id)} disabled={submitting}
+                      onChange={(event) => setKeySpeakerIds((current) => event.target.checked ? [...current, voiceprint.id] : current.filter((id) => id !== voiceprint.id))} />
+                    <span>{voiceprint.name}</span>{voiceprint.department_name && <small>{voiceprint.department_name}</small>}
+                  </label>)}
+                </div> : <p className="text-xs leading-5 text-muted-foreground">暂无可选声纹，可直接创建会议。</p>}
               </div>
               {source === "wav" && <div className="space-y-2.5">
                 <Label htmlFor="wav-input">音频文件</Label>

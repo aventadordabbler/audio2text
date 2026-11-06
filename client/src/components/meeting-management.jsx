@@ -55,6 +55,7 @@ export function CreateMeetingDialog({
   onOpenChange,
   departments,
   minutesFormats = [],
+  voiceprints = [],
   loading,
   departmentError,
   onRefresh,
@@ -68,6 +69,7 @@ export function CreateMeetingDialog({
   const [files, setFiles] = useState([]);
   const [language, setLanguage] = useState(initialLanguage);
   const [minutesFormatId, setMinutesFormatId] = useState("default");
+  const [keySpeakerIds, setKeySpeakerIds] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -77,6 +79,7 @@ export function CreateMeetingDialog({
       setFiles([]);
       setLanguage(initialLanguage);
       setMinutesFormatId(minutesFormats.find((item) => item.is_default)?.id || minutesFormats[0]?.id || "default");
+      setKeySpeakerIds([]);
       setError("");
     }
   }, [open, initialTitle, initialLanguage]);
@@ -92,6 +95,7 @@ export function CreateMeetingDialog({
         source === "wav" ? files : [],
         language,
         minutesFormatId,
+        keySpeakerIds,
       );
       onOpenChange(false);
     } catch (error) {
@@ -173,6 +177,16 @@ export function CreateMeetingDialog({
               </SelectContent>
             </Select>
           </Label>
+          <div className="form-field">
+            <span>重点人员（可选）</span>
+            {voiceprints.length ? <div className="key-speaker-options">
+              {voiceprints.map((voiceprint) => <label key={voiceprint.id} className="key-speaker-option">
+                <input type="checkbox" checked={keySpeakerIds.includes(voiceprint.id)} disabled={busy}
+                  onChange={(event) => setKeySpeakerIds((current) => event.target.checked ? [...current, voiceprint.id] : current.filter((id) => id !== voiceprint.id))} />
+                <span>{voiceprint.name}</span>{voiceprint.department_name && <small>{voiceprint.department_name}</small>}
+              </label>)}
+            </div> : <p className="management-help">暂无可选声纹，可直接创建会议。</p>}
+          </div>
           <Label className="form-field">
             <span>会议名称</span>
             <Input

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+import json
 import logging
 from pathlib import Path
 from typing import Any, Literal
@@ -44,6 +45,7 @@ class MeetingCreate(BaseModel):
     language: str | None = Field(default=None, max_length=40)
     department_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
     minutes_format_id: str | None = Field(default=None, pattern=r"^(?:[a-f0-9]{32}|default)$")
+    key_speaker_ids: list[str] = Field(default_factory=list, max_length=20)
 
     @field_validator("title")
     @classmethod
@@ -62,6 +64,10 @@ class DepartmentInput(BaseModel):
         if not value.strip():
             raise ValueError("请输入部门名称")
         return value.strip()
+
+
+class DepartmentAdminInput(BaseModel):
+    enabled: bool
 
 
 class MinutesFormatInput(BaseModel):
@@ -120,6 +126,7 @@ class ChunkedImportStart(BaseModel):
     total_chunks: int | None = Field(default=None, gt=0)
     chunk_size: int = Field(default=DEFAULT_CHUNK_SIZE, ge=1024 * 1024, le=32 * 1024 * 1024)
     minutes_format_id: str | None = Field(default=None, pattern=r"^(?:[a-f0-9]{32}|default)$")
+    key_speaker_ids: list[str] = Field(default_factory=list, max_length=20)
 
     @field_validator("title")
     @classmethod
@@ -133,6 +140,16 @@ class ChunkedImportStart(BaseModel):
         if self.files is None and None in (self.filename, self.file_size, self.total_chunks):
             raise ValueError("请提供音频文件分片信息")
         return self
+
+
+def parse_key_speaker_ids(value: str) -> list[str]:
+    try:
+        parsed = json.loads(value or "[]")
+    except (TypeError, ValueError) as exc:
+        raise MeetingError("重点人员选择无效", 422) from exc
+    if not isinstance(parsed, list):
+        raise MeetingError("重点人员选择无效", 422)
+    return parsed
 
 
 def create_app(
@@ -253,6 +270,16 @@ def create_app(
     def meeting_user_id(request: Request) -> str | None:
         return None if request.state.user.get("is_admin") else request.state.user["id"]
 
+    @app.get("/api/users")
+    def list_users(request: Request) -> list[dict[str, Any]]:
+        require_admin(request)
+        return auth.list_users()
+
+    @app.put("/api/users/{user_id}/department-admin")
+    def set_department_admin(user_id: str, payload: DepartmentAdminInput, request: Request) -> dict[str, Any]:
+        require_admin(request)
+        return auth.set_department_admin(user_id, payload.enabled)
+
     @app.get("/api/model-configs")
     def list_model_configs(request: Request) -> list[dict[str, Any]]:
         return models.list()
@@ -284,7 +311,7 @@ def create_app(
     @app.post("/api/meetings", status_code=201)
     def create_meeting(payload: MeetingCreate, request: Request) -> dict[str, Any]:
         return store.create(payload.title, payload.language, payload.department_id,
-                            payload.minutes_format_id, user_id=request.state.user["id"])
+                            payload.minutes_format_id, payload.key_speaker_ids, user_id=request.state.user["id"])
 
     @app.post("/api/meetings/import", status_code=202)
     async def import_meeting(
@@ -294,12 +321,14 @@ def create_app(
         language: str | None = Form(default=None, max_length=40),
         department_id: str | None = Form(default=None, pattern=r"^[a-f0-9]{32}$"),
         minutes_format_id: str | None = Form(default=None, pattern=r"^(?:[a-f0-9]{32}|default)$"),
+        key_speaker_ids: str = Form(default="[]"),
     ) -> dict[str, Any]:
         try:
             if not title.strip():
                 raise MeetingError("请输入会议名称", 422)
             return await audio_imports.create(file, title.strip(), language, department_id,
-                                              request.state.user["id"], minutes_format_id)
+                                              request.state.user["id"], minutes_format_id,
+                                              parse_key_speaker_ids(key_speaker_ids))
         finally:
             for item in file:
                 await item.close()
@@ -314,6 +343,7 @@ def create_app(
         }]
         return await audio_imports.start_chunked(
             payload.title, payload.language, files, request.state.user["id"], payload.minutes_format_id,
+            payload.key_speaker_ids,
         )
 
     @app.put("/api/meetings/import/chunked/{upload_id}/{index}")
@@ -438,9 +468,8 @@ def create_app(
 
     @app.get("/api/voiceprints")
     def list_voiceprints(request: Request):
-        if not request.state.user.get("is_admin"):
-            raise HTTPException(403, "只有管理员可以管理声纹")
-        return voiceprints.list()
+        department_id = None if request.state.user.get("is_admin") or request.state.user.get("is_department_admin") else request.state.user["department_id"]
+        return voiceprints.list(department_id=department_id)
 
     @app.post("/api/voiceprints", status_code=201)
     async def create_voiceprint(request: Request, file: UploadFile = File(...), name: str = Form(...),

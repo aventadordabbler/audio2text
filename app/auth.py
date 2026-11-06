@@ -35,6 +35,8 @@ class AuthStore:
         with self._connection() as db:
             if "must_change_password" not in {row["name"] for row in db.execute("PRAGMA table_info(users)")}:
                 db.execute("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0")
+            if "is_department_admin" not in {row["name"] for row in db.execute("PRAGMA table_info(users)")}:
+                db.execute("ALTER TABLE users ADD COLUMN is_department_admin INTEGER NOT NULL DEFAULT 0")
 
     def _connection(self):
         db = sqlite3.connect(self.path, timeout=5)
@@ -51,8 +53,47 @@ class AuthStore:
             "department_id": row["department_id"],
             "department_name": row["department_name"],
             "is_admin": row["account"].casefold() == "admin",
+            "is_department_admin": bool(row["is_department_admin"]),
             "must_change_password": bool(row["must_change_password"]),
         }
+
+    def list_users(self) -> list[dict[str, Any]]:
+        db = self._connection()
+        try:
+            rows = db.execute("""SELECT users.id, users.account, users.employee_id,
+                    users.department_id, departments.name AS department_name,
+                    users.is_department_admin
+                FROM users JOIN departments ON departments.id = users.department_id
+                ORDER BY users.account COLLATE NOCASE""").fetchall()
+            return [
+                {
+                    "id": row["id"],
+                    "account": row["account"],
+                    "employee_id": row["employee_id"],
+                    "department_id": row["department_id"],
+                    "department_name": row["department_name"],
+                    "is_admin": row["account"].casefold() == "admin",
+                    "is_department_admin": bool(row["is_department_admin"]),
+                }
+                for row in rows
+            ]
+        finally:
+            db.close()
+
+    def set_department_admin(self, user_id: str, enabled: bool) -> dict[str, Any]:
+        db = self._connection()
+        try:
+            with db:
+                row = db.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
+                if row is None:
+                    raise MeetingError("账户不存在", 404)
+                db.execute("UPDATE users SET is_department_admin = ? WHERE id = ?", (int(enabled), user_id))
+                updated = db.execute("""SELECT users.*, departments.name AS department_name
+                    FROM users JOIN departments ON departments.id = users.department_id
+                    WHERE users.id = ?""", (user_id,)).fetchone()
+                return self._user(updated)
+        finally:
+            db.close()
 
     def ensure_admin(self) -> None:
         db = self._connection()

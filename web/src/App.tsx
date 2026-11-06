@@ -19,8 +19,9 @@ import { ModelConfigDialog } from "@/components/model-config-dialog"
 import { MeetingList } from "@/components/meeting-list"
 import { WorkspaceSidebar } from "@/components/workspace-sidebar"
 import { VoiceprintManagement } from "@/components/voiceprint-management"
+import { UserManagement } from "@/components/user-management"
 import { AuthScreen, PasswordChangeScreen } from "@/components/auth-screen"
-import { api, authToken, emptyMeetingFilters, errorMessage, setAuthToken, type Department, type Meeting, type MeetingFilters, type MinutesFormat } from "@/lib/meetings"
+import { api, authToken, emptyMeetingFilters, errorMessage, setAuthToken, type Department, type Meeting, type MeetingFilters, type MinutesFormat, type UserAccount, type Voiceprint } from "@/lib/meetings"
 import { RecordingSession } from "@/lib/recording-session"
 
 export default function App() {
@@ -34,7 +35,9 @@ export default function App() {
   const [filters, setFilters] = useState<MeetingFilters>(emptyMeetingFilters)
   const [departments, setDepartments] = useState<Department[]>([])
   const [minutesFormats, setMinutesFormats] = useState<MinutesFormat[]>([])
-  const [page, setPage] = useState<"meetings" | "departments" | "voiceprints" | "minutes-formats">("meetings")
+  const [voiceprints, setVoiceprints] = useState<Voiceprint[]>([])
+  const [users, setUsers] = useState<UserAccount[]>([])
+  const [page, setPage] = useState<"meetings" | "departments" | "users" | "voiceprints" | "minutes-formats">("meetings")
   const [error, setError] = useState("")
   const [createOpen, setCreateOpen] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -78,14 +81,18 @@ export default function App() {
     if (!authUser || authUser.must_change_password) return
     setLoading(true)
     try {
-      const [meetings, departments, minutesFormats] = await Promise.all([
+      const [meetings, departments, users, minutesFormats, voiceprints] = await Promise.all([
         api<Meeting[]>("/api/meetings"),
         authUser.is_admin ? api<Department[]>("/api/departments") : Promise.resolve([] as Department[]),
+        authUser.is_admin ? api<UserAccount[]>("/api/users") : Promise.resolve([] as UserAccount[]),
         api<MinutesFormat[]>("/api/minutes-formats"),
+        api<Voiceprint[]>("/api/voiceprints"),
       ])
       setMeetings(meetings)
       setDepartments(departments)
+      setUsers(users)
       setMinutesFormats(minutesFormats)
+      setVoiceprints(voiceprints)
       setFilters((filters) =>
         filters.departmentId === "all" || filters.departmentId === "unassigned" || departments.some((department) => department.id === filters.departmentId)
           ? filters : { ...filters, departmentId: "all" },
@@ -111,7 +118,7 @@ export default function App() {
           await session.leave()
           setError("")
           const match = location.hash.match(/^#meeting\/([a-f0-9]{32})$/)
-          if (active) setPage(location.hash === "#departments" && authUser?.is_admin ? "departments" : location.hash === "#voiceprints" && authUser?.is_admin ? "voiceprints" : location.hash === "#minutes-formats" && authUser?.is_admin ? "minutes-formats" : "meetings")
+          if (active) setPage(location.hash === "#departments" && authUser?.is_admin ? "departments" : location.hash === "#users" && authUser?.is_admin ? "users" : location.hash === "#voiceprints" && (authUser?.is_admin || authUser?.is_department_admin) ? "voiceprints" : location.hash === "#minutes-formats" && authUser?.is_admin ? "minutes-formats" : "meetings")
           try {
             if (match) {
               const meeting = await api<Meeting>(`/api/meetings/${match[1]}`)
@@ -170,7 +177,7 @@ export default function App() {
       )
   }, [state.meeting])
 
-  function selectPage(value: "meetings" | "departments" | "voiceprints" | "minutes-formats") {
+  function selectPage(value: "meetings" | "departments" | "users" | "voiceprints" | "minutes-formats") {
     location.hash = value === "meetings" ? "" : value
   }
   function created(meeting: Meeting) {
@@ -183,7 +190,9 @@ export default function App() {
     setAuthUser(null)
     setMeetings([])
     setDepartments([])
+    setUsers([])
     setMinutesFormats([])
+    setVoiceprints([])
     setError("")
     location.hash = ""
   }
@@ -198,6 +207,7 @@ export default function App() {
     onConfigure: configureModels,
     onPage: selectPage,
     isAdmin: Boolean(authUser?.is_admin),
+    canViewVoiceprints: Boolean(authUser?.is_admin || authUser?.is_department_admin),
   }
   const visibleError = error || state.error
 
@@ -235,7 +245,7 @@ export default function App() {
               <nav aria-label="面包屑" className="breadcrumb">
                 <span>工作空间</span>
                 <ChevronRight />
-                <a href={page === "meetings" ? "#" : `#${page}`}>{page === "departments" ? "部门管理" : page === "voiceprints" ? "声纹管理" : page === "minutes-formats" ? "纪要格式" : "会议管理"}</a>
+                <a href={page === "meetings" ? "#" : `#${page}`}>{page === "departments" ? "部门管理" : page === "users" ? "用户管理" : page === "voiceprints" ? "声纹管理" : page === "minutes-formats" ? "纪要格式" : "会议管理"}</a>
                 {state.meeting && (
                   <>
                     <ChevronRight />
@@ -292,8 +302,10 @@ export default function App() {
             </div>
           ) : page === "departments" && authUser.is_admin ? (
               <DepartmentManagement departments={departments} onChanged={refresh} />
-          ) : page === "voiceprints" && authUser.is_admin ? (
-            <VoiceprintManagement departments={departments} />
+          ) : page === "users" && authUser.is_admin ? (
+            <UserManagement users={users} onChanged={refresh} />
+          ) : page === "voiceprints" && (authUser.is_admin || authUser.is_department_admin) ? (
+            <VoiceprintManagement departments={departments} readOnly={!authUser.is_admin} />
           ) : page === "minutes-formats" && authUser.is_admin ? (
             <MinutesFormatManagement formats={minutesFormats} onChanged={refresh} />
           ) : state.meeting ? (
@@ -319,7 +331,7 @@ export default function App() {
           )}
         </main>
       </div>
-      <CreateMeetingDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={created} minutesFormats={minutesFormats} />
+      <CreateMeetingDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={created} minutesFormats={minutesFormats} voiceprints={voiceprints} />
       <ModelConfigDialog
         open={modelsOpen}
         onOpenChange={setModelsOpen}

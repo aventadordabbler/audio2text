@@ -170,6 +170,47 @@ async def test_stage_summary_waits_for_speaker_labels_before_generating(tmp_path
         await service.close()
 
 
+async def test_stage_summary_generates_after_diarization_with_unknown_speakers(tmp_path):
+    store = MeetingStore(tmp_path / "meetings.sqlite3")
+    meeting = store.create("未知说话人也应生成")
+    transcript = store.transcript(meeting["id"])
+    transcript.final(0, "无法确认身份的讲话内容。", 0, 1000, "capture")
+    document = transcript.read()
+    segment = {
+        **document["segments"][0],
+        "speaker_ids": [],
+        "speaker_status": "unknown",
+        "speaker_turns": [{
+            "start_ms": 0,
+            "end_ms": 1000,
+            "speaker_ids": [],
+            "unknown": True,
+            "overlap": False,
+        }],
+    }
+    transcript.update(segments=[segment], processing={"status": "ready", "error": ""})
+    generator = RecordingGenerator()
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path,
+        database_path=store.path,
+        stage_summary_window_seconds=10,
+    )
+    service = StageSummaryService(store, None, settings, generator)
+    await service.start()
+    try:
+        await service.finish(meeting["id"], 16000)
+
+        async def ready():
+            rows = await service.list(meeting["id"])
+            return bool(rows and rows[0]["status"] == "ready")
+
+        await until(ready)
+        assert generator.calls[0][1] == "[说话人待确认] 无法确认身份的讲话内容。"
+    finally:
+        await service.close()
+
+
 async def test_stage_summary_input_preserves_speaker_association(tmp_path):
     store = MeetingStore(tmp_path / "meetings.sqlite3")
     meeting = store.create("说话人关联")

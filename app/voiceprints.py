@@ -85,8 +85,8 @@ class VoiceprintService:
                 sample_count / SAMPLE_RATE, source,
             )
 
-    def list(self):
-        rows = self.store.list_voiceprints()
+    def list(self, department_id=None):
+        rows = self.store.list_voiceprints(department_id=department_id)
         for row in rows:
             row.pop("embedding", None)
         return rows

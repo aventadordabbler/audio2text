@@ -30,6 +30,44 @@ EXTRACT_PROMPT = """这是长会议的一个片段或若干片段的摘要，请
 保留关键数字和未明确的信息，合并重复项，不得将建议改写为决策。
 请尽量简洁，不添加开场说明。"""
 
+
+def key_speaker_context(meeting: dict[str, Any], document: dict[str, Any]) -> tuple[str, list[str], str]:
+    configured = []
+    for item in meeting.get("key_speakers", []):
+        if not isinstance(item, dict) or not isinstance(item.get("voiceprint_id"), str):
+            continue
+        configured.append({
+            "voiceprint_id": item["voiceprint_id"],
+            "name": item["name"] if isinstance(item.get("name"), str) else "未命名人员",
+        })
+    if not configured:
+        return "", [], ""
+    names = {item.get("voiceprint_id"): item.get("name", "未命名人员") for item in configured}
+    speeches: dict[str, list[str]] = {speaker_id: [] for speaker_id in names}
+    for segment in document.get("segments", []):
+        speaker_ids = segment.get("speaker_ids", [])
+        if segment.get("speaker_status") == "assigned" and len(speaker_ids) == 1 and speaker_ids[0] in speeches:
+            text = str(segment.get("text", "")).strip()
+            if text:
+                speeches[speaker_ids[0]].append(text)
+    missing = [names[speaker_id] for speaker_id, texts in speeches.items() if not texts]
+    lines = [
+        "请保留通用会议总结，并追加二级标题“重点人员发言/观点”。",
+        "只总结以下已确认属于重点人员的发言，不得根据姓名或上下文猜测归属。",
+    ]
+    for speaker_id, name in names.items():
+        if speeches[speaker_id]:
+            lines.append(f"{name}（已确认发言）：" + "\n".join(f"- {text}" for text in speeches[speaker_id]))
+        else:
+            lines.append(f"{name}：未检测到有效发言")
+    fallback = ["## 重点人员发言/观点"]
+    for speaker_id, name in names.items():
+        fallback.append(f"### {name}")
+        fallback.extend(f"- {text}" for text in speeches[speaker_id])
+        if not speeches[speaker_id]:
+            fallback.append(f"{name}：未检测到有效发言")
+    return "\n".join(lines), missing, "\n".join(fallback)
+
 FORMAT_PROMPT_SYSTEM = """你是会议纪要模板设计助手。根据用户提供的会议类型和格式要求，生成一段可直接交给大语言模型使用的纪要生成提示词。
 提示词应明确纪要的输出结构、栏目、内容取舍、事实准确性和格式要求，适合中文会议纪要场景。
 只输出提示词正文，不要输出解释、标题、Markdown 代码块或思考过程。"""
@@ -233,6 +271,12 @@ class MinutesService:
             try:
                 document = await asyncio.to_thread(self.store.transcript(meeting_id).read)
                 meeting["text"] = plain_text(document, labels=True) if document["segments"] else meeting["text"]
+                context, missing, fallback = key_speaker_context(meeting, document)
+                if context:
+                    base_prompt = meeting.get("minutes_format_prompt") or MINUTES_PROMPT
+                    meeting["minutes_format_prompt"] = f"{base_prompt}\n\n{context}"
+                    meeting["key_speaker_missing"] = missing
+                    meeting["key_speaker_fallback"] = fallback
                 await asyncio.to_thread(self.store.begin_minutes, meeting_id, document.get("content_revision", 0))
                 result = await self.get(meeting_id)
             except BaseException:
@@ -272,6 +316,14 @@ class MinutesService:
                 )
             if not text.strip():
                 raise MinutesGenerationError("纪要服务返回了空结果，请重试。")
+            missing = meeting.get("key_speaker_missing", [])
+            fallback = meeting.get("key_speaker_fallback", "")
+            if fallback and "## 重点人员发言/观点" not in text:
+                text = f"{text.rstrip()}\n\n{fallback}"
+            missing_lines = [f"{name}：未检测到有效发言" for name in missing
+                             if f"{name}：未检测到有效发言" not in text]
+            if missing_lines:
+                text = f"{text.rstrip()}\n\n## 重点人员发言/观点\n" + "\n".join(missing_lines)
             await asyncio.to_thread(self.store.save_minutes, meeting["id"], text)
         except asyncio.CancelledError:
             await asyncio.to_thread(self.store.fail_minutes, meeting["id"], "生成已中断，请重新生成纪要。")

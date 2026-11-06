@@ -34,7 +34,7 @@ function wavFile(chunks: Uint8Array[], sampleRate: number) {
   return new File([buffer], "voiceprint.wav", { type: "audio/wav" })
 }
 
-export function VoiceprintManagement({ departments }: { departments: Department[] }) {
+export function VoiceprintManagement({ departments, readOnly = false }: { departments: Department[]; readOnly?: boolean }) {
   const [rows, setRows] = useState<Voiceprint[]>([])
   const [open, setOpen] = useState(false)
   const [name, setName] = useState("")
@@ -98,8 +98,8 @@ export function VoiceprintManagement({ departments }: { departments: Department[
   const resetFilters = () => { setSearchName(""); setFilterDepartment("all") }
 
   return <section className="page-content animate-page-in">
-    <div className="page-heading"><div><h1>声纹管理</h1></div><Button className="h-10 shrink-0 gap-2 px-4 shadow-sm" onClick={startCreate} disabled={!departments.length}><Plus className="size-4" />创建声纹</Button></div>
-    {!departments.length && <p className="management-error" role="alert">请先创建部门，再录入声纹。</p>}
+    <div className="page-heading"><div><h1>声纹管理</h1></div>{!readOnly && <Button className="h-10 shrink-0 gap-2 px-4 shadow-sm" onClick={startCreate} disabled={!departments.length}><Plus className="size-4" />创建声纹</Button>}</div>
+    {!readOnly && !departments.length && <p className="management-error" role="alert">请先创建部门，再录入声纹。</p>}
     {error && !open && <p className="management-error" role="alert">{error}</p>}
     <div className="voiceprint-filters" role="search" aria-label="筛选声纹">
       <div className="filter-field">
@@ -113,9 +113,9 @@ export function VoiceprintManagement({ departments }: { departments: Department[
       <Button variant="ghost" onClick={resetFilters} disabled={!searchName && filterDepartment === "all"}>重置筛选</Button>
     </div>
     <Card className="meeting-table-card voiceprint-table-card gap-0 overflow-hidden rounded-xl py-0 shadow-none">
-      <Table><TableHeader><TableRow className="bg-muted/45 hover:bg-muted/45"><TableHead>人员姓名</TableHead><TableHead>所属部门</TableHead><TableHead>录入类型</TableHead><TableHead>录音时长</TableHead><TableHead>创建时间</TableHead><TableHead className="operation-column"><span className="sr-only">操作</span></TableHead></TableRow></TableHeader><TableBody>
-        {filteredRows.map((row) => <TableRow key={row.id} className="meeting-row"><TableCell><span className="voiceprint-person"><span className="voiceprint-avatar"><AudioLines className="size-4" /></span><strong>{row.name}</strong></span></TableCell><TableCell><span className="table-cell-value">{row.department_name || "未分类"}</span></TableCell><TableCell>{row.source === "recording" ? "在线" : "离线"}</TableCell><TableCell><span className="table-cell-value inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground"><Clock3 className="size-3.5 opacity-60" />{formatDuration(row.duration_seconds)}</span></TableCell><TableCell><span className="table-cell-value">{formatDate(row.created_at)}</span></TableCell><TableCell className="operation-column"><Button type="button" variant="ghost" size="icon-sm" aria-label={`删除${row.name}`} onClick={() => void remove(row)} disabled={busy}><Trash2 /></Button></TableCell></TableRow>)}
-        {!filteredRows.length && <TableRow className="hover:bg-transparent"><TableCell colSpan={6} className="whitespace-normal"><div className="empty-state"><div className="empty-illustration"><div><AudioLines /></div></div><h3>{rows.length ? "没有找到匹配的声纹" : "还没有声纹记录"}</h3><p>{rows.length ? "请调整姓名或部门筛选条件。" : "创建声纹后，会议转写会尝试显示登记的人员姓名。"}</p><Button variant={rows.length ? "outline" : "default"} onClick={rows.length ? resetFilters : startCreate} disabled={!rows.length && !departments.length}>{rows.length ? "重置筛选" : <><Plus />创建第一条声纹</>}</Button></div></TableCell></TableRow>}
+      <Table><TableHeader><TableRow className="bg-muted/45 hover:bg-muted/45"><TableHead>人员姓名</TableHead><TableHead>所属部门</TableHead><TableHead>录入类型</TableHead><TableHead>录音时长</TableHead><TableHead>创建时间</TableHead>{!readOnly && <TableHead className="operation-column"><span className="sr-only">操作</span></TableHead>}</TableRow></TableHeader><TableBody>
+        {filteredRows.map((row) => <TableRow key={row.id} className="meeting-row"><TableCell><span className="voiceprint-person"><span className="voiceprint-avatar"><AudioLines className="size-4" /></span><strong>{row.name}</strong></span></TableCell><TableCell><span className="table-cell-value">{row.department_name || "未分类"}</span></TableCell><TableCell>{row.source === "recording" ? "在线" : "离线"}</TableCell><TableCell><span className="table-cell-value inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground"><Clock3 className="size-3.5 opacity-60" />{formatDuration(row.duration_seconds)}</span></TableCell><TableCell><span className="table-cell-value">{formatDate(row.created_at)}</span></TableCell>{!readOnly && <TableCell className="operation-column"><Button type="button" variant="ghost" size="icon-sm" aria-label={`删除${row.name}`} onClick={() => void remove(row)} disabled={busy}><Trash2 /></Button></TableCell>}</TableRow>)}
+        {!filteredRows.length && <TableRow className="hover:bg-transparent"><TableCell colSpan={readOnly ? 5 : 6} className="whitespace-normal"><div className="empty-state"><div className="empty-illustration"><div><AudioLines /></div></div><h3>{rows.length ? "没有找到匹配的声纹" : "还没有声纹记录"}</h3><p>{rows.length ? "请调整姓名或部门筛选条件。" : "创建声纹后，会议转写会尝试显示登记的人员姓名。"}</p>{!readOnly && <Button variant={rows.length ? "outline" : "default"} onClick={rows.length ? resetFilters : startCreate} disabled={!rows.length && !departments.length}>{rows.length ? "重置筛选" : <><Plus />创建第一条声纹</>}</Button>}</div></TableCell></TableRow>}
       </TableBody></Table>
     </Card>
     <Dialog open={open} onOpenChange={closeCreate}><DialogContent id="voiceprint-create-dialog" className="create-dialog max-h-[90vh] gap-0 overflow-y-auto p-0 sm:max-w-[460px]"><form onSubmit={submit}>

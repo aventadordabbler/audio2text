@@ -96,6 +96,17 @@ export class MeetingApi {
     return this.request("/api/departments", options);
   }
 
+  users(options = {}) {
+    return this.request("/api/users", options);
+  }
+
+  setDepartmentAdmin(id, enabled) {
+    return this.request(`/api/users/${encodeURIComponent(id)}/department-admin`, {
+      method: "PUT",
+      body: JSON.stringify({ enabled }),
+    });
+  }
+
   voiceprints(options = {}) {
     return this.request("/api/voiceprints", options);
   }
@@ -187,7 +198,7 @@ export class MeetingApi {
     return result;
   }
 
-  create(title, departmentId = null, minutesFormatId = null) {
+  create(title, departmentId = null, minutesFormatId = null, keySpeakerIds = []) {
     return this.request("/api/meetings", {
       method: "POST",
       body: JSON.stringify({
@@ -196,6 +207,7 @@ export class MeetingApi {
           .join(""),
         department_id: departmentId || null,
         minutes_format_id: minutesFormatId || null,
+        key_speaker_ids: keySpeakerIds,
         ...(this.config.language === "auto"
           ? {}
           : { language: this.config.language }),
@@ -203,25 +215,26 @@ export class MeetingApi {
     });
   }
 
-  importWav(title, departmentId, file, language = this.config.language, onProgress, minutesFormatId = null) {
+  importWav(title, departmentId, file, language = this.config.language, onProgress, minutesFormatId = null, keySpeakerIds = []) {
     const files = Array.isArray(file) ? file : [file];
-    if (files.length > 1 || files[0].size > CHUNK_THRESHOLD) return this.importWavChunked(title, files, language, onProgress, minutesFormatId);
+    if (files.length > 1 || files[0].size > CHUNK_THRESHOLD) return this.importWavChunked(title, files, language, onProgress, minutesFormatId, keySpeakerIds);
     const body = new FormData();
     body.set("title", title);
     body.set("file", files[0]);
     if (departmentId) body.set("department_id", departmentId);
     if (language && language !== "auto") body.set("language", language);
     if (minutesFormatId) body.set("minutes_format_id", minutesFormatId);
+    body.set("key_speaker_ids", JSON.stringify(keySpeakerIds));
     return this.request("/api/meetings/import", {
       method: "POST", body, signal: AbortSignal.timeout(900000),
     });
   }
 
-  async importWavChunked(title, files, language = this.config.language, onProgress, minutesFormatId = null) {
+  async importWavChunked(title, files, language = this.config.language, onProgress, minutesFormatId = null, keySpeakerIds = []) {
     const totalChunks = files.reduce((total, file) => total + Math.ceil(file.size / CHUNK_SIZE), 0);
     const started = await this.request("/api/meetings/import/chunked", {
       method: "POST",
-      body: JSON.stringify({ title, language: language === "auto" ? null : language, minutes_format_id: minutesFormatId, files: files.map((file) => ({ filename: file.name, file_size: file.size, total_chunks: Math.ceil(file.size / CHUNK_SIZE), chunk_size: CHUNK_SIZE })) }),
+      body: JSON.stringify({ title, language: language === "auto" ? null : language, minutes_format_id: minutesFormatId, key_speaker_ids: keySpeakerIds, files: files.map((file) => ({ filename: file.name, file_size: file.size, total_chunks: Math.ceil(file.size / CHUNK_SIZE), chunk_size: CHUNK_SIZE })) }),
       signal: AbortSignal.timeout(900000),
     });
     let completed = 0;

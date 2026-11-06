@@ -42,6 +42,7 @@ export interface Meeting {
   department_name: string | null
   minutes_format_id?: string | null
   minutes_format_name?: string | null
+  key_speakers: { voiceprint_id: string; name: string; status: "detected" | "not_detected" }[]
   creator_account: string | null
   creator_employee_id: string | null
   status: MeetingStatus
@@ -61,12 +62,29 @@ export interface Meeting {
   processing: ProcessingState
 }
 
+export interface Voiceprint {
+  id: string
+  name: string
+  department_id: string | null
+  department_name: string | null
+}
+
 export interface Department {
   id: string
   name: string
   created_at: string
   updated_at: string
   meeting_count: number
+}
+
+export interface UserAccount {
+  id: string
+  account: string
+  employee_id: string
+  department_id: string
+  department_name: string
+  is_admin: boolean
+  is_department_admin: boolean
 }
 
 export interface MinutesFormat {
@@ -201,6 +219,7 @@ export async function importWav(
   language: string,
   minutesFormatId: string | null = null,
   onProgress?: (completed: number, total: number) => void,
+  keySpeakerIds: string[] = [],
 ) {
   const files = Array.isArray(input) ? input : [input]
   if (files.length === 1 && files[0].size <= CHUNK_THRESHOLD) {
@@ -209,6 +228,7 @@ export async function importWav(
     body.set("title", title)
     if (language !== "auto") body.set("language", language)
     if (minutesFormatId) body.set("minutes_format_id", minutesFormatId)
+    body.set("key_speaker_ids", JSON.stringify(keySpeakerIds))
     return api<Meeting>("/api/meetings/import", { method: "POST", body })
   }
 
@@ -220,6 +240,7 @@ export async function importWav(
       title,
       language: language === "auto" ? null : language,
       minutes_format_id: minutesFormatId,
+      key_speaker_ids: keySpeakerIds,
       files: files.map((file) => ({
         filename: file.name,
         file_size: file.size,

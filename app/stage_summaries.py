@@ -494,15 +494,20 @@ class StageSummaryService:
                 self.wake.set()
 
     @staticmethod
-    def _speakers_ready(segments: list[dict[str, Any]]) -> bool:
+    def _speakers_ready(
+        segments: list[dict[str, Any]], *, allow_unknown: bool = False
+    ) -> bool:
         resolved = {"assigned", "multiple", "overlap"}
         for segment in segments:
-            if segment.get("speaker_status") not in resolved or not segment.get("speaker_ids"):
+            unknown_segment = allow_unknown and segment.get("speaker_status") == "unknown"
+            if segment.get("speaker_status") not in resolved and not unknown_segment:
+                return False
+            if not segment.get("speaker_ids") and not unknown_segment:
                 return False
             if any(
-                turn.get("unknown")
-                or not turn.get("speaker_ids")
-                or any(not speaker_id for speaker_id in turn["speaker_ids"])
+                (turn.get("unknown") and not allow_unknown)
+                or (not turn.get("speaker_ids") and not (allow_unknown and turn.get("unknown")))
+                or (any(not speaker_id for speaker_id in turn["speaker_ids"]) and not allow_unknown)
                 for turn in segment.get("speaker_turns", [])
             ):
                 return False
@@ -522,7 +527,10 @@ class StageSummaryService:
                 for segment in document["segments"]
                 if segment["text"].strip() and start_ms <= segment.get("start_ms", 0) < end_ms
             ]
-            if not self._speakers_ready(segments):
+            processing_status = (meeting.get("processing") or {}).get("status")
+            if not self._speakers_ready(
+                segments, allow_unknown=processing_status == "ready"
+            ):
                 await asyncio.to_thread(self.store.defer, row)
                 return False
             text = plain_text({**document, "segments": segments}, labels=True)

@@ -84,7 +84,7 @@ class SpeakerWorker:
 
 class Minutes:
     def __init__(self, fail=False):
-        self.fail, self.calls = fail, []
+        self.fail, self.calls, self.prompts = fail, [], []
 
     async def generate_format_prompt(self, name, requirement):
         return f"{name}：{requirement}"
@@ -94,6 +94,10 @@ class Minutes:
         if self.fail:
             raise MinutesGenerationError("模拟总结失败")
         return f"# {title}\n\n{text}"
+
+    async def generate_with_prompt(self, title, text, prompt=None):
+        self.prompts.append(prompt or "")
+        return await self.generate(title, text)
 
 
 class StageSummary:
@@ -222,6 +226,53 @@ async def test_import_transcribes_labels_summarizes_and_exports_with_audio_durat
             assert archive.getnframes() / archive.getframerate() == 3.25
         assert (await client.post(prefix + "/import/retry")).status_code == 409
         assert (await client.delete(prefix)).status_code == 204
+
+
+async def test_key_speakers_are_snapshotted_and_carried_through_import(tmp_path):
+    minutes = Minutes()
+    app = build(tmp_path, minutes=minutes)
+    async with app.router.lifespan_context(app), httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
+        user = await login(client)
+        voiceprint = app.state.meeting_store.create_voiceprint(
+            user["id"], "重点人员", user["department_id"], [1.0, 0.0], 1.0, "import",
+        )
+        voiceprint_id = voiceprint["id"]
+        listed = (await client.get("/api/voiceprints")).json()
+        assert [item["id"] for item in listed] == [voiceprint_id]
+
+        created = await client.post("/api/meetings", json={"title": "实时重点会议", "key_speaker_ids": [voiceprint_id]})
+        assert created.status_code == 201, created.text
+        assert created.json()["key_speakers"] == [{"voiceprint_id": voiceprint_id, "name": "重点人员", "status": "not_detected"}]
+
+        started = await client.post("/api/meetings/import/chunked", json={
+            "title": "分片重点会议", "key_speaker_ids": [voiceprint_id],
+            "files": [{"filename": "重点.wav", "file_size": 1, "total_chunks": 1, "chunk_size": 1024 * 1024}],
+        })
+        assert started.status_code == 200, started.text
+        metadata = json.loads((tmp_path / ".audio-uploads" / f"chunked-{started.json()['upload_id']}" / "metadata.json").read_text())
+        assert metadata["key_speaker_ids"] == [voiceprint_id]
+
+        response = await imported(client, key_speaker_ids=json.dumps([voiceprint_id]))
+        assert response.status_code == 202, response.text
+        meeting = await settled(client, response.json()["id"])
+        assert meeting["key_speakers"] == [{"voiceprint_id": voiceprint_id, "name": "重点人员", "status": "detected"}]
+        assert "重点人员（已确认发言）" in minutes.prompts[0]
+        assert "## 重点人员发言/观点" in (await client.get(f"/api/meetings/{meeting['id']}/minutes")).json()["text"]
+
+
+async def test_key_speaker_without_confirmed_speech_is_reported(tmp_path):
+    minutes = Minutes()
+    app = build(tmp_path, minutes=minutes)
+    async with app.router.lifespan_context(app), httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
+        user = await login(client)
+        voiceprint = app.state.meeting_store.create_voiceprint(
+            user["id"], "未出席人员", user["department_id"], [0.0, 1.0], 1.0, "import",
+        )
+        response = await imported(client, key_speaker_ids=json.dumps([voiceprint["id"]]))
+        meeting = await settled(client, response.json()["id"])
+        assert meeting["key_speakers"][0]["status"] == "not_detected"
+        minutes_text = (await client.get(f"/api/meetings/{meeting['id']}/minutes")).json()["text"]
+        assert "未出席人员：未检测到有效发言" in minutes_text
 
 
 async def test_mp3_import_is_decoded_by_ffmpeg_and_processed(tmp_path):
