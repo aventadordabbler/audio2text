@@ -25,9 +25,9 @@ class Settings(BaseSettings):
     diarization_workers: int = Field(default=2, ge=1, le=8)
     diarization_threads: int = Field(default=2, ge=1, le=32)
     diarization_timeout_seconds: float = Field(default=120, ge=5, le=1800)
-    diarization_final_timeout_seconds: float = Field(default=1800, ge=10, le=14400)
-    audio_import_max_bytes: int = Field(default=5 * 1024 * 1024 * 1024, ge=1024)
-    audio_import_max_seconds: int = Field(default=12 * 3600, ge=1)
+    diarization_final_timeout_seconds: float | None = Field(default=None, ge=10, le=86400)
+    audio_import_max_bytes: int = Field(default=4 * 1024 * 1024 * 1024, ge=1024)
+    audio_import_max_seconds: int = Field(default=8 * 3600, ge=1)
     audio_import_workers: int = Field(default=2, ge=1, le=8)
     audio_import_decode_timeout_seconds: float = Field(default=600, ge=5, le=7200)
     voiceprint_max_bytes: int = Field(default=100 * 1024 * 1024, ge=1024)
@@ -42,6 +42,11 @@ class Settings(BaseSettings):
         if not value.strip():
             raise ValueError("ASR_TOKENIZER 不能为空")
         return value.strip()
+
+    @field_validator("diarization_final_timeout_seconds", mode="before")
+    @classmethod
+    def empty_diarization_final_timeout(cls, value):
+        return None if value in (None, "") else value
 
     @model_validator(mode="after")
     def valid_asr_window(self):

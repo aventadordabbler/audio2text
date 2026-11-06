@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import time
 
 from .state import SpeakerState, label_segment
@@ -10,9 +11,12 @@ from .worker import ModelWorker, WorkerError
 from .jobs import ProcessingJobs
 from .finalize import global_timeline, label_document, SegmentCorrector
 from ..meetings import MeetingError
-from ..recordings import read_audio_summary
+from ..recordings import SAMPLE_RATE, read_audio_summary
 
 logger = logging.getLogger(__name__)
+
+FINAL_TIMEOUT_BASE_SECONDS = 5 * 60
+FINAL_TIMEOUT_SECONDS_PER_AUDIO_SECOND = 2
 
 
 class DiarizationService:
@@ -187,14 +191,18 @@ class DiarizationService:
 
     async def _finalize(self, meeting_id):
         completed = False
+        audio = None
         try:
+            audio = await asyncio.to_thread(read_audio_summary, self.store.directory(meeting_id))
             if task := self.live.get(meeting_id):
                 await task
             await self._status(meeting_id, "queued")
             async with self.final_slots:
                 await asyncio.to_thread(self.jobs.set, meeting_id, "running")
                 await self._status(meeting_id, "running")
-                async with asyncio.timeout(self.settings.diarization_final_timeout_seconds):
+                async with asyncio.timeout(self._final_timeout_seconds(
+                    audio.samples if audio is not None else 0
+                )):
                     if error := self.workers[0].readiness():
                         raise WorkerError(error)
                     if not await self._correct(meeting_id):
@@ -213,7 +221,6 @@ class DiarizationService:
             await self._status(meeting_id, status, message)
         if completed and self.stage_summaries:
             try:
-                audio = await asyncio.to_thread(read_audio_summary, self.store.directory(meeting_id))
                 if audio is not None:
                     await self.stage_summaries.finish(meeting_id, audio.samples)
                 self.stage_summaries.notify_diarization(meeting_id)
@@ -270,6 +277,15 @@ class DiarizationService:
             await corrector.close()
         return True
 
+    def _final_timeout_seconds(self, samples: int) -> float:
+        if self.settings.diarization_final_timeout_seconds is not None:
+            return self.settings.diarization_final_timeout_seconds
+        duration = samples / SAMPLE_RATE if samples > 0 else self.settings.audio_import_max_seconds
+        windows = max(1, math.ceil(duration))
+        # shortcut: budget two wall-clock seconds per fresh audio second; replace
+        # with measured throughput if the diarization model or stride changes.
+        return FINAL_TIMEOUT_BASE_SECONDS + windows * FINAL_TIMEOUT_SECONDS_PER_AUDIO_SECOND
+
     async def correct_import(self, meeting_id):
         """The import job owns persistence and summary scheduling for uploaded audio."""
         await self._status(meeting_id, "queued")
@@ -279,7 +295,10 @@ class DiarizationService:
                 if error := self.workers[0].readiness():
                     await self._status(meeting_id, "unavailable", error)
                     return False
-                async with asyncio.timeout(self.settings.diarization_final_timeout_seconds):
+                audio = await asyncio.to_thread(read_audio_summary, self.store.directory(meeting_id))
+                async with asyncio.timeout(self._final_timeout_seconds(
+                    audio.samples if audio is not None else 0
+                )):
                     completed = await self._correct(meeting_id)
                 if not completed:
                     await self._status(meeting_id, "failed", "未生成有效的说话人时间线，请检查音频内容或模型配置。")

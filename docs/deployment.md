@@ -103,10 +103,11 @@ STAGE_SUMMARY_MAX_TOKENS=1024
 DIARIZATION_WORKERS=1
 DIARIZATION_THREADS=2
 DIARIZATION_TIMEOUT_SECONDS=120
-DIARIZATION_FINAL_TIMEOUT_SECONDS=1800
+# Optional fixed override; leave unset for an audio-duration-based timeout.
+# DIARIZATION_FINAL_TIMEOUT_SECONDS=7200
 ```
 
-`STAGE_SUMMARY_WINDOW_SECONDS` 的有效范围是 10–300 秒；`ASR_STRIDE_SECONDS` 不得大于窗口长度。`data/` 同时包含数据库、API Key、录音、转写和总结，必须持久化并按含密钥的敏感数据保护。
+`STAGE_SUMMARY_WINDOW_SECONDS` 的有效范围是 10–300 秒；`ASR_STRIDE_SECONDS` 不得大于窗口长度。说话人最终校正默认按当前会议音频时长动态计算超时，公式为 `300 + 2 × 音频秒数`；`DIARIZATION_FINAL_TIMEOUT_SECONDS` 仅用于显式覆盖。`data/` 同时包含数据库、API Key、录音、转写和总结，必须持久化并按含密钥的敏感数据保护。
 
 ### 3.2 构建和启动服务
 

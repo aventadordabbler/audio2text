@@ -128,6 +128,16 @@ async def login_existing(client, account="fixture", password="password1"):
     return response.json()["user"]
 
 
+def test_diarization_final_timeout_is_dynamic_with_optional_override(tmp_path):
+    app = build(tmp_path)
+    diarization = app.state.diarization_service
+    assert diarization._final_timeout_seconds(16000 * 60) == 420
+    assert diarization._final_timeout_seconds(16000 * 3600) == 7500
+
+    overridden = build(tmp_path / "override", diarization_final_timeout_seconds=7200)
+    assert overridden.state.diarization_service._final_timeout_seconds(16000 * 60) == 7200
+
+
 async def admin_login(client):
     response = await client.post("/api/auth/login", json={"account": "admin", "password": ""})
     assert response.status_code == 200, response.text
