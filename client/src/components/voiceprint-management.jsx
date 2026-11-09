@@ -32,6 +32,7 @@ export function VoiceprintManagement({ api, departments, readOnly = false }) {
   const [file, setFile] = useState(null);
   const [recording, setRecording] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [deleting, setDeleting] = useState(null);
   const [error, setError] = useState("");
   const [searchName, setSearchName] = useState("");
   const [filterDepartment, setFilterDepartment] = useState("all");
@@ -72,10 +73,10 @@ export function VoiceprintManagement({ api, departments, readOnly = false }) {
       await api.createVoiceprint(body); await load(); setOpen(false); resetForm();
     } catch (submitError) { setError(submitError.message); } finally { setBusy(false); }
   }
-  async function remove(row) {
-    if (busy || !window.confirm(`确认删除声纹「${row.name}」？`)) return;
+  async function remove() {
+    if (!deleting || busy) return;
     setBusy(true); setError("");
-    try { await api.deleteVoiceprint(row.id); await load(); } catch (removeError) { setError(removeError.message); } finally { setBusy(false); }
+    try { await api.deleteVoiceprint(deleting.id); await load(); setDeleting(null); } catch (removeError) { setError(removeError.message); } finally { setBusy(false); }
   }
 
   const filteredRows = rows.filter((row) =>
@@ -101,7 +102,7 @@ export function VoiceprintManagement({ api, departments, readOnly = false }) {
       <Button variant="ghost" onClick={resetFilters} disabled={!searchName && filterDepartment === "all"}>重置筛选</Button>
     </div>
     <Card className="history-table-card"><div className="history-table-scroll panel-scroll management-table"><Table><TableHeader><TableRow><TableHead>人员姓名</TableHead><TableHead>所属部门</TableHead><TableHead>录入类型</TableHead><TableHead>录音时长</TableHead><TableHead>创建时间</TableHead>{!readOnly && <TableHead>操作</TableHead>}</TableRow></TableHeader><TableBody>
-      {filteredRows.map((row) => <TableRow key={row.id}><TableCell><span className="voiceprint-person"><span className="voiceprint-avatar"><AudioLines size={15} /></span><strong>{row.name}</strong></span></TableCell><TableCell>{row.department_name || "未分类"}</TableCell><TableCell>{row.source === "recording" ? "在线" : "离线"}</TableCell><TableCell><span className="table-cell-value inline-flex items-center gap-1.5 font-mono"><Clock3 size={13} />{Math.floor(row.duration_seconds / 60).toString().padStart(2, "0")}:{Math.floor(row.duration_seconds % 60).toString().padStart(2, "0")}</span></TableCell><TableCell>{new Date(row.created_at).toLocaleString("zh-CN")}</TableCell>{!readOnly && <TableCell><Button type="button" variant="ghost" size="icon" aria-label={`删除声纹：${row.name}`} onClick={() => void remove(row)} disabled={busy}><Trash2 size={15} /></Button></TableCell>}</TableRow>)}
+      {filteredRows.map((row) => <TableRow key={row.id}><TableCell><span className="voiceprint-person"><span className="voiceprint-avatar"><AudioLines size={15} /></span><strong>{row.name}</strong></span></TableCell><TableCell>{row.department_name || "未分类"}</TableCell><TableCell>{row.source === "recording" ? "在线" : "离线"}</TableCell><TableCell><span className="table-cell-value inline-flex items-center gap-1.5 font-mono"><Clock3 size={13} />{Math.floor(row.duration_seconds / 60).toString().padStart(2, "0")}:{Math.floor(row.duration_seconds % 60).toString().padStart(2, "0")}</span></TableCell><TableCell>{new Date(row.created_at).toLocaleString("zh-CN")}</TableCell>{!readOnly && <TableCell><Button type="button" variant="ghost" size="icon" aria-label={`删除声纹：${row.name}`} onClick={() => { setDeleting(row); setError(""); }} disabled={busy}><Trash2 size={15} /></Button></TableCell>}</TableRow>)}
       {!filteredRows.length && <TableRow className="hover:bg-transparent"><TableCell colSpan={readOnly ? 5 : 6} className="whitespace-normal"><div className="empty-state"><div className="empty-illustration"><span /><span /><div><AudioLines /></div></div><h3>{rows.length ? "没有找到匹配的声纹" : "还没有声纹记录"}</h3><p>{rows.length ? "请调整姓名或部门筛选条件。" : "创建声纹后，会议转写会尝试显示登记的人员姓名。"}</p>{!readOnly && <Button variant={rows.length ? "outline" : "default"} onClick={rows.length ? resetFilters : startCreate} disabled={!rows.length && !departments.length}>{rows.length ? "重置筛选" : <><Plus size={15} />创建第一条声纹</>}</Button>}</div></TableCell></TableRow>}
     </TableBody></Table></div></Card>
     <Dialog open={open} onOpenChange={closeCreate}><DialogContent className="management-dialog"><form className="management-form" onSubmit={submit}><DialogHeader><DialogTitle>创建声纹</DialogTitle><DialogDescription>录入人员姓名、部门和一段清晰的单人讲话音频。</DialogDescription></DialogHeader>
@@ -113,5 +114,6 @@ export function VoiceprintManagement({ api, departments, readOnly = false }) {
       {error && <p className="management-error" role="alert">{error}</p>}
       <DialogFooter><Button type="button" variant="outline" onClick={() => closeCreate(false)} disabled={busy || recording}>取消</Button><Button type="submit" disabled={busy || recording || !file || !name.trim() || !departmentId}>{busy ? <LoaderCircle className="animate-spin" /> : <AudioLines />}保存声纹</Button></DialogFooter>
     </form></DialogContent></Dialog>
+    <Dialog open={!!deleting} onOpenChange={(next) => { if (!next && !busy) { setDeleting(null); setError(""); } }}><DialogContent className="management-dialog"><DialogHeader><DialogTitle>删除声纹</DialogTitle><DialogDescription>确认删除声纹「{deleting?.name}」？删除后将无法恢复。</DialogDescription></DialogHeader>{error && <p className="management-error" role="alert">{error}</p>}<DialogFooter><Button variant="outline" disabled={busy} onClick={() => { setDeleting(null); setError(""); }}>取消</Button><Button disabled={busy} onClick={remove}>{busy && <LoaderCircle className="animate-spin" />}确认删除</Button></DialogFooter></DialogContent></Dialog>
   </section>;
 }
