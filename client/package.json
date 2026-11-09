@@ -1,7 +1,7 @@
 {
   "name": "meeting-assistant-desktop",
   "productName": "Meeting Assistant Desktop",
-  "version": "0.2.3",
+  "version": "1.0.1",
   "description": "Electron desktop meeting assistant with live transcript, summaries, and minutes generation.",
   "private": true,
   "type": "module",
