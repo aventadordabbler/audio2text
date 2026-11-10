@@ -1,7 +1,7 @@
 {
   "name": "meeting-assistant",
   "productName": "Meeting Assistant",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "meeting assistant with live transcript, summaries, and minutes generation.",
   "private": true,
   "type": "module",
