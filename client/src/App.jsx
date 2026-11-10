@@ -206,7 +206,6 @@ export function App() {
   const [diarizationReady, setDiarizationReady] = useState(null);
   const [retryingDiarization, setRetryingDiarization] = useState(false);
   const [retryingImport, setRetryingImport] = useState(false);
-  const [importPollRevision, setImportPollRevision] = useState(0);
   const [exportingAudio, setExportingAudio] = useState(false);
   const [exportingText, setExportingText] = useState(false);
   const [exportingMinutes, setExportingMinutes] = useState(false);
@@ -994,7 +993,7 @@ export function App() {
   }, [meetingApi]);
 
   useEffect(() => {
-    if (!meetingApi || !session?.remoteMeetingId || session.remoteStatus !== "ended" || session.source === "wav") return;
+    if (!meetingApi || !session?.remoteMeetingId || session.remoteStatus !== "ended") return;
     const id = session.remoteMeetingId;
     let disposed = false;
     async function observe() {
@@ -1013,34 +1012,6 @@ export function App() {
     };
   }, [meetingApi, session?.remoteMeetingId, session?.remoteStatus, session?.source, sessionSelection]);
 
-  useEffect(() => {
-    if (!meetingApi || session?.source !== "wav" || !session.remoteMeetingId) return;
-    const id = session.remoteMeetingId;
-    const controller = new AbortController();
-    let timer;
-    async function poll() {
-      try {
-        const [remote, minutes] = await Promise.all([
-          meetingApi.get(id, { signal: controller.signal }),
-          meetingApi.minutes(id, { signal: controller.signal }),
-        ]);
-        if (controller.signal.aborted || sessionRef.current?.remoteMeetingId !== id) return;
-        const next = sessionWithMinutes(sessionFromMeeting(remote, meetingApi.config.baseUrl, sessionRef.current), minutes);
-        await updateSession(next);
-        if (["queued", "running"].includes(remote.import_job?.status) ||
-            ["queued", "running"].includes(remote.processing?.status) || minutes.status === "generating") {
-          timer = setTimeout(poll, 1500);
-        }
-      } catch (error) {
-        if (controller.signal.aborted) return;
-        setStatusLine(`导入状态同步失败：${error.message}`);
-        timer = setTimeout(poll, 3000);
-      }
-    }
-    void poll();
-    return () => { clearTimeout(timer); controller.abort(); };
-  }, [meetingApi, session?.remoteMeetingId, session?.source, sessionSelection, importPollRevision]);
-
   async function retryImport() {
     const target = sessionRef.current;
     if (!meetingApi || !target?.remoteMeetingId || retryingImport) return;
@@ -1048,7 +1019,7 @@ export function App() {
     try {
       const remote = await meetingApi.retryImport(target.remoteMeetingId);
       await updateSession(sessionFromMeeting(remote, meetingApi.config.baseUrl, target));
-      setImportPollRevision((value) => value + 1);
+      await recorder.observe(remote, handleTranscript, handleTranscriptPreview, handleRecorderEvent);
     } catch (error) {
       setStatusLine(`重试导入失败：${error.message}`);
     } finally {
@@ -1062,8 +1033,9 @@ export function App() {
     setRetryingDiarization(true);
     try {
       if (target.source === "wav") {
-        await meetingApi.retryDiarization(target.remoteMeetingId);
-        setImportPollRevision((value) => value + 1);
+        const remote = await meetingApi.retryDiarization(target.remoteMeetingId);
+        await updateSession(sessionFromMeeting(remote, meetingApi.config.baseUrl, target));
+        await recorder.observe(remote, handleTranscript, handleTranscriptPreview, handleRecorderEvent);
       } else await recorder.retryDiarization();
       const result = await meetingApi.diarizationStatus();
       setDiarizationReady(result);
@@ -1082,7 +1054,6 @@ export function App() {
       if (target.source === "wav") {
         const minutes = await meetingApi.generateMinutes(target.remoteMeetingId);
         await updateSession(sessionWithMinutes(target, minutes));
-        setImportPollRevision((value) => value + 1);
       } else {
         if (recorder.meeting?.id !== target.remoteMeetingId) throw new Error("正在连接会议，请稍后重试");
         await recorder.generateMinutes();

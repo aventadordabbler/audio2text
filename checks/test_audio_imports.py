@@ -575,6 +575,32 @@ async def test_chunked_upload_failure_marks_initializing_meeting_failed(tmp_path
         assert not list((tmp_path / ".audio-uploads").glob("chunked-*"))
 
 
+async def test_import_publishes_incremental_events_for_read_only_subscribers(tmp_path):
+    app = build(tmp_path)
+    published = []
+    events = app.state.meeting_events
+    publish = events.publish
+
+    def capture(meeting_id, event, exclude=None):
+        published.append((meeting_id, event))
+        publish(meeting_id, event, exclude=exclude)
+
+    events.publish = capture
+    async with app.router.lifespan_context(app), httpx.AsyncClient(
+        transport=httpx.ASGITransport(app), base_url="http://test"
+    ) as client:
+        await login(client)
+        response = await imported(client)
+        assert response.status_code == 202, response.text
+        meeting = await settled(client, response.json()["id"])
+
+    meeting_events = [event for meeting_id, event in published if meeting_id == meeting["id"]]
+    assert any(event["type"] == "snapshot" for event in meeting_events)
+    assert any(event["type"] == "import.status" and "processed_samples" in event["import_job"]
+               for event in meeting_events)
+    assert any(event.get("type") == "final" and event.get("revision") for event in meeting_events)
+
+
 async def test_chunked_mp3_import_uses_the_same_decode_pipeline(tmp_path):
     app = build(tmp_path)
     content = mp3_bytes()

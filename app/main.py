@@ -191,7 +191,7 @@ def create_app(
     )
     audio_imports = AudioImportService(
         store, models, app_settings, system_settings, diarization, minutes, import_decoder_factory,
-        stage_summaries=stage_summaries,
+        stage_summaries=stage_summaries, events=events,
     )
     voiceprints = VoiceprintService(store, diarization, app_settings)
 

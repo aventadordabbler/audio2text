@@ -402,6 +402,11 @@ export class MeetingRecorder {
         } else if (payload.type === "snapshot" && payload.meeting) {
           this.setMeeting(payload.meeting, true);
           if (this.meeting.status === "ended") void this.syncMinutes();
+        } else if (payload.type === "import.status" && payload.import_job && this.meeting) {
+          this.setMeeting({
+            ...this.meeting,
+            import_job: { ...this.meeting.import_job, ...payload.import_job },
+          }, true, false);
         } else if (payload.type === "transcript.update" || payload.type === "processing" || payload.type === "final") {
           await this.applyEvent(payload, socket);
           if (payload.type === "final") this.onPreview?.("", { segment_id: payload.segment_id });

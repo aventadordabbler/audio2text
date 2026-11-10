@@ -36,10 +36,11 @@ async def _disk(function, *args, **kwargs):
 
 
 class AudioImportService:
-    def __init__(self, store, models, settings, system_settings, diarization, minutes, decoder_factory=None, stage_summaries=None):
+    def __init__(self, store, models, settings, system_settings, diarization, minutes, decoder_factory=None, stage_summaries=None, events=None):
         self.store, self.models, self.settings, self.system_settings = store, models, settings, system_settings
         self.diarization, self.minutes = diarization, minutes
         self.stage_summaries = stage_summaries
+        self.events = events
         self.decoder_factory = decoder_factory
         self.tasks = {}
         self.lock = asyncio.Lock()
@@ -55,11 +56,17 @@ class AudioImportService:
                 raise MeetingError("导入任务不存在", 404)
             return dict(row)
 
-    def _update(self, meeting_id, **values):
+    def _update_db(self, meeting_id, **values):
         values["updated_at"] = datetime.now(timezone.utc).isoformat()
         with self.store._connection() as db:
             db.execute(f"UPDATE meeting_imports SET {', '.join(key + ' = ?' for key in values)} WHERE meeting_id = ?",
                        (*values.values(), meeting_id))
+
+    async def _update(self, meeting_id, **values):
+        changes = dict(values)
+        await _disk(self._update_db, meeting_id, **values)
+        if self.events:
+            self.events.publish(meeting_id, {"type": "import.status", "import_job": changes})
 
     @staticmethod
     def _source_name(filename, index=None):
@@ -264,8 +271,8 @@ class AudioImportService:
                                            meta.get("meeting_id"))
             except BaseException as exc:
                 if meta.get("meeting_id"):
-                    await _disk(self._update, meta["meeting_id"], status="failed", stage="initializing",
-                                error=str(exc) if isinstance(exc, MeetingError) else "音频上传初始化失败")
+                    await self._update(meta["meeting_id"], status="failed", stage="initializing",
+                                       error=str(exc) if isinstance(exc, MeetingError) else "音频上传初始化失败")
                 if directory.exists():
                     shutil.rmtree(directory, ignore_errors=True)
                 raise
@@ -280,13 +287,15 @@ class AudioImportService:
                 meeting = await _disk(self.store.create, title, language, department_id, minutes_format_id,
                                       key_speaker_ids, imported_audio=directory, filename=filename, user_id=user_id)
             self._schedule(meeting["id"])
+            if self.events:
+                self.events.publish(meeting["id"], {"type": "snapshot", "meeting": meeting})
             return meeting
 
     async def fail_chunked(self, upload_id, user_id=None, error="音频上传失败，请重新导入"):
         directory, meta = self._read_chunk_meta(upload_id, user_id)
         meeting_id = meta.get("meeting_id")
         if meeting_id:
-            await _disk(self._update, meeting_id, status="failed", stage="initializing", error=error[:500])
+            await self._update(meeting_id, status="failed", stage="initializing", error=error[:500])
         shutil.rmtree(directory, ignore_errors=True)
         return {"meeting_id": meeting_id, "status": "failed"}
 
@@ -367,7 +376,7 @@ class AudioImportService:
             job = await _disk(self._job, meeting_id)
             if job["status"] != "failed" or meeting_id in self.tasks:
                 raise MeetingError("只有失败的导入任务可以重试")
-            await _disk(self._update, meeting_id, status="queued", error="", attempts=0)
+            await self._update(meeting_id, status="queued", error="", attempts=0)
             self._schedule(meeting_id)
             return await _disk(self.store.get, meeting_id)
 
@@ -394,17 +403,21 @@ class AudioImportService:
                 for event in events:
                     if event["type"] != "final":
                         continue
-                    await _disk(transcript.final, event["segment_id"], event["text"],
-                                event["start_ms"], event["end_ms"], capture_id)
-                    await _disk(self._update, meeting_id,
-                                processed_samples=min(job["total_samples"], round(event["end_ms"] * 16)))
+                    saved = await _disk(transcript.final, event["segment_id"], event["text"],
+                                        event["start_ms"], event["end_ms"], capture_id)
+                    if saved and self.events:
+                        self.events.publish(meeting_id, saved)
+                    await self._update(
+                        meeting_id,
+                        processed_samples=min(job["total_samples"], round(event["end_ms"] * 16)),
+                    )
             while cursor < job["total_samples"]:
                 end = min(cursor + SAMPLE_RATE, job["total_samples"])
                 audio = await _disk(read_audio, directory, cursor, end)
                 await save(await session.feed_samples(audio))
                 cursor = end
             await save(await session.flush())
-            await _disk(self._update, meeting_id, processed_samples=job["total_samples"])
+            await self._update(meeting_id, processed_samples=job["total_samples"])
         finally:
             await decoder.close()
 
@@ -414,20 +427,20 @@ class AudioImportService:
             try:
                 job = await _disk(self._job, meeting_id)
                 stage = job["stage"]
-                await _disk(self._update, meeting_id, status="running", attempts=job["attempts"] + 1)
+                await self._update(meeting_id, status="running", attempts=job["attempts"] + 1)
                 if job["stage"] == "transcribing":
                     await self._transcribe(meeting_id, job)
                     meeting = await _disk(self.store.get, meeting_id)
                     if not meeting["text"].strip():
                         raise MeetingError("音频中未识别到有效讲话内容，无法生成会议总结", 422)
-                    await _disk(self._update, meeting_id, stage="diarizing")
+                    await self._update(meeting_id, stage="diarizing")
                     job["stage"] = "diarizing"
                     stage = "diarizing"
                 if job["stage"] == "diarizing":
                     speaker_ready = await self.diarization.correct_import(meeting_id)
                     if speaker_ready and self.stage_summaries is not None:
                         await self.stage_summaries.finish(meeting_id, job["total_samples"])
-                    await _disk(self._update, meeting_id, stage="summarizing")
+                    await self._update(meeting_id, stage="summarizing")
                     stage = "summarizing"
                 result = await self.minutes.get(meeting_id)
                 if result["status"] != "ready" or result.get("stale"):
@@ -435,7 +448,7 @@ class AudioImportService:
                     result = await self.minutes.wait(meeting_id)
                 if result["status"] != "ready":
                     raise MeetingError(result.get("error") or "会议总结生成失败，请重试")
-                await _disk(self._update, meeting_id, status="ready", error="")
+                await self._update(meeting_id, status="ready", error="")
             except asyncio.CancelledError:
                 raise  # Keep the current stage and checkpoint for startup recovery.
             except Exception as exc:
@@ -444,7 +457,7 @@ class AudioImportService:
                 else:
                     logger.exception("Audio import failed for %s", meeting_id)
                 message = str(exc) if isinstance(exc, (MeetingError, ASRError)) else "音频处理失败，已保存的内容已保留，请重试"
-                await _disk(self._update, meeting_id, status="failed", error=message)
+                await self._update(meeting_id, status="failed", error=message)
 
     async def close(self):
         self.closed = True

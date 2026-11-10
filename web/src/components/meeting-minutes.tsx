@@ -54,7 +54,6 @@ export const MeetingMinutes = memo(function MeetingMinutes({
 
   useEffect(() => {
     const controller = new AbortController()
-    let timer: ReturnType<typeof setTimeout> | undefined
     async function load() {
       try {
         const result = await api<Minutes>(`/api/meetings/${meeting.id}/minutes`, {
@@ -63,17 +62,14 @@ export const MeetingMinutes = memo(function MeetingMinutes({
         if (controller.signal.aborted) return
         setMinutes(result)
         setError("")
-        if (meeting.source === "wav" && result.status === "generating") timer = setTimeout(() => void load(), 1500)
       } catch (error) {
         if (!controller.signal.aborted) {
           setError(minutesErrorMessage(error))
-          if (meeting.source === "wav") timer = setTimeout(() => void load(), 3000)
         }
       }
     }
     void load()
     return () => {
-      clearTimeout(timer)
       controller.abort()
     }
   }, [meeting.id, meeting.source, meeting.status, meeting.minutes_version, meeting.processing?.status, revision, modelsVersion])
