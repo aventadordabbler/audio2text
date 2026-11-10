@@ -32,6 +32,7 @@ from .recordings import (
     read_audio_summary,
 )
 from .stage_summaries import StageSummaryGenerator, StageSummaryService, stage_summary_socket
+from .system_settings import SystemSettingsInput, SystemSettingsStore
 from .voiceprints import VoiceprintService
 from .transcripts import plain_text
 from .docx_export import build_docx
@@ -63,6 +64,17 @@ class DepartmentInput(BaseModel):
     def nonempty_name(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("请输入部门名称")
+        return value.strip()
+
+
+class VoiceprintNameInput(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+
+    @field_validator("name")
+    @classmethod
+    def nonempty_name(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("请输入人员姓名")
         return value.strip()
 
 
@@ -142,6 +154,10 @@ class ChunkedImportStart(BaseModel):
         return self
 
 
+class ChunkedImportFailure(BaseModel):
+    error: str = Field(default="音频上传失败，请重新导入", max_length=500)
+
+
 def parse_key_speaker_ids(value: str) -> list[str]:
     try:
         parsed = json.loads(value or "[]")
@@ -165,15 +181,16 @@ def create_app(
     auth = AuthStore(store.path)
     auth.ensure_admin()
     models = ModelConfigStore(store.path)
+    system_settings = SystemSettingsStore(store.path)
     events = MeetingEvents()
-    minutes = MinutesService(store, models, app_settings, minutes_generator, events=events)
-    stage_summaries = StageSummaryService(store, models, app_settings, stage_summary_generator)
+    minutes = MinutesService(store, models, system_settings, minutes_generator, events=events)
+    stage_summaries = StageSummaryService(store, models, system_settings, stage_summary_generator)
     diarization = DiarizationService(
         store, models, minutes, app_settings, events, diarization_worker_factory,
-        stage_summaries=stage_summaries,
+        stage_summaries=stage_summaries, system_settings=system_settings,
     )
     audio_imports = AudioImportService(
-        store, models, app_settings, diarization, minutes, import_decoder_factory,
+        store, models, app_settings, system_settings, diarization, minutes, import_decoder_factory,
         stage_summaries=stage_summaries,
     )
     voiceprints = VoiceprintService(store, diarization, app_settings)
@@ -197,6 +214,7 @@ def create_app(
     app.state.meeting_store = store
     app.state.minutes_service = minutes
     app.state.model_configs = models
+    app.state.system_settings = system_settings
     app.state.meeting_events = events
     app.state.stage_summaries = stage_summaries
     app.state.diarization_service = diarization
@@ -255,7 +273,7 @@ def create_app(
 
     @app.get("/api/settings")
     def public_settings() -> dict[str, str]:
-        return {"slogan": app_settings.slogan}
+        return {"slogan": system_settings.get()["slogan"]}
 
     @app.post("/api/auth/logout", status_code=204)
     def logout(request: Request) -> Response:
@@ -269,6 +287,16 @@ def create_app(
 
     def meeting_user_id(request: Request) -> str | None:
         return None if request.state.user.get("is_admin") else request.state.user["id"]
+
+    @app.get("/api/system-settings")
+    def list_system_settings(request: Request) -> dict[str, int | bool | str]:
+        require_admin(request)
+        return system_settings.get()
+
+    @app.put("/api/system-settings")
+    def save_system_settings(payload: SystemSettingsInput, request: Request) -> dict[str, int | bool | str]:
+        require_admin(request)
+        return system_settings.save(payload)
 
     @app.get("/api/users")
     def list_users(request: Request) -> list[dict[str, Any]]:
@@ -364,6 +392,10 @@ def create_app(
     async def complete_chunked_import(upload_id: str, request: Request) -> dict[str, Any]:
         return await audio_imports.complete_chunked(upload_id, request.state.user["id"])
 
+    @app.post("/api/meetings/import/chunked/{upload_id}/fail", status_code=202)
+    async def fail_chunked_import(upload_id: str, payload: ChunkedImportFailure, request: Request) -> dict[str, Any]:
+        return await audio_imports.fail_chunked(upload_id, request.state.user["id"], payload.error)
+
     @app.post("/api/meetings/{meeting_id}/import/retry", status_code=202)
     async def retry_import(meeting_id: str, request: Request) -> dict[str, Any]:
         if store.get(meeting_id, request.state.user["id"]) is None:
@@ -447,7 +479,7 @@ def create_app(
 
     @app.delete("/api/meetings/{meeting_id}", status_code=204)
     async def delete_meeting(meeting_id: str, request: Request):
-        user_id = request.state.user["id"]
+        user_id = meeting_user_id(request)
         if store.get(meeting_id, user_id) is None:
             raise HTTPException(404, "会议不存在")
         async with audio_imports.lock, diarization.finish_lock, minutes._lock:
@@ -481,6 +513,12 @@ def create_app(
             return await voiceprints.create(file, name, department_id, request.state.user["id"], source)
         finally:
             await file.close()
+
+    @app.put("/api/voiceprints/{voiceprint_id}")
+    def update_voiceprint(voiceprint_id: str, payload: VoiceprintNameInput, request: Request):
+        if not request.state.user.get("is_admin"):
+            raise HTTPException(403, "只有管理员可以管理声纹")
+        return voiceprints.rename(voiceprint_id, payload.name)
 
     @app.delete("/api/voiceprints/{voiceprint_id}", status_code=204)
     def delete_voiceprint(voiceprint_id: str, request: Request):
@@ -623,7 +661,7 @@ def create_app(
             return
         await meeting_socket(websocket, meeting_id, store, models, minutes, stream_factory,
                              settings=app_settings, diarization=diarization, events=events,
-                             stage_summaries=stage_summaries,
+                             stage_summaries=stage_summaries, system_settings=system_settings,
                              user_id=None if user.get("is_admin") else user["id"])
 
     @app.websocket("/ws/meetings/{meeting_id}/stage-summaries")

@@ -179,6 +179,16 @@ app = create_app(settings, TestRecordedStream if archive_audio else TestStream, 
                  TestWorker if controlled else TestUnavailableWorker if archive_audio else None,
                  TestStageSummaryGenerator(),
                  import_decoder_factory=(lambda _config: TestImportDecoder()) if import_audio else None)
+test_stage_window = os.environ.get("DESKTOP_TEST_STAGE_WINDOW_SECONDS")
+if test_stage_window:
+    from app.system_settings import SystemSettingsInput
+
+    app.state.system_settings.save(
+        SystemSettingsInput(**{
+            **app.state.system_settings.get(),
+            "stage_summary_window_seconds": int(test_stage_window),
+        })
+    )
 if import_audio:
     from app.model_configs import ModelConfigInput
     app.state.model_configs.save("asr", ModelConfigInput(base_url="http://asr.invalid/v1", model="fixture"))

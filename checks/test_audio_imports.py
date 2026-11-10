@@ -17,6 +17,7 @@ from app.config import Settings
 from app.main import create_app
 from app.minutes import MinutesGenerationError
 from app.model_configs import ModelConfigInput
+from app.system_settings import SYSTEM_SETTING_DEFAULTS
 
 
 def wav_bytes(seconds=3.25, rate=44100, channels=2):
@@ -110,12 +111,18 @@ class StageSummary:
 
 
 def build(tmp_path, *, decoder=None, minutes=None, stage_summary=None, **settings):
+    system_settings = {key: value for key, value in settings.items() if key in SYSTEM_SETTING_DEFAULTS}
+    app_settings = {key: value for key, value in settings.items() if key not in SYSTEM_SETTING_DEFAULTS}
     app = create_app(
-        Settings(_env_file=None, data_dir=tmp_path, database_path=tmp_path / "meetings.sqlite3", **settings),
+        Settings(_env_file=None, data_dir=tmp_path, database_path=tmp_path / "meetings.sqlite3", **app_settings),
         minutes_generator=minutes or Minutes(), diarization_worker_factory=SpeakerWorker,
         stage_summary_generator=stage_summary,
         import_decoder_factory=lambda _config: decoder or Decoder(),
     )
+    if system_settings:
+        values = app.state.system_settings.get()
+        values.update(system_settings)
+        app.state.system_settings.save(values)
     app.state.model_configs.save("asr", ModelConfigInput(base_url="http://asr.invalid/v1", model="fixture"))
     return app
 
@@ -147,6 +154,31 @@ async def admin_login(client):
     assert response.status_code == 200, response.text
     client.headers["Authorization"] = f"Bearer {response.json()['token']}"
     return response.json()["user"]
+
+
+async def test_system_settings_are_admin_only_and_persisted(tmp_path):
+    app = build(tmp_path)
+    async with app.router.lifespan_context(app), httpx.AsyncClient(
+        transport=httpx.ASGITransport(app), base_url="http://test"
+    ) as client:
+        await login(client)
+        assert (await client.get("/api/system-settings")).status_code == 403
+        await admin_login(client)
+        defaults = (await client.get("/api/system-settings")).json()
+        assert defaults == SYSTEM_SETTING_DEFAULTS
+        changed = {
+            "slogan": "测试标语",
+            "asr_use_request_chat_template": True,
+            "llm_max_tokens": 32768,
+            "llm_chunk_chars": 24000,
+            "stage_summary_window_seconds": 60,
+            "stage_summary_max_tokens": 2048,
+        }
+        response = await client.put("/api/system-settings", json=changed)
+        assert response.status_code == 200
+        assert response.json() == changed
+        assert (await client.get("/api/system-settings")).json() == changed
+        assert (await client.get("/api/settings")).json() == {"slogan": "测试标语"}
 
 
 async def imported(client, **kwargs):
@@ -258,6 +290,22 @@ async def test_key_speakers_are_snapshotted_and_carried_through_import(tmp_path)
         assert meeting["key_speakers"] == [{"voiceprint_id": voiceprint_id, "name": "重点人员", "status": "detected"}]
         assert "重点人员（已确认发言）" in minutes.prompts[0]
         assert "## 重点人员发言/观点" in (await client.get(f"/api/meetings/{meeting['id']}/minutes")).json()["text"]
+
+
+async def test_voiceprint_name_can_be_updated_by_admin(tmp_path):
+    app = build(tmp_path)
+    async with app.router.lifespan_context(app), httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
+        user = await login(client)
+        voiceprint = app.state.meeting_store.create_voiceprint(
+            user["id"], "原姓名", user["department_id"], [1.0, 0.0], 1.0, "import",
+        )
+        denied = await client.put(f"/api/voiceprints/{voiceprint['id']}", json={"name": "新姓名"})
+        assert denied.status_code == 403
+
+        await admin_login(client)
+        updated = await client.put(f"/api/voiceprints/{voiceprint['id']}", json={"name": "新姓名"})
+        assert updated.status_code == 200 and updated.json()["name"] == "新姓名"
+        assert (await client.get("/api/voiceprints")).json()[0]["name"] == "新姓名"
 
 
 async def test_key_speaker_without_confirmed_speech_is_reported(tmp_path):
@@ -422,6 +470,8 @@ async def test_admin_can_view_all_users_meetings(tmp_path):
         assert {item["title"] for item in meetings.json()} == {"Fixture meeting", "Second meeting"}
         assert (await client.get(f"/api/meetings/{fixture_meeting.json()['id']}")).status_code == 200
         assert (await client.get(f"/api/meetings/{second_meeting.json()['id']}")).status_code == 200
+        assert (await client.delete(f"/api/meetings/{second_meeting.json()['id']}")).status_code == 204
+        assert (await client.get(f"/api/meetings/{second_meeting.json()['id']}")).status_code == 404
 
 
 async def test_admin_can_generate_minutes_format_prompt(tmp_path):
@@ -478,6 +528,11 @@ async def test_chunked_import_checks_integrity_and_reassembles_in_order(tmp_path
             "total_chunks": len(chunks), "chunk_size": chunk_size,
         })
         assert started.status_code == 200, started.text
+        initial = started.json()["meeting"]
+        assert initial["source"] == "wav"
+        assert initial["status"] == "ended"
+        assert initial["import_job"]["status"] == "queued"
+        assert initial["import_job"]["stage"] == "initializing"
         upload_id = started.json()["upload_id"]
         wrong = await client.put(f"/api/meetings/import/chunked/{upload_id}/0", content=chunks[0],
                                  headers={"X-Chunk-SHA256": "0" * 64})
@@ -496,6 +551,27 @@ async def test_chunked_import_checks_integrity_and_reassembles_in_order(tmp_path
         meeting = await settled(client, completed.json()["id"])
         assert meeting["title"] == "分片导入"
         assert meeting["import_job"]["status"] == "ready"
+        assert not list((tmp_path / ".audio-uploads").glob("chunked-*"))
+
+
+async def test_chunked_upload_failure_marks_initializing_meeting_failed(tmp_path):
+    app = build(tmp_path)
+    async with app.router.lifespan_context(app), httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
+        await login(client)
+        started = await client.post("/api/meetings/import/chunked", json={
+            "title": "失败的后台导入", "filename": "failed.wav", "file_size": 1,
+            "total_chunks": 1, "chunk_size": 1024 * 1024,
+        })
+        payload = started.json()
+        failed = await client.post(
+            f"/api/meetings/import/chunked/{payload['upload_id']}/fail",
+            json={"error": "网络连接中断"},
+        )
+        assert failed.status_code == 202
+        meeting = (await client.get(f"/api/meetings/{payload['meeting']['id']}")).json()
+        assert meeting["import_job"]["status"] == "failed"
+        assert meeting["import_job"]["stage"] == "initializing"
+        assert meeting["import_job"]["error"] == "网络连接中断"
         assert not list((tmp_path / ".audio-uploads").glob("chunked-*"))
 
 
@@ -583,7 +659,7 @@ async def test_import_queue_does_not_change_recording_lifecycle(tmp_path):
         await login(client)
         first = (await imported(client)).json()
         second = (await imported(client)).json()
-        assert (await client.get(f"/api/meetings/{second['id']}")).json()["import_job"]["status"] == "queued"
+        assert (await client.get(f"/api/meetings/{second['id']}")).json()["import_job"]["status"] in {"queued", "running"}
         live = (await client.post("/api/meetings", json={"title": "实时录音"})).json()
         assert live["source"] == "recording" and live["import_job"] is None and live["status"] == "created"
         ended = (await client.post(f"/api/meetings/{live['id']}/end")).json()

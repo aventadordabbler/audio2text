@@ -11,11 +11,11 @@ from uuid import uuid4
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from .config import Settings
 from .meetings import MeetingError, MeetingStore
 from .minutes import MinutesGenerationError, OpenAIMinutesGenerator
 from .model_configs import ModelConfig, ModelConfigStore
 from .recordings import SAMPLE_RATE, read_audio_summary
+from .system_settings import SystemSettingsStore
 from .transcripts import plain_text
 
 logger = logging.getLogger(__name__)
@@ -46,9 +46,9 @@ class StageSummaryGenerator(Protocol):
 
 
 class OpenAIStageSummaryGenerator:
-    def __init__(self, config: ModelConfig, settings: Settings) -> None:
-        self.delegate = OpenAIMinutesGenerator(config, settings)
-        self.max_tokens = min(settings.llm_max_tokens, settings.stage_summary_max_tokens)
+    def __init__(self, config: ModelConfig, system_settings: SystemSettingsStore) -> None:
+        self.delegate = OpenAIMinutesGenerator(config, system_settings)
+        self.system_settings = system_settings
 
     async def generate(
         self,
@@ -61,12 +61,13 @@ class OpenAIStageSummaryGenerator:
             f"{STAGE_PROMPT}\n\n"
             f"本阶段范围：{start_seconds:g}–{end_seconds:g} 秒。"
         )
+        settings = self.system_settings.get()
         return await self.delegate.generate_from_prompt(
             title,
             transcript,
             prompt,
-            self.max_tokens,
-            truncation_setting="STAGE_SUMMARY_MAX_TOKENS",
+            min(settings["llm_max_tokens"], settings["stage_summary_max_tokens"]),
+            truncation_label="阶段总结最大输出 Token",
         )
 
     async def close(self) -> None:
@@ -286,12 +287,12 @@ class StageSummaryService:
         self,
         meetings: MeetingStore,
         models: ModelConfigStore | None,
-        settings: Settings,
+        system_settings: SystemSettingsStore,
         generator: StageSummaryGenerator | None = None,
     ) -> None:
         self.meetings = meetings
         self.models = models
-        self.settings = settings
+        self.system_settings = system_settings
         self.generator = generator
         self.store = StageSummaryStore(meetings.path)
         self.notifications: dict[str, int] = {}
@@ -312,7 +313,7 @@ class StageSummaryService:
         )
 
     def _reconcile(self) -> None:
-        window = self.settings.stage_summary_window_seconds * SAMPLE_RATE
+        window = self.system_settings.get()["stage_summary_window_seconds"] * SAMPLE_RATE
         for meeting_id, meeting_updated_at in self.store.recoverable():
             try:
                 audio = read_audio_summary(self.meetings.directory(meeting_id))
@@ -367,7 +368,7 @@ class StageSummaryService:
                 self.store.plan,
                 meeting_id,
                 total_samples,
-                self.settings.stage_summary_window_seconds * SAMPLE_RATE,
+                self.system_settings.get()["stage_summary_window_seconds"] * SAMPLE_RATE,
                 True,
             )
             meeting = await asyncio.to_thread(self.meetings.get, meeting_id)
@@ -458,14 +459,14 @@ class StageSummaryService:
                             self.store.plan,
                             meeting_id,
                             boundary,
-                            self.settings.stage_summary_window_seconds * SAMPLE_RATE,
+                            self.system_settings.get()["stage_summary_window_seconds"] * SAMPLE_RATE,
                             True,
                         )
                     await asyncio.to_thread(
                         self.store.plan,
                         meeting_id,
                         notifications.get(meeting_id, 0),
-                        self.settings.stage_summary_window_seconds * SAMPLE_RATE,
+                        self.system_settings.get()["stage_summary_window_seconds"] * SAMPLE_RATE,
                         False,
                     )
                 while row := await asyncio.to_thread(self.store.claim, self.blocked_meetings):
@@ -547,7 +548,7 @@ class StageSummaryService:
                 if self.models is None:
                     raise MeetingError("尚未配置大语言模型，请在模型配置中添加。", 503)
                 config = await asyncio.to_thread(self.models.require, "llm")
-                generator = OpenAIStageSummaryGenerator(config, self.settings)
+                generator = OpenAIStageSummaryGenerator(config, self.system_settings)
             result = await generator.generate(
                 meeting["title"],
                 text,
@@ -626,7 +627,7 @@ async def stage_summary_socket(
                 event = {
                     "type": "stage_summaries.snapshot",
                     "summaries": await summaries.list(meeting_id),
-                    "window_seconds": summaries.settings.stage_summary_window_seconds,
+                    "window_seconds": summaries.system_settings.get()["stage_summary_window_seconds"],
                 }
             await send(event)
             if event["type"] == "deleted":
@@ -643,7 +644,7 @@ async def stage_summary_socket(
         await send({
             "type": "stage_summaries.snapshot",
             "summaries": await summaries.list(meeting_id),
-            "window_seconds": summaries.settings.stage_summary_window_seconds,
+            "window_seconds": summaries.system_settings.get()["stage_summary_window_seconds"],
         })
         sender = asyncio.create_task(forward())
         receiver = asyncio.create_task(receive())

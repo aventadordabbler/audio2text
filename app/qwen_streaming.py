@@ -105,6 +105,7 @@ class DecodeState:
     chunk_id: int = 0
     raw: str = ""
     text: str = ""
+    last_window: dict | None = None
 
 
 def merge_window_text(previous: str, candidate: str, max_overlap: int = 120) -> str:
@@ -133,14 +134,14 @@ class RemoteDecoder:
         config: ModelConfig,
         client: AsyncOpenAI | None = None,
         *,
-        send_chat_template: bool = False,
+        use_request_chat_template: bool = False,
         window_seconds: float = 5.0,
         stride_seconds: float = 2.0,
     ):
         if window_seconds <= 0 or stride_seconds <= 0 or stride_seconds > window_seconds:
             raise ValueError("ASR 固定窗口和步长必须为正，且步长不能大于窗口")
         self.config = config
-        self.send_chat_template = send_chat_template
+        self.use_request_chat_template = use_request_chat_template
         self.window_seconds = window_seconds
         self.stride_seconds = stride_seconds
         self.client = client or AsyncOpenAI(
@@ -205,8 +206,14 @@ class RemoteDecoder:
         state.window = np.concatenate((state.window, chunk))[-state.window_samples:]
 
     async def _decode_window(self, state):
+        start = state.total_samples - len(state.window)
         await self._decode(state.window, state)
         state.decoded_samples = state.total_samples
+        state.last_window = {
+            "window_id": f"{round(start / 16)}:{round(state.total_samples / 16)}",
+            "start_ms": round(start / 16),
+            "end_ms": round(state.total_samples / 16),
+        }
 
     async def _decode(self, chunk, state):
         wav = as_wav(chunk)
@@ -234,7 +241,7 @@ class RemoteDecoder:
                     if forced or prefix:
                         messages.append({"role": "assistant", "content": forced + prefix})
                         extra = {"continue_final_message": True, "add_generation_prompt": False}
-                    if self.send_chat_template:
+                    if self.use_request_chat_template:
                         extra.update(
                             chat_template=QWEN_CHAT_TEMPLATE,
                             chat_template_kwargs={"qwen_asr_prompt": QWEN_AUDIO_PROMPT},
@@ -271,15 +278,15 @@ class RemoteDecoder:
             elif exc.status_code in {400, 404, 422}:
                 if self.config.asr_mode == "transcription":
                     message = "ASR 文件转写请求被拒绝，请检查模型名称和 /audio/transcriptions 接口。"
-                elif self.send_chat_template:
+                elif self.use_request_chat_template:
                     message = ("ASR 音频或前缀续写请求被拒绝，请检查模型名称及接口支持；"
                                "应用已发送内置模板，vLLM 需开启 --trust-request-chat-template。"
-                               "若使用服务自身的续写模板，请设置 ASR_SEND_CHAT_TEMPLATE=false；"
+                               "若使用服务自身的续写模板，请在系统管理中关闭请求级模板；"
                                "不支持续写时，请在模型配置中选择文件转写模式。")
                 else:
                     message = ("ASR 服务不支持当前音频或前缀续写请求，请检查模型名称；"
                                "当前使用服务自身模板，该模板需支持 assistant 前缀续写。"
-                               "服务允许请求级模板时，可设置 ASR_SEND_CHAT_TEMPLATE=true；"
+                               "服务允许请求级模板时，可在系统管理中开启请求级模板；"
                                "不支持续写时，请在模型配置中选择文件转写模式。")
             elif exc.status_code == 429:
                 message = "ASR 服务繁忙或请求额度不足，请稍后继续。"

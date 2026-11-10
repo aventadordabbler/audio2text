@@ -8,6 +8,7 @@ from .config import Settings
 from .model_configs import ModelConfig
 from .qwen_streaming import ASRError, RemoteDecoder
 from .recordings import AudioArchive, PCMNormalizer
+from .system_settings import SystemSettingsStore
 
 LANGUAGES = {"zh": "Chinese", "en": "English", "ja": "Japanese"}
 
@@ -191,13 +192,13 @@ class StreamingTranscriber:
         await self.decoder.close()
 
 
-def build_transcriber(config: ModelConfig, settings: Settings) -> StreamingTranscriber:
+def build_transcriber(config: ModelConfig, settings: Settings, system_settings: SystemSettingsStore) -> StreamingTranscriber:
     config = replace(config, tokenizer=settings.asr_tokenizer)
     return StreamingTranscriber(
         config,
         decoder=RemoteDecoder(
             config,
-            send_chat_template=settings.asr_send_chat_template,
+            use_request_chat_template=system_settings.get()["asr_use_request_chat_template"],
             window_seconds=settings.asr_window_seconds,
             stride_seconds=settings.asr_stride_seconds,
         ),

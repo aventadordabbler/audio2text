@@ -117,6 +117,14 @@ test("segment replacement is ordered and idempotent, and ambiguous speech is dis
   assert.equal(applyTranscriptEvent(original, { ...event, revision: 4 }), null);
   assert.equal(speakerLabel({ speaker_status: "overlap" }), "多人同时讲话");
   assert.equal(speakerLabel({ speaker_status: "unknown" }), "说话人待确认");
+  assert.equal(speakerLabel(
+    { speaker_status: "multiple", speaker_ids: ["a", "b"] },
+    { a: { name: "甲" }, b: { name: "乙" } },
+  ), "甲、乙");
+  assert.equal(speakerLabel(
+    { speaker_status: "multiple", speaker_ids: ["a"], speaker_turns: [{ unknown: true }] },
+    { a: { name: "甲" } },
+  ), "甲、说话人待确认");
 });
 
 test("desktop shows delayed correction, retry, speaker replacements and stale minutes without polling", { timeout: 40000 }, async () => {

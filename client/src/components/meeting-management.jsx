@@ -9,6 +9,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -173,7 +174,7 @@ export function CreateMeetingDialog({
                   </SelectContent>
                 </Select>
               </Label>
-              <p className="management-help">上传后自动转写、标注说话人并生成纪要，时长按音频计算。上传完成后可离开页面。</p>
+              <p className="management-help">创建后会在后台上传、转写、标注说话人并生成纪要，可直接离开此页面。</p>
             </>
           )}
           <Label className="form-field">
@@ -257,6 +258,9 @@ export function MeetingManagement({
     error: "",
     loading: true,
   });
+  const [deleting, setDeleting] = useState(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
 
   let rangeError = "",
     query;
@@ -304,6 +308,20 @@ export function MeetingManagement({
   const update = (patch) =>
     setFilters((previous) => ({ ...previous, ...patch }));
   const filtered = Object.keys(query || {}).length > 0;
+  async function deleteMeeting() {
+    if (!deleting || deleteBusy) return;
+    setDeleteBusy(true);
+    setDeleteError("");
+    try {
+      await api.deleteMeeting(deleting.id);
+      setDeleting(null);
+      setRefresh((value) => value + 1);
+    } catch (error) {
+      setDeleteError(error.message);
+    } finally {
+      setDeleteBusy(false);
+    }
+  }
   return (
     <section className="page-content management-page">
       <div className="page-heading">
@@ -405,7 +423,7 @@ export function MeetingManagement({
       )}
       <Card className="history-table-card">
         <div
-          className="history-table-scroll panel-scroll management-table"
+          className="history-table-scroll panel-scroll management-table meeting-management-table"
           aria-busy={loading}
         >
           <Table>
@@ -417,6 +435,7 @@ export function MeetingManagement({
                 <TableHead>创建时间</TableHead>
                 <TableHead>录音时长</TableHead>
                 <TableHead>状态</TableHead>
+                <TableHead className="operation-column"><span className="sr-only">操作</span></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -482,11 +501,27 @@ export function MeetingManagement({
                         {meeting.import_job && meeting.import_job.status !== "ready" ? importStatusLabel(meeting.import_job) : MEETING_STATUS_LABELS[meeting.status] || meeting.status}
                       </Badge>
                     </TableCell>
+                    <TableCell className="operation-column">
+                      {(meeting.status === "created" || meeting.status === "ended") && (
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label={`删除${meeting.title}`}
+                          disabled={deleteBusy || busy}
+                          onClick={() => {
+                            setDeleteError("");
+                            setDeleting(meeting);
+                          }}
+                        >
+                          <Trash2 size={15} />
+                        </Button>
+                      )}
+                    </TableCell>
                   </TableRow>
                 ))}
               {(loading || error || !meetings.length) && (
                 <TableRow>
-                  <TableCell colSpan={6}>
+                  <TableCell colSpan={7}>
                     <EmptyDocument
                       icon={loading ? LoaderCircle : Search}
                       title={
@@ -522,6 +557,31 @@ export function MeetingManagement({
           </Table>
         </div>
       </Card>
+      <Dialog
+        open={!!deleting}
+        onOpenChange={(open) => {
+          if (!open && !deleteBusy) setDeleting(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>删除会议</DialogTitle>
+            <DialogDescription>
+              确认永久删除「{deleting?.title}」？相关录音、转写和纪要都会被删除，无法恢复。
+            </DialogDescription>
+          </DialogHeader>
+          {deleteError && <p role="alert" className="management-error">{deleteError}</p>}
+          <DialogFooter>
+            <Button variant="outline" disabled={deleteBusy} onClick={() => setDeleting(null)}>
+              取消
+            </Button>
+            <Button variant="destructive" disabled={deleteBusy} onClick={() => void deleteMeeting()}>
+              {deleteBusy && <LoaderCircle size={14} className="animate-spin" />}
+              确认删除
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

@@ -96,10 +96,6 @@ APP_PORT=8000
 ```dotenv
 ASR_WINDOW_SECONDS=5
 ASR_STRIDE_SECONDS=2
-LLM_MAX_TOKENS=16384
-LLM_CHUNK_CHARS=12000
-STAGE_SUMMARY_WINDOW_SECONDS=60
-STAGE_SUMMARY_MAX_TOKENS=1024
 DIARIZATION_WORKERS=1
 DIARIZATION_THREADS=2
 DIARIZATION_TIMEOUT_SECONDS=120
@@ -107,7 +103,7 @@ DIARIZATION_TIMEOUT_SECONDS=120
 # DIARIZATION_FINAL_TIMEOUT_SECONDS=7200
 ```
 
-`STAGE_SUMMARY_WINDOW_SECONDS` 的有效范围是 10–300 秒；`ASR_STRIDE_SECONDS` 不得大于窗口长度。说话人最终校正默认按当前会议音频时长动态计算超时，公式为 `300 + 2 × 音频秒数`；`DIARIZATION_FINAL_TIMEOUT_SECONDS` 仅用于显式覆盖。`data/` 同时包含数据库、API Key、录音、转写和总结，必须持久化并按含密钥的敏感数据保护。
+系统标语、纪要和阶段总结的输出限制、长会议分段大小、阶段总结窗口都在管理员可见的“系统管理”页面中保存，默认值来自应用代码。`ASR_STRIDE_SECONDS` 不得大于 ASR 窗口长度。说话人最终校正默认按当前会议音频时长动态计算超时，公式为 `300 + 2 × 音频秒数`；`DIARIZATION_FINAL_TIMEOUT_SECONDS` 仅用于显式覆盖。`data/` 同时包含数据库、API Key、录音、转写和总结，必须持久化并按含密钥的敏感数据保护。
 
 ### 3.2 构建和启动服务
 
@@ -195,8 +191,9 @@ VLLM_GPU_MEMORY_UTILIZATION=0.3
 VLLM_MAX_MODEL_LEN=32768
 VLLM_BIND_ADDRESS=127.0.0.1
 VLLM_PORT=8001
-ASR_SEND_CHAT_TEMPLATE=true
 ```
+
+需要使用应用内置 Qwen 请求模板时，在管理员“系统管理”页面开启“请求级 Qwen Chat Template”，并确保 vLLM 允许 `--trust-request-chat-template`。
 
 启动本地 ASR 和应用：
 
@@ -478,7 +475,7 @@ curl -fsS http://127.0.0.1:8000/health
 3. ASR 与 LLM 模型测试均通过；
 4. 新建会议，录制至少 15 秒，确认音量、录音时长和实时转写正常变化；
 5. 暂停后继续，确认录音时长按已归档音频继续累计；
-6. 在 Electron 客户端打开“阶段总结”，暂停录音后确认尾段总结出现；若要验收完整窗口，将 `.env` 中 `STAGE_SUMMARY_WINDOW_SECONDS` 暂时改为 10，并执行 `docker compose --profile app up -d --force-recreate app`，连续录制超过 10 秒后确认总结出现；验收完成后恢复原值并再次执行同一重建命令；
+6. 在 Electron 客户端打开“阶段总结”，暂停录音后确认尾段总结出现；需要缩短验收窗口时，在管理员“系统管理”页面临时保存窗口秒数，连续录制超过该窗口后确认总结出现；
 7. 结束会议，确认尾段阶段总结和完整会议纪要可生成；
 8. 导出 WAV 并播放，确认录音完整；
 9. 重启应用，确认历史会议、转写和总结仍可访问；

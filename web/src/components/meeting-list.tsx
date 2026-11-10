@@ -6,10 +6,12 @@ import {
   Clock3,
   Download,
   FileText,
+  LoaderCircle,
   MoreHorizontal,
   Plus,
   RefreshCw,
   Search,
+  Trash2,
   X,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -32,6 +34,14 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Skeleton } from "@/components/ui/skeleton"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { MeetingStatusBadge } from "./meeting-status"
 import { downloadRecording } from "@/lib/recording-download"
 import { api, authToken, emptyMeetingFilters, errorMessage, formatDate, formatDuration, statusLabels, importStatusLabel, type Meeting, type MeetingFilters, type MeetingStatus } from "@/lib/meetings"
@@ -102,6 +112,9 @@ export function MeetingList({
 }: Props) {
   const [exportError, setExportError] = useState("")
   const [exportingId, setExportingId] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState<Meeting | null>(null)
+  const [deleteBusy, setDeleteBusy] = useState(false)
+  const [deleteError, setDeleteError] = useState("")
   const [result, setResult] = useState<{ key: string; source: Meeting[]; meetings: Meeting[]; error: string } | null>(null)
   const params = new URLSearchParams()
   if (filters.title.trim()) params.set("title", filters.title.trim())
@@ -150,6 +163,21 @@ export function MeetingList({
       setExportError(`导出录音失败：${errorMessage(error)}`)
     } finally {
       setExportingId(null)
+    }
+  }
+
+  async function deleteMeeting() {
+    if (!deleting || deleteBusy) return
+    setDeleteBusy(true)
+    setDeleteError("")
+    try {
+      await api(`/api/meetings/${encodeURIComponent(deleting.id)}`, { method: "DELETE" })
+      setDeleting(null)
+      onRefresh()
+    } catch (error) {
+      setDeleteError(errorMessage(error))
+    } finally {
+      setDeleteBusy(false)
     }
   }
 
@@ -350,6 +378,18 @@ export function MeetingList({
                           导出录音（WAV）
                         </DropdownMenuItem>
                       )}
+                      {(meeting.status === "created" || meeting.status === "ended") && (
+                        <DropdownMenuItem
+                          variant="destructive"
+                          onSelect={() => {
+                            setDeleteError("")
+                            setDeleting(meeting)
+                          }}
+                        >
+                          <Trash2 />
+                          删除会议
+                        </DropdownMenuItem>
+                      )}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </TableCell>
@@ -390,6 +430,31 @@ export function MeetingList({
           </TableBody>
         </Table>
       </Card>
+      <Dialog
+        open={!!deleting}
+        onOpenChange={(open) => {
+          if (!open && !deleteBusy) setDeleting(null)
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>删除会议</DialogTitle>
+            <DialogDescription>
+              确认永久删除「{deleting?.title}」？相关录音、转写和纪要都会被删除，无法恢复。
+            </DialogDescription>
+          </DialogHeader>
+          {deleteError && <p role="alert" className="text-destructive">{deleteError}</p>}
+          <DialogFooter>
+            <Button variant="outline" disabled={deleteBusy} onClick={() => setDeleting(null)}>
+              取消
+            </Button>
+            <Button variant="destructive" disabled={deleteBusy} onClick={() => void deleteMeeting()}>
+              {deleteBusy && <LoaderCircle className="animate-spin" />}
+              确认删除
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </section>
   )
 }

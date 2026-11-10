@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react"
-import { ArrowRight, AudioLines, Clock3, LoaderCircle, Mic, Plus, Search, Square, Trash2, Upload, X } from "lucide-react"
+import { ArrowRight, AudioLines, Clock3, LoaderCircle, Mic, Pencil, Plus, Search, Square, Trash2, Upload, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -9,6 +9,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { PcmRecorder } from "@/lib/pcm-recorder"
 import { api, errorMessage, formatDate, formatDuration, type Department } from "@/lib/meetings"
+
+const VOICEPRINT_SAMPLE_TEXT = "大家好，我是会议助手的声纹用户。今天我们一起确认会议内容、任务安排和后续计划。"
 
 interface Voiceprint {
   id: string
@@ -43,6 +45,8 @@ export function VoiceprintManagement({ departments, readOnly = false }: { depart
   const [file, setFile] = useState<File | null>(null)
   const [recording, setRecording] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [editing, setEditing] = useState<Voiceprint | null>(null)
+  const [editingName, setEditingName] = useState("")
   const [deleting, setDeleting] = useState<Voiceprint | null>(null)
   const [error, setError] = useState("")
   const [searchName, setSearchName] = useState("")
@@ -92,6 +96,20 @@ export function VoiceprintManagement({ departments, readOnly = false }: { depart
     catch (error) { setError(errorMessage(error)) } finally { setBusy(false) }
   }
 
+  async function rename(event: FormEvent) {
+    event.preventDefault()
+    if (!editing || !editingName.trim() || busy) return
+    setBusy(true); setError("")
+    try {
+      await api<Voiceprint>(`/api/voiceprints/${editing.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: editingName.trim() }),
+      })
+      await load(); setEditing(null)
+    } catch (error) { setError(errorMessage(error)) } finally { setBusy(false) }
+  }
+
   const filteredRows = rows.filter((row) =>
     (!searchName.trim() || row.name.toLocaleLowerCase().includes(searchName.trim().toLocaleLowerCase())) &&
     (filterDepartment === "all" || row.department_id === filterDepartment)
@@ -115,7 +133,7 @@ export function VoiceprintManagement({ departments, readOnly = false }: { depart
     </div>
     <Card className="meeting-table-card voiceprint-table-card gap-0 overflow-hidden rounded-xl py-0 shadow-none">
       <Table><TableHeader><TableRow className="bg-muted/45 hover:bg-muted/45"><TableHead>人员姓名</TableHead><TableHead>所属部门</TableHead><TableHead>录入类型</TableHead><TableHead>录音时长</TableHead><TableHead>创建时间</TableHead>{!readOnly && <TableHead className="operation-column"><span className="sr-only">操作</span></TableHead>}</TableRow></TableHeader><TableBody>
-        {filteredRows.map((row) => <TableRow key={row.id} className="meeting-row"><TableCell><span className="voiceprint-person"><span className="voiceprint-avatar"><AudioLines className="size-4" /></span><strong>{row.name}</strong></span></TableCell><TableCell><span className="table-cell-value">{row.department_name || "未分类"}</span></TableCell><TableCell>{row.source === "recording" ? "在线" : "离线"}</TableCell><TableCell><span className="table-cell-value inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground"><Clock3 className="size-3.5 opacity-60" />{formatDuration(row.duration_seconds)}</span></TableCell><TableCell><span className="table-cell-value">{formatDate(row.created_at)}</span></TableCell>{!readOnly && <TableCell className="operation-column"><Button type="button" variant="ghost" size="icon-sm" aria-label={`删除${row.name}`} onClick={() => { setDeleting(row); setError("") }} disabled={busy}><Trash2 /></Button></TableCell>}</TableRow>)}
+        {filteredRows.map((row) => <TableRow key={row.id} className="meeting-row"><TableCell><span className="voiceprint-person"><span className="voiceprint-avatar"><AudioLines className="size-4" /></span><strong>{row.name}</strong></span></TableCell><TableCell><span className="table-cell-value">{row.department_name || "未分类"}</span></TableCell><TableCell>{row.source === "recording" ? "在线" : "离线"}</TableCell><TableCell><span className="table-cell-value inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground"><Clock3 className="size-3.5 opacity-60" />{formatDuration(row.duration_seconds)}</span></TableCell><TableCell><span className="table-cell-value">{formatDate(row.created_at)}</span></TableCell>{!readOnly && <TableCell className="operation-column"><div className="flex justify-center gap-1"><Button type="button" variant="ghost" size="icon-sm" aria-label={`编辑${row.name}`} onClick={() => { setEditing(row); setEditingName(row.name); setError("") }} disabled={busy}><Pencil /></Button><Button type="button" variant="ghost" size="icon-sm" aria-label={`删除${row.name}`} onClick={() => { setDeleting(row); setError("") }} disabled={busy}><Trash2 /></Button></div></TableCell>}</TableRow>)}
         {!filteredRows.length && <TableRow className="hover:bg-transparent"><TableCell colSpan={readOnly ? 5 : 6} className="whitespace-normal"><div className="empty-state"><div className="empty-illustration"><div><AudioLines /></div></div><h3>{rows.length ? "没有找到匹配的声纹" : "还没有声纹记录"}</h3><p>{rows.length ? "请调整姓名或部门筛选条件。" : "创建声纹后，会议转写会尝试显示登记的人员姓名。"}</p>{!readOnly && <Button variant={rows.length ? "outline" : "default"} onClick={rows.length ? resetFilters : startCreate} disabled={!rows.length && !departments.length}>{rows.length ? "重置筛选" : <><Plus />创建第一条声纹</>}</Button>}</div></TableCell></TableRow>}
       </TableBody></Table>
     </Card>
@@ -126,14 +144,15 @@ export function VoiceprintManagement({ departments, readOnly = false }: { depart
         <div className="mt-7 space-y-5">
           <div className="space-y-2.5"><Label htmlFor="voiceprint-name">人员姓名</Label><Input id="voiceprint-name" className="h-11" value={name} maxLength={60} onChange={(event) => setName(event.target.value)} placeholder="例如：张三" disabled={busy || recording} required /></div>
           <div className="space-y-2.5"><Label htmlFor="voiceprint-department">所属部门</Label><Select value={departmentId} onValueChange={setDepartmentId} disabled={busy || recording}><SelectTrigger id="voiceprint-department" className="h-11 w-full"><SelectValue placeholder="选择部门" /></SelectTrigger><SelectContent position="popper" side="bottom" align="start" sideOffset={4} avoidCollisions={false} className="meeting-filter-menu">{departments.map((department) => <SelectItem key={department.id} value={department.id}>{department.name}</SelectItem>)}</SelectContent></Select></div>
-          <div className="space-y-2.5"><Label>录入方式</Label><div className="voiceprint-source-tabs"><Button type="button" disabled={recording || busy} variant={mode === "recording" ? "secondary" : "ghost"} onClick={() => { setMode("recording"); setFile(null) }}><Mic />在线录音</Button><Button type="button" disabled={recording || busy} variant={mode === "import" ? "secondary" : "ghost"} onClick={() => { setMode("import"); setFile(null) }}><Upload />导入音频</Button></div></div>
-          {mode === "recording" ? <div className="voiceprint-recorder"><Button type="button" variant={recording ? "destructive" : "default"} onClick={recording ? stopRecording : startRecording}>{recording ? <><Square />停止录音</> : <><Mic />开始录音</>}</Button>{file && !recording && <span>录音已就绪</span>}</div> : <Label className="voiceprint-upload-button"><Upload />选择音频文件<Input className="sr-only" type="file" accept="audio/wav,audio/mpeg,audio/mp4,audio/flac,audio/ogg" onChange={(event) => setFile(event.target.files?.[0] || null)} disabled={busy} /></Label>}
+          <div className="space-y-2.5"><Label>录入方式</Label><div className="voiceprint-source-tabs"><Button type="button" disabled={recording || busy} variant={mode === "recording" ? "secondary" : "ghost"} className={mode === "recording" ? "voiceprint-source-selected" : undefined} onClick={() => { setMode("recording"); setFile(null) }}><Mic />在线录音</Button><Button type="button" disabled={recording || busy} variant={mode === "import" ? "secondary" : "ghost"} className={mode === "import" ? "voiceprint-source-selected" : undefined} onClick={() => { setMode("import"); setFile(null) }}><Upload />导入音频</Button></div></div>
+          {mode === "recording" ? <div className="voiceprint-recording-area"><div className="voiceprint-sample"><span>请用自然语速完整朗读：</span><p>{VOICEPRINT_SAMPLE_TEXT}</p></div><div className="voiceprint-recorder"><Button type="button" variant={recording ? "destructive" : "default"} onClick={recording ? stopRecording : startRecording}>{recording ? <><Square />停止录音</> : <><Mic />开始录音</>}</Button>{file && !recording && <span>录音已就绪</span>}</div></div> : <Label className="voiceprint-upload-button"><Upload />选择音频文件<Input className="sr-only" type="file" accept="audio/wav,audio/mpeg,audio/mp4,audio/flac,audio/ogg" onChange={(event) => setFile(event.target.files?.[0] || null)} disabled={busy} /></Label>}
           {file && <p className="voiceprint-file">{file.name} · {(file.size / 1024).toFixed(0)} KB</p>}
         </div>
         {error && <p role="alert" className="mt-4 text-sm text-destructive">{error}</p>}
       </div>
       <DialogFooter className="m-0 border-t bg-muted/30 px-7 py-5 sm:justify-between"><Button type="button" variant="ghost" onClick={() => closeCreate(false)} disabled={busy || recording}>取消</Button><Button type="submit" disabled={busy || recording || !file || !name.trim() || !departmentId} className="gap-2 px-5">{busy ? <LoaderCircle className="size-4 animate-spin" /> : <AudioLines className="size-4" />}保存声纹<ArrowRight className="size-4" /></Button></DialogFooter>
     </form></DialogContent></Dialog>
+    <Dialog open={!!editing} onOpenChange={(next) => { if (!next && !busy) { setEditing(null); setError("") } }}><DialogContent className="sm:max-w-md"><form onSubmit={rename}><DialogHeader><DialogTitle>编辑人员姓名</DialogTitle><DialogDescription>修改后将用于后续声纹识别结果。</DialogDescription></DialogHeader><div className="space-y-2"><Label htmlFor="voiceprint-edit-name">人员姓名</Label><Input id="voiceprint-edit-name" value={editingName} maxLength={60} onChange={(event) => setEditingName(event.target.value)} disabled={busy} required /></div>{error && <p role="alert" className="text-sm text-destructive">{error}</p>}<DialogFooter><Button type="button" variant="outline" disabled={busy} onClick={() => { setEditing(null); setError("") }}>取消</Button><Button type="submit" disabled={busy || !editingName.trim()}>{busy && <LoaderCircle className="animate-spin" />}保存姓名</Button></DialogFooter></form></DialogContent></Dialog>
     <Dialog open={!!deleting} onOpenChange={(next) => { if (!next && !busy) { setDeleting(null); setError("") } }}><DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle>删除声纹</DialogTitle><DialogDescription>确认删除声纹「{deleting?.name}」？删除后将无法恢复。</DialogDescription></DialogHeader>{error && <p role="alert" className="text-sm text-destructive">{error}</p>}<DialogFooter><Button variant="outline" disabled={busy} onClick={() => { setDeleting(null); setError("") }}>取消</Button><Button disabled={busy} onClick={remove}>{busy && <LoaderCircle className="animate-spin" />}确认删除</Button></DialogFooter></DialogContent></Dialog>
   </section>
 }

@@ -40,7 +40,7 @@ export const MeetingMinutes = memo(function MeetingMinutes({
 }: {
   meeting: Meeting
   modelsVersion: number
-  onConfigure: () => void
+  onConfigure?: () => void
 }) {
   const [minutes, setMinutes] = useState<Minutes | null>(null)
   const [error, setError] = useState("")
@@ -156,7 +156,7 @@ export const MeetingMinutes = memo(function MeetingMinutes({
                     : "让会议有清晰的下一步"}
               </h3>
               <p>{hint}</p>
-              {minutes && !minutes.available && (
+              {minutes && !minutes.available && onConfigure && (
                 <Button variant="outline" size="sm" className="mt-4" onClick={onConfigure}>
                   配置模型
                 </Button>

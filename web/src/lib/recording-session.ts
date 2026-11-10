@@ -2,6 +2,13 @@ import { api, ApiError, authToken, importStatusLabel, errorMessage, type Meeting
 import { PcmRecorder } from "./pcm-recorder"
 
 type Action = "start" | "pause" | "resume" | "end"
+interface PartialTranscript {
+  segment_id: number
+  window_id: string
+  text: string
+  start_ms: number
+  end_ms: number
+}
 interface Snapshot {
   meeting: Meeting | null
   busy: boolean
@@ -9,7 +16,7 @@ interface Snapshot {
   localRecording: boolean
   error: string
   notice: string
-  partialText: string
+  partialSegments: PartialTranscript[]
   liveVersion: number
   durationUpdatedAt: number
 }
@@ -22,6 +29,9 @@ interface ServerMessage {
   message?: string
   fatal?: boolean
   segment_id?: number
+  window_id?: string
+  start_ms?: number
+  end_ms?: number
   revision?: number
   next_segment_id?: number
   upsert_segments?: TranscriptSegment[]
@@ -39,7 +49,7 @@ export class RecordingSession {
     localRecording: false,
     error: "",
     notice: "",
-    partialText: "",
+    partialSegments: [],
     liveVersion: 0,
     durationUpdatedAt: Date.now(),
   }
@@ -85,7 +95,7 @@ export class RecordingSession {
     }[meeting.status]
     const previous = this.snapshot.meeting
     this.update({ meeting: { ...meeting, minutes_version: (previous?.minutes_version ?? 0) + 1 }, notice,
-      partialText: preservePartial && previous?.next_segment_id === meeting.next_segment_id ? this.snapshot.partialText : "",
+      partialSegments: preservePartial && previous?.next_segment_id === meeting.next_segment_id ? this.snapshot.partialSegments : [],
       durationUpdatedAt: Date.now() })
     this.nextSegment = meeting.next_segment_id ?? 0
   }
@@ -204,7 +214,7 @@ export class RecordingSession {
     socket?.close()
     const id = this.snapshot.meeting?.id
     if (id && this.snapshot.meeting?.status !== "ended") void this.refresh(id).catch(() => {})
-    this.update({ partialText: "", finishing: false })
+    this.update({ partialSegments: [], finishing: false })
   }
 
   async leave() {
@@ -265,11 +275,26 @@ export class RecordingSession {
         } else if ((message.type === "partial" || message.type === "final") && this.snapshot.meeting) {
           if (message.segment_id !== this.nextSegment) return
           if (message.type === "partial") {
-            this.update({ partialText: message.text || "", notice: "正在识别当前发言…", liveVersion: this.snapshot.liveVersion + 1 })
+            const startMs = message.start_ms ?? 0
+            const endMs = message.end_ms ?? startMs
+            const windowId = message.window_id || `${startMs}:${endMs}`
+            const partial = {
+              segment_id: message.segment_id,
+              window_id: windowId,
+              text: message.text || "",
+              start_ms: startMs,
+              end_ms: endMs,
+            }
+            const partialSegments = [
+              ...this.snapshot.partialSegments.filter((item) =>
+                !(item.segment_id === partial.segment_id && item.window_id === partial.window_id)),
+              partial,
+            ].sort((a, b) => a.start_ms - b.start_ms || a.end_ms - b.end_ms || a.window_id.localeCompare(b.window_id))
+            this.update({ partialSegments, notice: "正在识别当前发言…", liveVersion: this.snapshot.liveVersion + 1 })
           } else {
             this.applyTranscript(message)
             this.update({
-              partialText: "",
+              partialSegments: [],
               notice: message.text ? "转写内容已自动保存" : "等待语音",
               liveVersion: this.snapshot.liveVersion + 1,
             })
@@ -299,7 +324,7 @@ export class RecordingSession {
         if (this.snapshot.meeting?.status !== "ended") {
           this.update({
             finishing: false,
-            partialText: "",
+            partialSegments: [],
             error: this.snapshot.error || "连接已断开，已定稿内容已保存。可以重新进入会议继续录音。",
           })
           this.refresh(id).catch((error) => this.update({ error: errorMessage(error) }))

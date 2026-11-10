@@ -31,6 +31,7 @@ let rendererSession;
 let isQuitting = false;
 let closeRequested = false;
 let closeConfirmed = false;
+const pendingDownloads = new Map();
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -275,8 +276,16 @@ function registerIpc() {
     if (!["http:", "https:"].includes(url.protocol)) {
       throw new Error("文件下载地址必须使用 HTTP 或 HTTPS");
     }
-    sender.downloadURL(url.href);
-    return { ok: true };
+    const key = `${sender.id}:${url.href}`;
+    return new Promise((resolve, reject) => {
+      pendingDownloads.set(key, { resolve, reject });
+      try {
+        sender.downloadURL(url.href);
+      } catch (error) {
+        pendingDownloads.delete(key);
+        reject(error);
+      }
+    });
   });
   ipcMain.handle("desktop:get-bootstrap", () => getBootstrapData());
   ipcMain.handle("desktop:save-config", (_, config) => saveConfig(config));
@@ -326,12 +335,20 @@ app.whenReady().then(() => {
   rendererSession.setPermissionRequestHandler((_, permission, callback) => {
     callback(permission === "media");
   });
-  rendererSession.on("will-download", (_, item) => {
+  rendererSession.on("will-download", (_, item, webContents) => {
     let url;
     try {
       url = new URL(item.getURL());
     } catch {
       return;
+    }
+    const key = `${webContents?.id}:${url.href}`;
+    const pending = pendingDownloads.get(key);
+    if (pending) {
+      item.once("done", (_, state) => {
+        pendingDownloads.delete(key);
+        pending.resolve({ ok: state === "completed", state });
+      });
     }
     if (!url.pathname.endsWith("/minutes/download")) return;
     const format = url.searchParams.get("format") === "docx" ? "docx" : "md";

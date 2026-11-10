@@ -1,0 +1,58 @@
+{
+  "historical_archive": {
+    "meeting_id": "7f9d16b9de0844dea788cbfaf51d45b1",
+    "artifacts": [
+      "events.jsonl",
+      "speaker-features.jsonl",
+      "transcript.json"
+    ],
+    "expected_revision_pattern": [
+      "assigned",
+      "unknown",
+      "multiple"
+    ]
+  },
+  "window_track_reorder": {
+    "voiceprint": {
+      "id": "registered-speaker",
+      "name": "Registered speaker",
+      "embedding": [1.0, 0.0]
+    },
+    "windows": [
+      {
+        "model_tag": "fixture",
+        "start": 0,
+        "end": 48000,
+        "fresh_from": 0,
+        "speakers": [
+          {"local_id": 1, "embedding": [1.0, 0.0], "active_ms": 1800, "clean_ms": 1800, "fresh_ms": 1800},
+          {"local_id": 0, "embedding": null, "active_ms": 900, "clean_ms": 900, "fresh_ms": 900}
+        ],
+        "turns": [
+          {"start_ms": 0, "end_ms": 1000, "local_ids": [1]},
+          {"start_ms": 1000, "end_ms": 2000, "local_ids": [1, 0]},
+          {"start_ms": 2000, "end_ms": 3000, "local_ids": [0]}
+        ]
+      },
+      {
+        "model_tag": "fixture",
+        "start": 16000,
+        "end": 64000,
+        "fresh_from": 32000,
+        "speakers": [
+          {"local_id": 0, "embedding": [1.0, 0.0], "active_ms": 1800, "clean_ms": 1800, "fresh_ms": 1000},
+          {"local_id": 1, "embedding": [1.0, 0.0], "active_ms": 1800, "clean_ms": 1800, "fresh_ms": 1000}
+        ],
+        "turns": [
+          {"start_ms": 1000, "end_ms": 2200, "local_ids": [0, 1]}
+        ]
+      }
+    ]
+  },
+  "endpoint_pause": {
+    "sample_rate": 16000,
+    "speech_seconds": 1,
+    "silence_ms": 650,
+    "expected_final_segments": 2
+  }
+}

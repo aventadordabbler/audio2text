@@ -37,10 +37,15 @@ export function applyTranscriptEvent(meeting, event) {
 }
 
 export function speakerLabel(segment, speakers = {}) {
-  if (segment.speaker_status === "overlap") return "多人同时讲话";
-  if (segment.speaker_status === "multiple") return "多位说话人";
   if (["pending", "unknown"].includes(segment.speaker_status)) return "说话人待确认";
-  return (segment.speaker_ids || []).map((id) => speakers[id]?.name || "未知说话人").join("、") || "说话人待确认";
+  const names = (segment.speaker_ids || []).map((id) => speakers[id]?.name || "未知说话人");
+  const unresolved = (segment.speaker_turns || []).some((turn) => turn.unknown);
+  let label = names.join("、");
+  if (segment.speaker_status === "multiple" && unresolved)
+    label = `${label}${label ? "、" : ""}说话人待确认`;
+  if (segment.speaker_status === "multiple") return label || "多位说话人";
+  if (segment.speaker_status === "overlap") return `多人同时讲话${label ? `：${label}` : ""}`;
+  return label || "说话人待确认";
 }
 
 export function transcriptRows(meeting) {

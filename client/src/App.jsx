@@ -28,6 +28,7 @@ import {
   Plus,
   MicVocal,
   Users,
+  SlidersHorizontal,
 } from "lucide-react";
 import {
   WorkspaceBrand,
@@ -77,6 +78,7 @@ import { DepartmentManagement } from "@/components/department-management.jsx";
 import { VoiceprintManagement } from "@/components/voiceprint-management.jsx";
 import { UserManagement } from "@/components/user-management.jsx";
 import { MinutesFormatManagement } from "@/components/minutes-format-management.jsx";
+import { SystemSettingsManagement } from "@/components/system-settings-management.jsx";
 import { StageSummaryPanel } from "@/components/stage-summary-panel.jsx";
 
 const store = new DesktopStore();
@@ -197,7 +199,7 @@ export function App() {
   });
   const [retryingStageSummaries, setRetryingStageSummaries] = useState(false);
   const [stageSummaryActionError, setStageSummaryActionError] = useState("");
-  const [livePreview, setLivePreview] = useState("");
+  const [livePreviews, setLivePreviews] = useState([]);
   const [isStarting, setIsStarting] = useState(false);
   const [isControlling, setIsControlling] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -239,6 +241,10 @@ export function App() {
       setExportSuccessMessage("");
       exportSuccessTimerRef.current = null;
     }, 2000);
+  }
+
+  function downloadCompleted(result) {
+    return result?.ok === true && result?.state === "completed";
   }
 
   useEffect(() => {
@@ -325,7 +331,7 @@ export function App() {
   }, [ready, authUser, meetingApi, catalogRevision, createOpen]);
 
   useEffect(() => {
-    if (authUser && !authUser.is_admin && !authUser.is_department_admin && (activeView === "departments" || activeView === "users" || activeView === "voiceprints" || activeView === "minutesFormats"))
+    if (authUser && !authUser.is_admin && (activeView === "departments" || activeView === "users" || activeView === "voiceprints" || activeView === "minutesFormats" || activeView === "systemSettings"))
       setActiveView("history");
   }, [authUser, activeView]);
 
@@ -337,7 +343,6 @@ export function App() {
     if (
       !authUser ||
       !autoScroll ||
-      !isRecording ||
       activeView !== "overview" ||
       activeFocusTab !== "transcript" ||
       !transcriptFollowing
@@ -347,9 +352,8 @@ export function App() {
     if (viewport) viewport.scrollTop = viewport.scrollHeight;
   }, [
     session?.transcript,
-    livePreview,
+    livePreviews,
     autoScroll,
-    isRecording,
     activeView,
     activeFocusTab,
     transcriptFollowing,
@@ -714,8 +718,20 @@ export function App() {
     }
   }
 
-  function handleTranscriptPreview(text) {
-    setLivePreview(text || "");
+  function handleTranscriptPreview(text, metadata = {}) {
+    if (!text) {
+      if (metadata.segment_id == null) setLivePreviews([]);
+      else setLivePreviews((current) => current.filter((item) => item.segment_id !== metadata.segment_id));
+      return;
+    }
+    const segmentId = metadata.segment_id ?? null;
+    const startMs = metadata.start_ms ?? 0;
+    const endMs = metadata.end_ms ?? startMs;
+    const windowId = metadata.window_id || `${startMs}:${endMs}`;
+    setLivePreviews((current) => [
+      ...current.filter((item) => item.segment_id === segmentId && item.window_id !== windowId),
+      { segment_id: segmentId, window_id: windowId, start_ms: startMs, end_ms: endMs, text },
+    ].sort((a, b) => a.start_ms - b.start_ms || a.end_ms - b.end_ms || a.window_id.localeCompare(b.window_id)));
     if (text && recordingRef.current) {
       setStatusLine("语音识别中...");
     }
@@ -800,9 +816,11 @@ export function App() {
     if (!meetingApi || !target?.remoteMeetingId || exportingText) return;
     setExportingText(true);
     try {
-      await meetingApi.downloadTranscript(target.remoteMeetingId);
-      setStatusLine("已发起文本下载，请在保存窗口中选择位置");
-      showExportSuccess("文本文件已开始下载，请在保存窗口中选择位置。");
+      const result = await meetingApi.downloadTranscript(target.remoteMeetingId);
+      if (downloadCompleted(result)) {
+        setStatusLine("转写文本已下载");
+        showExportSuccess("转写文本已保存。");
+      }
     } catch (error) {
       setStatusLine(`导出文本失败：${error.message}`);
     } finally {
@@ -827,9 +845,11 @@ export function App() {
     if (!meetingApi || !target?.remoteMeetingId || exportingAudio) return;
     setExportingAudio(true);
     try {
-      await meetingApi.downloadAudio(target.remoteMeetingId);
-      setStatusLine("已发起录音下载，请在保存窗口中选择位置");
-      showExportSuccess("原始音频已开始下载，请在保存窗口中选择位置。");
+      const result = await meetingApi.downloadAudio(target.remoteMeetingId);
+      if (downloadCompleted(result)) {
+        setStatusLine("原始音频已下载");
+        showExportSuccess("原始音频已保存。");
+      }
     } catch (error) {
       setStatusLine(`导出录音失败：${error.message}`);
     } finally {
@@ -843,9 +863,11 @@ export function App() {
     setMinutesExportOpen(false);
     setExportingMinutes(true);
     try {
-      await meetingApi.downloadMinutes(target.remoteMeetingId, format);
-      setStatusLine("已发起会议纪要下载，请在保存窗口中选择位置");
-      showExportSuccess("会议纪要已开始下载，请在保存窗口中选择位置。");
+      const result = await meetingApi.downloadMinutes(target.remoteMeetingId, format);
+      if (downloadCompleted(result)) {
+        setStatusLine("会议纪要已下载");
+        showExportSuccess("会议纪要已保存。");
+      }
     } catch (error) {
       setStatusLine(`导出会议纪要失败：${error.message}`);
     } finally {
@@ -858,9 +880,11 @@ export function App() {
     if (!meetingApi || !target?.remoteMeetingId || exportingStageSummaries) return;
     setExportingStageSummaries(true);
     try {
-      await meetingApi.downloadStageSummaries(target.remoteMeetingId);
-      setStatusLine("已发起阶段总结下载，请在保存窗口中选择位置");
-      showExportSuccess("阶段总结已开始下载，请在保存窗口中选择位置。");
+      const result = await meetingApi.downloadStageSummaries(target.remoteMeetingId);
+      if (downloadCompleted(result)) {
+        setStatusLine("阶段总结已下载");
+        showExportSuccess("阶段总结已保存。");
+      }
     } catch (error) {
       setStatusLine(`导出阶段总结失败：${error.message}`);
     } finally {
@@ -888,7 +912,7 @@ export function App() {
       });
       setIsRecording(true);
       recordingRef.current = true;
-      setLivePreview("");
+      setLivePreviews([]);
       setActiveView("overview");
       await recorder.start(
         currentConfig.chunkSeconds,
@@ -923,7 +947,7 @@ export function App() {
     setIsControlling(true);
     setStatusLine("正在结束会议...");
     stopTimerLoop();
-    setLivePreview("");
+    setLivePreviews([]);
     setAsrDiagnostics(null);
     setShowDiagnostics(false);
 
@@ -1147,16 +1171,21 @@ export function App() {
     try {
       let next;
       if (meetingApi) {
-        const remote = files.length
-          ? await meetingApi.importWav(title, departmentId, files, language, (completed, total) => setUploadProgress({ completed, total }), minutesFormatId, keySpeakerIds)
-          : await meetingApi.create(title, departmentId, minutesFormatId, keySpeakerIds);
+        let remote;
+        if (files.length) {
+          const started = await meetingApi.importWav(title, departmentId, files, language, (completed, total) => setUploadProgress({ completed, total }), minutesFormatId, keySpeakerIds);
+          remote = started.meeting;
+          void started.upload.catch(() => { refreshCatalog(); });
+        } else {
+          remote = await meetingApi.create(title, departmentId, minutesFormatId, keySpeakerIds);
+        }
         next = sessionFromMeeting(remote, meetingApi.config.baseUrl);
       } else throw new Error("请先配置有效的会议服务地址");
       if (loadId !== sessionLoadRef.current) return;
       await updateSession(next, { syncView: false });
       showSession(next);
       refreshCatalog();
-      setStatusLine(files.length ? "音频已上传，后台正在生成转写和会议纪要" : "会议已创建，可以开始录音");
+      setStatusLine(files.length ? "会议已创建，后台正在上传音频并处理" : "会议已创建，可以开始录音");
     } finally {
       setUploadProgress(null);
     }
@@ -1222,7 +1251,7 @@ export function App() {
     stopTimerLoop();
     setActiveFocusTab(nextSession.remoteStatus === "ended" ? "minutes" : "transcript");
     setTranscriptFollowing(true);
-    setLivePreview("");
+    setLivePreviews([]);
     setAsrDiagnostics(null);
     setShowDiagnostics(false);
     setActiveView("overview");
@@ -1421,8 +1450,9 @@ export function App() {
     { key: "history", label: "会议管理", icon: FolderClosed },
     ...(authUser?.is_admin ? [{ key: "departments", label: "部门管理", icon: Building2 }] : []),
     ...(authUser?.is_admin ? [{ key: "users", label: "用户管理", icon: Users }] : []),
-    ...(authUser?.is_admin || authUser?.is_department_admin ? [{ key: "voiceprints", label: "声纹管理", icon: MicVocal }] : []),
+    ...(authUser?.is_admin ? [{ key: "voiceprints", label: "声纹管理", icon: MicVocal }] : []),
     ...(authUser?.is_admin ? [{ key: "minutesFormats", label: "纪要格式", icon: FileText }] : []),
+    ...(authUser?.is_admin ? [{ key: "systemSettings", label: "系统管理", icon: SlidersHorizontal }] : []),
   ];
   const selectedNavigation = activeView === "overview" ? "history" : activeView;
   const currentPage = activeView === "overview"
@@ -1444,7 +1474,7 @@ export function App() {
           <p>{importBusy && <LoaderCircle size={15} className="animate-spin" />}{importStatusLabel(importJob)}</p>
           {importBusy && importJob?.stage === "transcribing" && <progress aria-label="音频转写进度" max={importJob.total_samples || 1} value={importJob.processed_samples} />}
           {importJob?.error && <p role="alert">{importJob.error}</p>}
-          {importJob?.status === "failed" && <Button variant="outline" disabled={retryingImport} onClick={retryImport}>重试处理</Button>}
+          {importJob?.status === "failed" && importJob.stage !== "initializing" && <Button variant="outline" disabled={retryingImport} onClick={retryImport}>重试处理</Button>}
           {importBusy && <small>可离开页面，后台会继续处理。</small>}
         </div>
       </Card>
@@ -1873,7 +1903,7 @@ export function App() {
                         className="document-scroll panel-scroll"
                         ref={transcriptScrollRef}
                       >
-                        {!transcripts.length && !livePreview ? (
+                        {!transcripts.length && !livePreviews.length ? (
                           <EmptyDocument
                             icon={AudioLines}
                             title={
@@ -1904,12 +1934,16 @@ export function App() {
                                 <p>{item.text}</p>
                               </div>
                             ))}
-                            {livePreview && (
-                              <div className="transcript-entry live-preview">
+                            {livePreviews.map((preview) => (
+                              <div
+                                className="transcript-entry live-preview"
+                                key={`${preview.segment_id ?? "active"}:${preview.window_id}`}
+                                data-partial-window={preview.window_id}
+                              >
                                 <time>识别中</time>
-                                <p>{livePreview}</p>
+                                <p>{preview.text}</p>
                               </div>
-                            )}
+                            ))}
                           </article>
                         )}
                       </div>
@@ -2094,7 +2128,7 @@ export function App() {
               onChanged={refreshCatalog}
             />
           )}
-          {activeView === "voiceprints" && (authUser?.is_admin || authUser?.is_department_admin) && (
+          {activeView === "voiceprints" && authUser?.is_admin && (
             <VoiceprintManagement
               key={config.stt.baseUrl}
               api={meetingApi}
@@ -2104,6 +2138,9 @@ export function App() {
           )}
           {activeView === "minutesFormats" && authUser?.is_admin && (
             <MinutesFormatManagement key={config.stt.baseUrl} api={meetingApi} formats={minutesFormats} onChanged={refreshCatalog} />
+          )}
+          {activeView === "systemSettings" && authUser?.is_admin && (
+            <SystemSettingsManagement key={config.stt.baseUrl} api={meetingApi} />
           )}
         </main>
       </div>

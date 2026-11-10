@@ -91,5 +91,8 @@ class VoiceprintService:
             row.pop("embedding", None)
         return rows
 
+    def rename(self, voiceprint_id: str, name: str):
+        return self.store.rename_voiceprint(voiceprint_id, self._validate_name(name))
+
     def delete(self, voiceprint_id: str):
         return self.store.delete_voiceprint(voiceprint_id)

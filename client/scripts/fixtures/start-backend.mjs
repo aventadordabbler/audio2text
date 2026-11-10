@@ -40,7 +40,7 @@ export async function startBackend({
         DESKTOP_TEST_DIARIZATION: controlledDiarization ? "1" : "0",
         DESKTOP_TEST_ARCHIVE: archiveAudio ? "1" : "0",
         DESKTOP_TEST_IMPORT: importAudio ? "1" : "0",
-        STAGE_SUMMARY_WINDOW_SECONDS: String(stageWindowSeconds),
+        DESKTOP_TEST_STAGE_WINDOW_SECONDS: String(stageWindowSeconds),
       },
       stdio: ["ignore", "pipe", "pipe"],
     },

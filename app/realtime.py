@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 async def meeting_socket(websocket: WebSocket, meeting_id, store, models, minutes, factory, *, settings,
-                         diarization=None, events=None, stage_summaries=None, user_id=None):
+                         system_settings, diarization=None, events=None, stage_summaries=None, user_id=None):
     """Bind one browser and one model stream to a meeting; persist only final segments."""
     await websocket.accept()
     owner = uuid4().hex
@@ -98,7 +98,10 @@ async def meeting_socket(websocket: WebSocket, meeting_id, store, models, minute
                     if diarization:
                         diarization.notify(meeting_id)
             else:
-                await send({"type": "partial", "segment_id": segment, "text": text})
+                await send({"type": "partial", "segment_id": segment, "text": text,
+                            "window_id": event.get("window_id"),
+                            "start_ms": event.get("start_ms", 0),
+                            "end_ms": event.get("end_ms", 0)})
 
     async def receive():
         task = asyncio.create_task(websocket.receive())
@@ -156,7 +159,7 @@ async def meeting_socket(websocket: WebSocket, meeting_id, store, models, minute
         config = await asyncio.to_thread(models.require, "asr") if factory is None and claimed else None
         if factory is None and claimed:
             from .asr import build_transcriber
-            factory = lambda: build_transcriber(config, settings)
+            factory = lambda: build_transcriber(config, settings, system_settings)
         if events:
             subscription = events.subscribe(meeting_id, owner)
             meeting = await asyncio.to_thread(store.get, meeting_id, user_id)

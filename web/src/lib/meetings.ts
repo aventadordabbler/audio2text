@@ -7,7 +7,7 @@ export interface TranscriptSegment {
   text: string
   speaker_ids: string[]
   speaker_status: "pending" | "assigned" | "unknown" | "multiple" | "overlap"
-  speaker_turns?: { start_ms: number; end_ms: number; speaker_ids: string[] }[]
+  speaker_turns?: { start_ms: number; end_ms: number; speaker_ids: string[]; unknown?: boolean; overlap?: boolean }[]
 }
 
 export interface ProcessingState {
@@ -17,7 +17,7 @@ export interface ProcessingState {
 
 export interface ImportJob {
   status: "queued" | "running" | "ready" | "failed"
-  stage: "transcribing" | "diarizing" | "summarizing"
+  stage: "initializing" | "transcribing" | "diarizing" | "summarizing"
   filename: string
   error: string
   processed_samples: number
@@ -28,6 +28,7 @@ export function importStatusLabel(job?: ImportJob | null) {
   if (!job) return ""
   if (job.status === "ready") return "导入处理完成"
   if (job.status === "failed") return "导入处理失败"
+  if (job.stage === "initializing") return "正在初始化"
   if (job.status === "queued") return "等待处理音频"
   return { transcribing: "正在转写音频", diarizing: "正在校正说话人", summarizing: "正在生成会议纪要" }[job.stage]
 }
@@ -95,6 +96,15 @@ export interface MinutesFormat {
   created_at: string
   updated_at: string
   meeting_count: number
+}
+
+export interface SystemSettings {
+  slogan: string
+  asr_use_request_chat_template: boolean
+  llm_max_tokens: number
+  llm_chunk_chars: number
+  stage_summary_window_seconds: number
+  stage_summary_max_tokens: number
 }
 
 export interface MeetingFilters {
@@ -205,7 +215,6 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   return response.json()
 }
 
-const CHUNK_THRESHOLD = 100 * 1024 * 1024
 const CHUNK_SIZE = 8 * 1024 * 1024
 
 async function sha256Hex(blob: Blob) {
@@ -222,18 +231,8 @@ export async function importWav(
   keySpeakerIds: string[] = [],
 ) {
   const files = Array.isArray(input) ? input : [input]
-  if (files.length === 1 && files[0].size <= CHUNK_THRESHOLD) {
-    const body = new FormData()
-    body.set("file", files[0])
-    body.set("title", title)
-    if (language !== "auto") body.set("language", language)
-    if (minutesFormatId) body.set("minutes_format_id", minutesFormatId)
-    body.set("key_speaker_ids", JSON.stringify(keySpeakerIds))
-    return api<Meeting>("/api/meetings/import", { method: "POST", body })
-  }
-
   const totalChunks = files.reduce((total, file) => total + Math.ceil(file.size / CHUNK_SIZE), 0)
-  const started = await api<{ upload_id: string }>("/api/meetings/import/chunked", {
+  const started = await api<{ upload_id: string; meeting: Meeting }>("/api/meetings/import/chunked", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -249,22 +248,34 @@ export async function importWav(
       })),
     }),
   })
-  let completed = 0
-  for (let fileIndex = 0; fileIndex < files.length; fileIndex += 1) {
-    const file = files[fileIndex]
-    const fileChunks = Math.ceil(file.size / CHUNK_SIZE)
-    for (let index = 0; index < fileChunks; index += 1) {
-      const chunk = file.slice(index * CHUNK_SIZE, Math.min(file.size, (index + 1) * CHUNK_SIZE))
-      await api(`/api/meetings/import/chunked/${started.upload_id}/file/${fileIndex}/${index}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/octet-stream", "X-Chunk-SHA256": await sha256Hex(chunk) },
-        body: chunk,
-      })
-      completed += 1
-      onProgress?.(completed, totalChunks)
+  const upload = (async () => {
+    try {
+      let completed = 0
+      for (let fileIndex = 0; fileIndex < files.length; fileIndex += 1) {
+        const file = files[fileIndex]
+        const fileChunks = Math.ceil(file.size / CHUNK_SIZE)
+        for (let index = 0; index < fileChunks; index += 1) {
+          const chunk = file.slice(index * CHUNK_SIZE, Math.min(file.size, (index + 1) * CHUNK_SIZE))
+          await api(`/api/meetings/import/chunked/${started.upload_id}/file/${fileIndex}/${index}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/octet-stream", "X-Chunk-SHA256": await sha256Hex(chunk) },
+            body: chunk,
+          })
+          completed += 1
+          onProgress?.(completed, totalChunks)
+        }
+      }
+      await api<Meeting>(`/api/meetings/import/chunked/${started.upload_id}/complete`, { method: "POST" })
+    } catch (error) {
+      await api(`/api/meetings/import/chunked/${started.upload_id}/fail`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ error: errorMessage(error) }),
+      }).catch(() => {})
+      throw error
     }
-  }
-  return api<Meeting>(`/api/meetings/import/chunked/${started.upload_id}/complete`, { method: "POST" })
+  })()
+  return { meeting: started.meeting, upload }
 }
 
 export function formatDuration(seconds: number) {

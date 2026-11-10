@@ -9,15 +9,9 @@ from .model_configs import DEFAULT_TOKENIZER
 
 class Settings(BaseSettings):
     app_name: str = "会议助手"
-    slogan: str = Field(default="", max_length=200)
     asr_tokenizer: str = Field(default=DEFAULT_TOKENIZER, min_length=1, max_length=2000)
-    asr_send_chat_template: bool = False
     asr_window_seconds: float = Field(default=5.0, ge=1.0, le=30.0)
     asr_stride_seconds: float = Field(default=2.0, ge=0.5, le=30.0)
-    llm_max_tokens: int = Field(default=16384, ge=256)
-    llm_chunk_chars: int = Field(default=12000, ge=1000)
-    stage_summary_window_seconds: int = Field(default=120, ge=10, le=300)
-    stage_summary_max_tokens: int = Field(default=1200, ge=128, le=8192)
     data_dir: Path = Path("data/archives")
     database_path: Path | None = None
     diarization_model_dir: Path = Path("models/diarization")

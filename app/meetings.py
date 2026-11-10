@@ -203,8 +203,6 @@ class MeetingStore:
         detected = {
             speaker_id
             for segment in document.get("segments", [])
-            if segment.get("speaker_status") == "assigned"
-            and len(segment.get("speaker_ids", [])) == 1
             for speaker_id in segment.get("speaker_ids", [])
         }
         return [
@@ -265,7 +263,8 @@ class MeetingStore:
 
     def create(self, title: str, language: str | None = None, department_id: str | None = None,
                minutes_format_id: str | None = None, key_speaker_ids: list[str] | None = None,
-               *, imported_audio: Path | None = None, filename: str = "", user_id: str | None = None) -> dict[str, Any]:
+               *, imported_audio: Path | None = None, filename: str = "", user_id: str | None = None,
+               import_pending: bool = False) -> dict[str, Any]:
         meeting_id, now = uuid4().hex, _timestamp()
         text_path = f"meetings/{meeting_id}/transcript.txt"
         with self._connection() as db:
@@ -293,13 +292,17 @@ class MeetingStore:
                 db.execute(
                     """INSERT INTO meetings (id, title, language, status, text_path, created_at, updated_at,
                        department_id, minutes_format_id, key_speakers, ended_at, duration_seconds, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (meeting_id, title.strip(), language or None, "ended" if audio else "created", text_path,
+                    (meeting_id, title.strip(), language or None, "ended" if audio or import_pending else "created", text_path,
                      now, now, department_id, minutes_format_id, key_speakers,
-                     now if audio else None, audio.duration_seconds if audio else 0, user_id),
+                     now if audio or import_pending else None, audio.duration_seconds if audio else 0, user_id),
                 )
                 if audio:
                     db.execute("""INSERT INTO meeting_imports (meeting_id, filename, total_samples, updated_at)
                         VALUES (?, ?, ?, ?)""", (meeting_id, filename, audio.samples, now))
+                elif import_pending:
+                    db.execute("""INSERT INTO meeting_imports
+                        (meeting_id, filename, status, stage, total_samples, updated_at)
+                        VALUES (?, ?, 'queued', 'initializing', 0, ?)""", (meeting_id, filename, now))
             except BaseException:
                 if imported_audio:
                     shutil.rmtree(directory)
@@ -347,6 +350,33 @@ class MeetingStore:
                 values.append(user_id)
             row = db.execute(MEETING_SELECT + " WHERE " + where, values).fetchone()
             return self._record(row) if row else None
+
+    def attach_import(self, meeting_id: str, imported_audio: Path, filename: str,
+                      user_id: str | None = None) -> dict[str, Any]:
+        audio = read_audio_summary(imported_audio)
+        if not audio or not audio.samples:
+            raise MeetingError("音频文件没有有效音频", 422)
+        destination = self.directory(meeting_id)
+        with self._connection() as db:
+            row = db.execute(
+                MEETING_SELECT + " WHERE meetings.id = ?" + (" AND meetings.user_id = ?" if user_id else ""),
+                (meeting_id, user_id) if user_id else (meeting_id,),
+            ).fetchone()
+            if row is None:
+                raise MeetingError("会议不存在", 404)
+            destination.mkdir(parents=True, exist_ok=True)
+            for item in imported_audio.iterdir():
+                item.replace(destination / item.name)
+            self.transcript(meeting_id).read()
+            now = _timestamp()
+            db.execute("""UPDATE meetings SET status = 'ended', duration_seconds = ?,
+                ended_at = ?, updated_at = ? WHERE id = ?""",
+                       (audio.duration_seconds, now, now, meeting_id))
+            db.execute("""UPDATE meeting_imports SET filename = ?, status = 'queued',
+                stage = 'transcribing', error = '', processed_samples = 0,
+                total_samples = ?, updated_at = ? WHERE meeting_id = ?""",
+                       (filename, audio.samples, now, meeting_id))
+            return self._record(db.execute(MEETING_SELECT + " WHERE meetings.id = ?", (meeting_id,)).fetchone())
 
     def claim(self, meeting_id: str, owner: str, user_id: str | None = None) -> dict[str, Any]:
         with self._connection() as db:
@@ -495,6 +525,23 @@ class MeetingStore:
             if not db.execute("DELETE FROM voiceprints WHERE id = ?", (voiceprint_id,)).rowcount:
                 raise MeetingError("声纹记录不存在", 404)
 
+    def rename_voiceprint(self, voiceprint_id: str, name: str) -> dict[str, Any]:
+        with self._connection() as db:
+            row = db.execute(
+                "SELECT voiceprints.*, departments.name AS department_name FROM voiceprints "
+                "LEFT JOIN departments ON departments.id = voiceprints.department_id WHERE voiceprints.id = ?",
+                (voiceprint_id,),
+            ).fetchone()
+            if row is None:
+                raise MeetingError("声纹记录不存在", 404)
+            updated_at = _timestamp()
+            db.execute("UPDATE voiceprints SET name = ?, updated_at = ? WHERE id = ?", (name, updated_at, voiceprint_id))
+            updated = dict(row)
+            updated["name"] = name
+            updated["updated_at"] = updated_at
+            updated.pop("embedding", None)
+            return updated
+
     def save_department(self, name: str, department_id: str | None = None) -> dict[str, Any]:
         name = name.strip()
         if not name or len(name) > 60:
@@ -580,8 +627,8 @@ class MeetingStore:
         try:
             with self._connection() as db:
                 row = self._require(db, meeting_id, None, user_id)
-                if row["status"] == "recording":
-                    raise MeetingError("请先停止录音，再删除会议")
+                if row["status"] not in {"created", "ended"}:
+                    raise MeetingError("只能删除未开始或已结束的会议")
                 if db.execute("SELECT 1 FROM meeting_imports WHERE meeting_id = ? AND status IN ('queued', 'running')", (meeting_id,)).fetchone():
                     raise MeetingError("正在处理导入音频，请完成后再删除会议")
                 if db.execute("SELECT 1 FROM meeting_minutes WHERE meeting_id = ? AND status = 'generating'", (meeting_id,)).fetchone():

@@ -1,8 +1,8 @@
 {
-  "name": "meeting-assistant-desktop",
-  "productName": "Meeting Assistant Desktop",
+  "name": "meeting-assistant",
+  "productName": "Meeting Assistant",
   "version": "1.0.1",
-  "description": "Electron desktop meeting assistant with live transcript, summaries, and minutes generation.",
+  "description": "meeting assistant with live transcript, summaries, and minutes generation.",
   "private": true,
   "type": "module",
   "main": "electron/main.cjs",
@@ -67,7 +67,7 @@
   },
   "build": {
     "appId": "com.quantitative.desktop",
-    "productName": "Meeting Assistant Desktop",
+    "productName": "Meeting Assistant",
     "asar": true,
     "directories": {
       "output": "release"
@@ -89,10 +89,10 @@
         "nsis",
         "portable"
       ],
-      "artifactName": "meeting-assistant-desktop-${version}-${target}.${ext}"
+      "artifactName": "meeting-assistant-${version}-${target}.${ext}"
     },
     "portable": {
-      "artifactName": "meeting-assistant-desktop-${version}-portable.${ext}"
+      "artifactName": "meeting-assistant-${version}-portable.${ext}"
     },
     "nsis": {
       "installerIcon": "assets/icon.ico",

@@ -6,15 +6,9 @@ services:
     restart: unless-stopped
     environment:
       DATA_DIR: /app/data/archives
-      SLOGAN: ${SLOGAN:-}
       ASR_TOKENIZER: ${ASR_TOKENIZER:-/app/data/tokenizers/qwen}
-      ASR_SEND_CHAT_TEMPLATE: ${ASR_SEND_CHAT_TEMPLATE:-true}
       ASR_WINDOW_SECONDS: ${ASR_WINDOW_SECONDS:-5}
       ASR_STRIDE_SECONDS: ${ASR_STRIDE_SECONDS:-2}
-      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-131072}
-      LLM_CHUNK_CHARS: ${LLM_CHUNK_CHARS:-98304}
-      STAGE_SUMMARY_WINDOW_SECONDS: ${STAGE_SUMMARY_WINDOW_SECONDS:-120}
-      STAGE_SUMMARY_MAX_TOKENS: ${STAGE_SUMMARY_MAX_TOKENS:-8192}
       DIARIZATION_MODEL_DIR: /app/models/diarization
       DIARIZATION_SEGMENTATION_DIR: /app/models/pyannote/segmentation-3.0
       DIARIZATION_WORKERS: ${DIARIZATION_WORKERS:-2}

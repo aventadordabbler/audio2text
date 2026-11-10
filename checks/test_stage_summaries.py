@@ -3,11 +3,11 @@ import asyncio
 import numpy as np
 import pytest
 
-from app.config import Settings
 from app.meetings import MeetingError, MeetingStore
 from app.minutes import SYSTEM_PROMPT
 from app.recordings import AudioArchive
 from app.stage_summaries import STAGE_PROMPT, StageSummaryService
+from app.system_settings import SystemSettingsStore
 
 
 def test_stage_prompt_requests_a_plain_conversation_summary():
@@ -24,6 +24,14 @@ async def until(check, timeout=2):
     async with asyncio.timeout(timeout):
         while not await check():
             await asyncio.sleep(0.01)
+
+
+def settings_for(store):
+    settings = SystemSettingsStore(store.path)
+    values = settings.get()
+    values["stage_summary_window_seconds"] = 10
+    settings.save(values)
+    return settings
 
 
 class RecordingGenerator:
@@ -87,12 +95,7 @@ async def test_fixed_windows_generate_in_background_and_persist(tmp_path):
     transcript.final(1, "尾段内容。", 11000, 12000, "capture")
     assign_anonymous_speakers(transcript)
     generator = RecordingGenerator()
-    settings = Settings(
-        _env_file=None,
-        data_dir=tmp_path,
-        database_path=store.path,
-        stage_summary_window_seconds=10,
-    )
+    settings = settings_for(store)
     service = StageSummaryService(store, None, settings, generator)
     await service.start()
     try:
@@ -133,12 +136,7 @@ async def test_stage_summary_waits_for_speaker_labels_before_generating(tmp_path
     transcript = store.transcript(meeting["id"])
     transcript.final(0, "匿名讲话内容。", 0, 1000, "capture")
     generator = RecordingGenerator()
-    settings = Settings(
-        _env_file=None,
-        data_dir=tmp_path,
-        database_path=store.path,
-        stage_summary_window_seconds=10,
-    )
+    settings = settings_for(store)
     service = StageSummaryService(store, None, settings, generator)
     await service.start()
     try:
@@ -190,12 +188,7 @@ async def test_stage_summary_generates_after_diarization_with_unknown_speakers(t
     }
     transcript.update(segments=[segment], processing={"status": "ready", "error": ""})
     generator = RecordingGenerator()
-    settings = Settings(
-        _env_file=None,
-        data_dir=tmp_path,
-        database_path=store.path,
-        stage_summary_window_seconds=10,
-    )
+    settings = settings_for(store)
     service = StageSummaryService(store, None, settings, generator)
     await service.start()
     try:
@@ -226,12 +219,7 @@ async def test_stage_summary_input_preserves_speaker_association(tmp_path):
         speakers={"speaker-1": {"name": "张三"}, "speaker-2": {"name": "李四"}},
     )
     generator = RecordingGenerator()
-    settings = Settings(
-        _env_file=None,
-        data_dir=tmp_path,
-        database_path=store.path,
-        stage_summary_window_seconds=10,
-    )
+    settings = settings_for(store)
     service = StageSummaryService(store, None, settings, generator)
     await service.start()
     try:
@@ -255,12 +243,7 @@ async def test_generating_window_recovers_after_service_restart(tmp_path):
     transcript = store.transcript(meeting["id"])
     transcript.final(0, "重启后仍需总结。", 0, 1000, "capture")
     assign_anonymous_speakers(transcript)
-    settings = Settings(
-        _env_file=None,
-        data_dir=tmp_path,
-        database_path=store.path,
-        stage_summary_window_seconds=10,
-    )
+    settings = settings_for(store)
     blocked = BlockingGenerator()
     first = StageSummaryService(store, None, settings, blocked)
     await first.start()
@@ -288,12 +271,7 @@ async def test_failed_window_can_be_retried_after_model_configuration(tmp_path):
     transcript.final(0, "需要恢复的内容。", 0, 1000, "capture")
     assign_anonymous_speakers(transcript)
     generator = RecoveringGenerator()
-    settings = Settings(
-        _env_file=None,
-        data_dir=tmp_path,
-        database_path=store.path,
-        stage_summary_window_seconds=10,
-    )
+    settings = settings_for(store)
     service = StageSummaryService(store, None, settings, generator)
     await service.start()
     try:
@@ -326,12 +304,7 @@ async def test_pause_boundary_is_persisted_while_previous_window_is_generating(t
     transcript.final(2, "恢复后的窗口。", 13000, 22000, "capture")
     assign_anonymous_speakers(transcript)
     generator = GateGenerator()
-    settings = Settings(
-        _env_file=None,
-        data_dir=tmp_path,
-        database_path=store.path,
-        stage_summary_window_seconds=10,
-    )
+    settings = settings_for(store)
     service = StageSummaryService(store, None, settings, generator)
     await service.start()
     try:
@@ -365,16 +338,12 @@ async def test_pause_boundary_is_persisted_while_previous_window_is_generating(t
 async def test_active_summary_blocks_delete_then_notifies_subscribers(tmp_path):
     store = MeetingStore(tmp_path / "meetings.sqlite3")
     meeting = store.create("阶段总结删除协调")
+    store.transition(meeting["id"], "end")
     transcript = store.transcript(meeting["id"])
     transcript.final(0, "待总结内容。", 0, 1000, "capture")
     assign_anonymous_speakers(transcript)
     generator = GateGenerator()
-    settings = Settings(
-        _env_file=None,
-        data_dir=tmp_path,
-        database_path=store.path,
-        stage_summary_window_seconds=10,
-    )
+    settings = settings_for(store)
     service = StageSummaryService(store, None, settings, generator)
     await service.start()
     subscription = service.subscribe(meeting["id"], "test")
@@ -407,12 +376,7 @@ async def test_active_summary_blocks_delete_then_notifies_subscribers(tmp_path):
 
 async def test_registered_meeting_reconciles_unplanned_windows_after_restart(tmp_path):
     store = MeetingStore(tmp_path / "meetings.sqlite3")
-    settings = Settings(
-        _env_file=None,
-        data_dir=tmp_path,
-        database_path=store.path,
-        stage_summary_window_seconds=10,
-    )
+    settings = settings_for(store)
     interrupted = StageSummaryService(store, None, settings, RecordingGenerator())
     meeting = store.create("崩溃恢复切窗")
     transcript = store.transcript(meeting["id"])

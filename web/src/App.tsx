@@ -20,6 +20,7 @@ import { MeetingList } from "@/components/meeting-list"
 import { WorkspaceSidebar } from "@/components/workspace-sidebar"
 import { VoiceprintManagement } from "@/components/voiceprint-management"
 import { UserManagement } from "@/components/user-management"
+import { SystemSettingsManagement } from "@/components/system-settings-management"
 import { AuthScreen, PasswordChangeScreen } from "@/components/auth-screen"
 import { api, authToken, emptyMeetingFilters, errorMessage, setAuthToken, type Department, type Meeting, type MeetingFilters, type MinutesFormat, type UserAccount, type Voiceprint } from "@/lib/meetings"
 import { RecordingSession } from "@/lib/recording-session"
@@ -37,7 +38,7 @@ export default function App() {
   const [minutesFormats, setMinutesFormats] = useState<MinutesFormat[]>([])
   const [voiceprints, setVoiceprints] = useState<Voiceprint[]>([])
   const [users, setUsers] = useState<UserAccount[]>([])
-  const [page, setPage] = useState<"meetings" | "departments" | "users" | "voiceprints" | "minutes-formats">("meetings")
+  const [page, setPage] = useState<"meetings" | "departments" | "users" | "voiceprints" | "minutes-formats" | "system-settings">("meetings")
   const [error, setError] = useState("")
   const [createOpen, setCreateOpen] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -118,7 +119,7 @@ export default function App() {
           await session.leave()
           setError("")
           const match = location.hash.match(/^#meeting\/([a-f0-9]{32})$/)
-          if (active) setPage(location.hash === "#departments" && authUser?.is_admin ? "departments" : location.hash === "#users" && authUser?.is_admin ? "users" : location.hash === "#voiceprints" && (authUser?.is_admin || authUser?.is_department_admin) ? "voiceprints" : location.hash === "#minutes-formats" && authUser?.is_admin ? "minutes-formats" : "meetings")
+          if (active) setPage(location.hash === "#departments" && authUser?.is_admin ? "departments" : location.hash === "#users" && authUser?.is_admin ? "users" : location.hash === "#voiceprints" && authUser?.is_admin ? "voiceprints" : location.hash === "#minutes-formats" && authUser?.is_admin ? "minutes-formats" : location.hash === "#system-settings" && authUser?.is_admin ? "system-settings" : "meetings")
           try {
             if (match) {
               const meeting = await api<Meeting>(`/api/meetings/${match[1]}`)
@@ -177,7 +178,7 @@ export default function App() {
       )
   }, [state.meeting])
 
-  function selectPage(value: "meetings" | "departments" | "users" | "voiceprints" | "minutes-formats") {
+  function selectPage(value: "meetings" | "departments" | "users" | "voiceprints" | "minutes-formats" | "system-settings") {
     location.hash = value === "meetings" ? "" : value
   }
   function created(meeting: Meeting) {
@@ -197,9 +198,10 @@ export default function App() {
     location.hash = ""
   }
   const configureModels = useCallback(() => {
+    if (!authUser?.is_admin) return
     setMobileOpen(false)
     setModelsOpen(true)
-  }, [])
+  }, [authUser?.is_admin])
   const sidebarProps = {
     meetings,
     page,
@@ -207,7 +209,7 @@ export default function App() {
     onConfigure: configureModels,
     onPage: selectPage,
     isAdmin: Boolean(authUser?.is_admin),
-    canViewVoiceprints: Boolean(authUser?.is_admin || authUser?.is_department_admin),
+    canViewVoiceprints: Boolean(authUser?.is_admin),
   }
   const visibleError = error || state.error
 
@@ -245,7 +247,7 @@ export default function App() {
               <nav aria-label="面包屑" className="breadcrumb">
                 <span>工作空间</span>
                 <ChevronRight />
-                <a href={page === "meetings" ? "#" : `#${page}`}>{page === "departments" ? "部门管理" : page === "users" ? "用户管理" : page === "voiceprints" ? "声纹管理" : page === "minutes-formats" ? "纪要格式" : "会议管理"}</a>
+                <a href={page === "meetings" ? "#" : `#${page}`}>{page === "departments" ? "部门管理" : page === "users" ? "用户管理" : page === "voiceprints" ? "声纹管理" : page === "minutes-formats" ? "纪要格式" : page === "system-settings" ? "系统管理" : "会议管理"}</a>
                 {state.meeting && (
                   <>
                     <ChevronRight />
@@ -304,17 +306,19 @@ export default function App() {
               <DepartmentManagement departments={departments} onChanged={refresh} />
           ) : page === "users" && authUser.is_admin ? (
             <UserManagement users={users} onChanged={refresh} />
-          ) : page === "voiceprints" && (authUser.is_admin || authUser.is_department_admin) ? (
+          ) : page === "voiceprints" && authUser.is_admin ? (
             <VoiceprintManagement departments={departments} readOnly={!authUser.is_admin} />
           ) : page === "minutes-formats" && authUser.is_admin ? (
             <MinutesFormatManagement formats={minutesFormats} onChanged={refresh} />
+          ) : page === "system-settings" && authUser.is_admin ? (
+            <SystemSettingsManagement />
           ) : state.meeting ? (
             <MeetingDetail
               key={state.meeting.id}
               session={session}
               onError={setError}
               modelsVersion={modelsVersion}
-              onConfigure={configureModels}
+              onConfigure={authUser.is_admin ? configureModels : undefined}
             />
           ) : (
             <MeetingList

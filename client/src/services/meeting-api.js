@@ -1,7 +1,6 @@
 import { normalizeSttConfig } from "../shared/defaults.js";
 import { meetingQuery } from "./meeting-catalog.js";
 
-const CHUNK_THRESHOLD = 100 * 1024 * 1024;
 const CHUNK_SIZE = 8 * 1024 * 1024;
 
 async function sha256Hex(blob) {
@@ -92,6 +91,10 @@ export class MeetingApi {
     });
   }
 
+  deleteMeeting(id) {
+    return this.request(`/api/meetings/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+
   departments(options = {}) {
     return this.request("/api/departments", options);
   }
@@ -134,6 +137,13 @@ export class MeetingApi {
 
   createVoiceprint(body) {
     return this.request("/api/voiceprints", { method: "POST", body });
+  }
+
+  renameVoiceprint(id, name) {
+    return this.request(`/api/voiceprints/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify({ name: name.trim() }),
+    });
   }
 
   deleteVoiceprint(id) {
@@ -179,6 +189,17 @@ export class MeetingApi {
     return this.request("/api/model-configs", options);
   }
 
+  systemSettings(options = {}) {
+    return this.request("/api/system-settings", options);
+  }
+
+  saveSystemSettings(values) {
+    return this.request("/api/system-settings", {
+      method: "PUT",
+      body: JSON.stringify(values),
+    });
+  }
+
   saveModelConfig(kind, config) {
     return this.request(`/api/model-configs/${kind}`, {
       method: "PUT",
@@ -217,17 +238,7 @@ export class MeetingApi {
 
   importWav(title, departmentId, file, language = this.config.language, onProgress, minutesFormatId = null, keySpeakerIds = []) {
     const files = Array.isArray(file) ? file : [file];
-    if (files.length > 1 || files[0].size > CHUNK_THRESHOLD) return this.importWavChunked(title, files, language, onProgress, minutesFormatId, keySpeakerIds);
-    const body = new FormData();
-    body.set("title", title);
-    body.set("file", files[0]);
-    if (departmentId) body.set("department_id", departmentId);
-    if (language && language !== "auto") body.set("language", language);
-    if (minutesFormatId) body.set("minutes_format_id", minutesFormatId);
-    body.set("key_speaker_ids", JSON.stringify(keySpeakerIds));
-    return this.request("/api/meetings/import", {
-      method: "POST", body, signal: AbortSignal.timeout(900000),
-    });
+    return this.importWavChunked(title, files, language, onProgress, minutesFormatId, keySpeakerIds);
   }
 
   async importWavChunked(title, files, language = this.config.language, onProgress, minutesFormatId = null, keySpeakerIds = []) {
@@ -237,24 +248,34 @@ export class MeetingApi {
       body: JSON.stringify({ title, language: language === "auto" ? null : language, minutes_format_id: minutesFormatId, key_speaker_ids: keySpeakerIds, files: files.map((file) => ({ filename: file.name, file_size: file.size, total_chunks: Math.ceil(file.size / CHUNK_SIZE), chunk_size: CHUNK_SIZE })) }),
       signal: AbortSignal.timeout(900000),
     });
-    let completed = 0;
-    for (let fileIndex = 0; fileIndex < files.length; fileIndex += 1) {
-      const file = files[fileIndex];
-      const fileChunks = Math.ceil(file.size / CHUNK_SIZE);
-      for (let index = 0; index < fileChunks; index += 1) {
-        const chunk = file.slice(index * CHUNK_SIZE, Math.min(file.size, (index + 1) * CHUNK_SIZE));
-        await this.request(`/api/meetings/import/chunked/${started.upload_id}/file/${fileIndex}/${index}`, {
-          method: "PUT", body: chunk,
-          headers: { "Content-Type": "application/octet-stream", "X-Chunk-SHA256": await sha256Hex(chunk) },
-          signal: AbortSignal.timeout(900000),
+    const upload = (async () => {
+      try {
+        let completed = 0;
+        for (let fileIndex = 0; fileIndex < files.length; fileIndex += 1) {
+          const file = files[fileIndex];
+          const fileChunks = Math.ceil(file.size / CHUNK_SIZE);
+          for (let index = 0; index < fileChunks; index += 1) {
+            const chunk = file.slice(index * CHUNK_SIZE, Math.min(file.size, (index + 1) * CHUNK_SIZE));
+            await this.request(`/api/meetings/import/chunked/${started.upload_id}/file/${fileIndex}/${index}`, {
+              method: "PUT", body: chunk,
+              headers: { "Content-Type": "application/octet-stream", "X-Chunk-SHA256": await sha256Hex(chunk) },
+              signal: AbortSignal.timeout(900000),
+            });
+            completed += 1;
+            onProgress?.(completed, totalChunks);
+          }
+        }
+        await this.request(`/api/meetings/import/chunked/${started.upload_id}/complete`, {
+          method: "POST", signal: AbortSignal.timeout(900000),
         });
-        completed += 1;
-        onProgress?.(completed, totalChunks);
+      } catch (error) {
+        await this.request(`/api/meetings/import/chunked/${started.upload_id}/fail`, {
+          method: "POST", body: JSON.stringify({ error: error.message || "音频上传失败，请重新导入" }),
+        }).catch(() => {});
+        throw error;
       }
-    }
-    return this.request(`/api/meetings/import/chunked/${started.upload_id}/complete`, {
-      method: "POST", signal: AbortSignal.timeout(900000),
-    });
+    })();
+    return { meeting: started.meeting, upload };
   }
 
   retryImport(id) {
@@ -336,8 +357,7 @@ export class MeetingApi {
     }
     // Electron's CSP blocks remote iframes. Use its native download manager.
     if (globalThis.window?.meetingDesktop?.downloadFile) {
-      await window.meetingDesktop.downloadFile(url);
-      return;
+      return window.meetingDesktop.downloadFile(url);
     }
     // Browser downloads stream to disk; a failed GET must not navigate the app.
     let frame = document.getElementById("meeting-download-frame");

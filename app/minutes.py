@@ -7,9 +7,9 @@ from typing import Any, Protocol
 
 from openai import AsyncOpenAI
 
-from .config import Settings
 from .meetings import MeetingError, MeetingStore
 from .model_configs import ModelConfig, ModelConfigStore
+from .system_settings import SystemSettingsStore
 from .transcripts import plain_text
 from .minutes_formats import DEFAULT_MINUTES_PROMPT
 
@@ -83,9 +83,9 @@ class MinutesGenerationError(Exception):
 
 
 class OpenAIMinutesGenerator:
-    def __init__(self, config: ModelConfig, settings: Settings) -> None:
+    def __init__(self, config: ModelConfig, system_settings: SystemSettingsStore) -> None:
         self.config = config
-        self.settings = settings
+        self.system_settings = system_settings
         self.client = AsyncOpenAI(
             base_url=config.base_url,
             api_key=config.api_key or "EMPTY",
@@ -102,7 +102,7 @@ class OpenAIMinutesGenerator:
         text: str,
         prompt: str,
         max_tokens: int,
-        truncation_setting: str = "LLM_MAX_TOKENS",
+        truncation_label: str = "LLM 输出 Token 上限",
     ) -> str:
         response = await self.client.chat.completions.create(
             model=self.config.model,
@@ -118,7 +118,7 @@ class OpenAIMinutesGenerator:
         choice = response.choices[0]
         if choice.finish_reason == "length":
             raise MinutesGenerationError(
-                f"纪要输出被截断，请调大 {truncation_setting} 后重试。"
+                f"纪要输出被截断，请调大{truncation_label}后重试。"
             )
         if choice.finish_reason not in {"stop", None}:
             raise MinutesGenerationError("纪要服务未返回完整文本，请重试。")
@@ -136,6 +136,7 @@ class OpenAIMinutesGenerator:
         return content
 
     async def generate_format_prompt(self, name: str, requirement: str) -> str:
+        settings = self.system_settings.get()
         response = await self.client.chat.completions.create(
             model=self.config.model,
             messages=[
@@ -143,7 +144,7 @@ class OpenAIMinutesGenerator:
                 {"role": "user", "content": f"会议类型：{name}\n用户要求：{requirement}"},
             ],
             temperature=0.2,
-            max_tokens=min(self.settings.llm_max_tokens, 4096),
+            max_tokens=min(settings["llm_max_tokens"], 4096),
         )
         if not response.choices:
             raise MinutesGenerationError("纪要服务返回了空结果，请重试。")
@@ -169,12 +170,14 @@ class OpenAIMinutesGenerator:
         text = transcript.strip()
         if not text:
             raise ValueError("没有转写内容，无法生成会议纪要")
-        limit = self.settings.llm_chunk_chars
+        settings = self.system_settings.get()
+        limit = settings["llm_chunk_chars"]
+        max_tokens = settings["llm_max_tokens"]
         # Reduce long transcripts without silently dropping the end of the meeting.
         for _ in range(5):
             if len(text) <= limit:
                 return await self.generate_from_prompt(
-                    title, text, prompt or MINUTES_PROMPT, self.settings.llm_max_tokens
+                    title, text, prompt or MINUTES_PROMPT, max_tokens
                 )
             summaries = []
             for offset in range(0, len(text), limit):
@@ -183,14 +186,14 @@ class OpenAIMinutesGenerator:
                         title,
                         text[offset : offset + limit],
                         EXTRACT_PROMPT,
-                        self.settings.llm_max_tokens,
+                        max_tokens,
                     )
                 )
             reduced = "\n\n".join(summaries)
             if len(reduced) >= len(text):
-                raise MinutesGenerationError("长会议摘要未能压缩，请调整模型或 LLM_CHUNK_CHARS 后重试。")
+                raise MinutesGenerationError("长会议摘要未能压缩，请在系统管理中调整长会议分段字符数后重试。")
             text = reduced
-        raise MinutesGenerationError("会议内容过长，请调大 LLM_CHUNK_CHARS 后重试。")
+        raise MinutesGenerationError("会议内容过长，请在系统管理中调大长会议分段字符数后重试。")
 
     async def generate(self, title: str, transcript: str) -> str:
         return await self.generate_with_prompt(title, transcript)
@@ -199,10 +202,10 @@ class OpenAIMinutesGenerator:
 class MinutesService:
     """Run one background generation per meeting, independent of its browser/socket."""
 
-    def __init__(self, store: MeetingStore, models: ModelConfigStore, settings: Settings, generator: MinutesGenerator | None = None, *, events=None) -> None:
+    def __init__(self, store: MeetingStore, models: ModelConfigStore, system_settings: SystemSettingsStore, generator: MinutesGenerator | None = None, *, events=None) -> None:
         self.store = store
         self.models = models
-        self.settings = settings
+        self.system_settings = system_settings
         self.generator = generator
         self.tasks: dict[str, asyncio.Task[None]] = {}
         self._lock = asyncio.Lock()
@@ -224,7 +227,7 @@ class MinutesService:
         temporary = False
         if generator is None or not hasattr(generator, "generate_format_prompt"):
             generator = build_minutes_generator(
-                await asyncio.to_thread(self.models.require, "llm"), self.settings,
+                await asyncio.to_thread(self.models.require, "llm"), self.system_settings,
             )
             temporary = True
         try:
@@ -266,7 +269,7 @@ class MinutesService:
             if meeting_id in self.tasks:
                 return await self.get(meeting_id)
             generator = self.generator or build_minutes_generator(
-                await asyncio.to_thread(self.models.require, "llm"), self.settings,
+                await asyncio.to_thread(self.models.require, "llm"), self.system_settings,
             )
             try:
                 document = await asyncio.to_thread(self.store.transcript(meeting_id).read)
@@ -356,5 +359,5 @@ class MinutesService:
             await close()
 
 
-def build_minutes_generator(config: ModelConfig, settings: Settings) -> MinutesGenerator:
-    return OpenAIMinutesGenerator(config, settings)
+def build_minutes_generator(config: ModelConfig, system_settings: SystemSettingsStore) -> MinutesGenerator:
+    return OpenAIMinutesGenerator(config, system_settings)

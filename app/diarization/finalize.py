@@ -10,25 +10,63 @@ from uuid import uuid4
 
 import numpy as np
 
-from .state import label_segment
+from .state import VOICEPRINT_MATCH_MARGIN, VOICEPRINT_MATCH_THRESHOLD, label_segment
 from ..asr import LANGUAGES
 from ..qwen_streaming import RemoteDecoder
 from ..recordings import read_audio
 from ..transcripts import atomic_json
 
+# shortcut: 1000 ms adjacency, calibrate against labeled pause and speaker-switch data.
+ADJACENT_SPEAKER_GAP_MS = 1000
+
+
+def _unit_vector(value):
+    vector = np.asarray(value, dtype=np.float32)
+    return vector / max(float(np.linalg.norm(vector)), 1e-8)
+
+
+def _global_center_identities(vectors, speakers):
+    """Assign registered identities to global centers with one-to-one rejection."""
+    registered = [
+        (key, _unit_vector(speaker["embedding"]))
+        for key, speaker in speakers.items()
+        if speaker.get("registered") and speaker.get("embedding")
+    ]
+    proposals = []
+    for index, vector in enumerate(vectors):
+        scored = sorted(
+            ((float(vector @ embedding), key) for key, embedding in registered),
+            reverse=True,
+        )
+        if not scored or scored[0][0] < VOICEPRINT_MATCH_THRESHOLD:
+            continue
+        if len(scored) > 1 and scored[0][0] - scored[1][0] < VOICEPRINT_MATCH_MARGIN:
+            continue
+        proposals.append((scored[0][0], index, scored[0][1]))
+    identities = [None] * len(vectors)
+    used_speakers = set()
+    for _, index, speaker_id in sorted(proposals, reverse=True):
+        if speaker_id in used_speakers:
+            continue
+        identities[index] = speaker_id
+        used_speakers.add(speaker_id)
+    return identities
+
 
 def global_timeline(directory, centers, state):
     """Stream the feature journal; only keep the revisable rolling tail in memory."""
-    vectors = [np.asarray(c) for c in centers]
-    names, identities, used = dict(state.names), [], set()
-    for vector in vectors:
-        candidates = sorted(((float(np.asarray(s["embedding"]) @ vector), key)
-                             for key, s in state.value["speakers"].items() if key not in used), reverse=True)
-        identity = candidates[0][1] if candidates and candidates[0][0] >= .5 else uuid4().hex
-        if identity not in names:
-            names[identity] = {"name": f"说话人 {len(names) + 1}"}
-        identities.append(identity)
-        used.add(identity)
+    vectors = [_unit_vector(center) for center in centers]
+    identities = _global_center_identities(vectors, state.value["speakers"])
+    names = dict(state.names)
+    anonymous_count = sum(
+        not speaker.get("registered") for speaker in state.value["speakers"].values()
+    )
+    stable_ids = {
+        track["speaker_id"] for track in state.value.get("tracks", {}).values()
+        if track.get("status") == "stable" and track.get("speaker_id")
+        and not state.value["speakers"].get(track["speaker_id"], {}).get("registered")
+    }
+    identities = [identity or uuid4().hex for identity in identities]
     path = directory / "speaker-timeline.jsonl"
     temporary = path.with_suffix(".tmp")
     pending, aliases = [], {}
@@ -47,25 +85,42 @@ def global_timeline(directory, centers, state):
                 mapping, assigned = {}, set()
                 for local in sorted(entry["evidence"], key=lambda e: -e["clean_ms"]):
                     identity = None
+                    online_identity = local.get("speaker_id")
+                    online_speaker = state.value["speakers"].get(online_identity) if online_identity else None
                     if local.get("embedding") and local["clean_ms"] >= 350:
-                        vector = np.asarray(local["embedding"])
-                        scored = sorted(((float(center @ vector), index) for index, center in enumerate(vectors)
-                                         if identities[index] not in assigned), reverse=True)
-                        if scored and scored[0][0] >= .5 and (len(scored) == 1 or scored[0][0] - scored[1][0] >= .08):
+                        vector = _unit_vector(local["embedding"])
+                        scored = sorted(
+                            ((float(center @ vector), index) for index, center in enumerate(vectors)
+                             if identities[index] not in assigned),
+                            reverse=True,
+                        )
+                        if scored and scored[0][0] >= VOICEPRINT_MATCH_THRESHOLD and (
+                                len(scored) == 1 or scored[0][0] - scored[1][0] >= VOICEPRINT_MATCH_MARGIN):
                             identity = identities[scored[0][1]]
-                    # Keep reliable online distinctions if global evidence is ambiguous.
-                    if identity is None and local.get("speaker_id") not in assigned:
-                        identity = local.get("speaker_id")
+                    if identity is None and online_identity in stable_ids and online_identity not in assigned:
+                        identity = online_identity
+                    # Registered online matches never bypass global center validation.
+                    if identity is None and online_speaker and not online_speaker.get("registered") \
+                            and online_identity not in assigned and local.get("clean_ms", 0) >= 350:
+                        identity = online_identity
                     if identity:
+                        if identity not in names:
+                            speaker = state.value["speakers"].get(identity)
+                            if speaker and speaker.get("registered"):
+                                names[identity] = {"name": speaker["name"]}
+                            else:
+                                anonymous_count += 1
+                                names[identity] = {"name": f"说话人 {anonymous_count}"}
                         assigned.add(identity)
-                        if local.get("speaker_id"):
-                            aliases.setdefault(local["speaker_id"], set()).add(identity)
+                        if online_identity:
+                            aliases.setdefault(online_identity, set()).add(identity)
                     mapping[local["local_id"]] = identity
                 for turn in entry["turns"]:
                     ids = [mapping.get(i) for i in turn["local_ids"]]
+                    speaker_ids = list(dict.fromkeys(i for i in ids if i))
                     pending.append({"start_ms": turn["start_ms"], "end_ms": turn["end_ms"],
-                        "speaker_ids": list(dict.fromkeys(i for i in ids if i)),
-                        "overlap": len(ids) > 1, "unknown": any(i is None for i in ids)})
+                        "speaker_ids": speaker_ids,
+                        "overlap": len(speaker_ids) > 1, "unknown": any(i is None for i in ids)})
         for turn in pending:
             write(turn)
         output.flush()
@@ -77,8 +132,57 @@ def global_timeline(directory, centers, state):
     return names
 
 
+def _stable_segment_identity(segment):
+    if segment.get("speaker_status") != "assigned":
+        return None
+    speaker_ids = list(dict.fromkeys(segment.get("speaker_ids", ())))
+    return speaker_ids[0] if len(speaker_ids) == 1 else None
+
+
+def _has_reliable_second_identity(segment):
+    if len(set(segment.get("speaker_ids", ()))) > 1:
+        return True
+    return any(
+        turn.get("overlap") or len(set(turn.get("speaker_ids", ()))) > 1
+        for turn in segment.get("speaker_turns", ())
+    )
+
+
+def _inherit_adjacent_identities(segments):
+    stable = [_stable_segment_identity(segment) for segment in segments]
+    updated = list(segments)
+    for index, segment in enumerate(segments):
+        if segment.get("speaker_status") != "unknown" or _has_reliable_second_identity(segment):
+            continue
+        candidates = []
+        if index:
+            previous = segments[index - 1]
+            if stable[index - 1] and 0 <= segment["start_ms"] - previous["end_ms"] <= ADJACENT_SPEAKER_GAP_MS:
+                candidates.append(stable[index - 1])
+        if index + 1 < len(segments):
+            following = segments[index + 1]
+            if stable[index + 1] and 0 <= following["start_ms"] - segment["end_ms"] <= ADJACENT_SPEAKER_GAP_MS:
+                candidates.append(stable[index + 1])
+        if not candidates or len(set(candidates)) != 1:
+            continue
+        identity = candidates[0]
+        existing = set(segment.get("speaker_ids", ()))
+        if existing and existing != {identity}:
+            continue
+        turns = segment.get("speaker_turns") or [{
+            "start_ms": segment["start_ms"], "end_ms": segment["end_ms"],
+        }]
+        updated[index] = {**segment, "speaker_ids": [identity], "speaker_status": "assigned",
+                          "speaker_turns": [
+                              {**turn, "speaker_ids": [identity], "unknown": False, "overlap": False}
+                              for turn in turns
+                          ]}
+    return updated
+
+
 def label_document(directory, document, processed_ms):
     # One chronological pass; no full-meeting pairwise matrix or audio buffer.
+    labeled = []
     with (directory / "speaker-timeline.jsonl").open() as source:
         cursor, relevant = None, []
         for segment in document["segments"]:
@@ -92,7 +196,8 @@ def label_document(directory, document, processed_ms):
                 if cursor["end_ms"] > segment["start_ms"]:
                     relevant.append(cursor)
                 cursor = None
-            yield label_segment(segment, relevant, processed_ms)
+            labeled.append(label_segment(segment, relevant, processed_ms))
+    yield from _inherit_adjacent_identities(labeled)
 
 
 def split_ranges(segment):
@@ -116,8 +221,9 @@ def split_ranges(segment):
 
 
 class SegmentCorrector:
-    def __init__(self, directory, models, settings, language, decoder_factory=None):
-        self.directory, self.models, self.settings, self.language = directory, models, settings, language
+    def __init__(self, directory, models, settings, system_settings, language, decoder_factory=None):
+        self.directory, self.models, self.settings = directory, models, settings
+        self.system_settings, self.language = system_settings, language
         self.decoder_factory = decoder_factory
         self.decoder = None
         self.cache_path = directory / "speaker-corrections.json"
@@ -135,7 +241,7 @@ class SegmentCorrector:
         if self.decoder is None:
             self.decoder = self.decoder_factory(config) if self.decoder_factory else RemoteDecoder(
                 config,
-                send_chat_template=self.settings.asr_send_chat_template,
+                use_request_chat_template=self.system_settings.get()["asr_use_request_chat_template"],
                 window_seconds=self.settings.asr_window_seconds,
                 stride_seconds=self.settings.asr_stride_seconds,
             )

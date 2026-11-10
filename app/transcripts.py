@@ -42,7 +42,16 @@ def plain_text(document, *, labels=False):
             names = [document["speakers"].get(s, {}).get("name", "未知说话人")
                      for s in segment.get("speaker_ids", [])]
             status = segment.get("speaker_status")
-            name = "说话人待确认" if status in {"unknown", "pending"} else "、".join(names)
+            unresolved = any(turn.get("unknown") for turn in segment.get("speaker_turns", ()))
+            if status in {"unknown", "pending"}:
+                name = "说话人待确认"
+            elif status == "multiple":
+                name = "、".join(names)
+                if unresolved:
+                    name = f"{name}、说话人待确认" if name else "说话人待确认"
+                name = name or "多位说话人"
+            else:
+                name = "、".join(names)
             if status == "overlap":
                 name = "重叠讲话：" + (name or "说话人待确认")
             text = f"[{name}] {text}"

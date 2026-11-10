@@ -28,6 +28,9 @@ checks/*
 !checks/test_audio_imports.py
 !checks/test_audio_export.py
 !checks/test_recording_timing.py
+!checks/test_diarization_phase1.py
+!checks/fixtures/
+!checks/fixtures/voiceprint_diarization_phase1.json
 
 models
 wav_files

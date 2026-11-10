@@ -36,8 +36,8 @@ async def _disk(function, *args, **kwargs):
 
 
 class AudioImportService:
-    def __init__(self, store, models, settings, diarization, minutes, decoder_factory=None, stage_summaries=None):
-        self.store, self.models, self.settings = store, models, settings
+    def __init__(self, store, models, settings, system_settings, diarization, minutes, decoder_factory=None, stage_summaries=None):
+        self.store, self.models, self.settings, self.system_settings = store, models, settings, system_settings
         self.diarization, self.minutes = diarization, minutes
         self.stage_summaries = stage_summaries
         self.decoder_factory = decoder_factory
@@ -156,10 +156,15 @@ class AudioImportService:
         upload_id = uuid4().hex
         directory = uploads / f"chunked-{upload_id}"
         directory.mkdir()
+        filename = "、".join(item["filename"] for item in normalized)
+        meeting = await _disk(
+            self.store.create, title, language, None, minutes_format_id, key_speaker_ids,
+            filename=filename, user_id=user_id, import_pending=True,
+        )
         meta = {
             "upload_id": upload_id, "title": title.strip(), "language": language,
             "files": normalized, "user_id": user_id, "minutes_format_id": minutes_format_id,
-            "key_speaker_ids": key_speaker_ids or [],
+            "key_speaker_ids": key_speaker_ids or [], "meeting_id": meeting["id"],
         }
         (directory / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
         result = {"upload_id": upload_id, "files": [
@@ -170,6 +175,7 @@ class AudioImportService:
             item = normalized[0]
             result.update({key: item[key] for key in ("filename", "file_size", "chunk_size", "total_chunks")})
             result["received"] = []
+        result["meeting"] = meeting
         return result
 
     async def upload_chunk(self, upload_id, file_index, index, stream, digest, user_id=None):
@@ -254,19 +260,35 @@ class AudioImportService:
                 (directory / "metadata.json").unlink(missing_ok=True)
                 return await self._publish(directory, meta["title"], meta["language"], None,
                                            "、".join(item["filename"] for item in files), user_id,
-                                           meta.get("minutes_format_id"), meta.get("key_speaker_ids", []))
-            except BaseException:
+                                           meta.get("minutes_format_id"), meta.get("key_speaker_ids", []),
+                                           meta.get("meeting_id"))
+            except BaseException as exc:
+                if meta.get("meeting_id"):
+                    await _disk(self._update, meta["meeting_id"], status="failed", stage="initializing",
+                                error=str(exc) if isinstance(exc, MeetingError) else "音频上传初始化失败")
                 if directory.exists():
                     shutil.rmtree(directory, ignore_errors=True)
                 raise
 
     async def _publish(self, directory, title, language, department_id, filename, user_id=None,
-                       minutes_format_id=None, key_speaker_ids=None):
+                       minutes_format_id=None, key_speaker_ids=None, meeting_id=None):
         async with self.lock:
-            meeting = await _disk(self.store.create, title, language, department_id, minutes_format_id,
-                                  key_speaker_ids, imported_audio=directory, filename=filename, user_id=user_id)
+            if meeting_id:
+                meeting = await _disk(self.store.attach_import, meeting_id, directory, filename, user_id)
+                shutil.rmtree(directory, ignore_errors=True)
+            else:
+                meeting = await _disk(self.store.create, title, language, department_id, minutes_format_id,
+                                      key_speaker_ids, imported_audio=directory, filename=filename, user_id=user_id)
             self._schedule(meeting["id"])
             return meeting
+
+    async def fail_chunked(self, upload_id, user_id=None, error="音频上传失败，请重新导入"):
+        directory, meta = self._read_chunk_meta(upload_id, user_id)
+        meeting_id = meta.get("meeting_id")
+        if meeting_id:
+            await _disk(self._update, meeting_id, status="failed", stage="initializing", error=error[:500])
+        shutil.rmtree(directory, ignore_errors=True)
+        return {"meeting_id": meeting_id, "status": "failed"}
 
     async def _decode(self, directory, source_name="source.wav", continue_capture=False):
         archive = await _disk(AudioArchive, directory)
@@ -321,7 +343,9 @@ class AudioImportService:
             db.execute("""UPDATE meeting_imports SET status = 'failed', error = '导入多次中断，请重试处理'
                 WHERE status IN ('queued', 'running') AND attempts >= 3""")
             db.execute("UPDATE meeting_imports SET status = 'queued' WHERE status = 'running'")
-            return [row[0] for row in db.execute("SELECT meeting_id FROM meeting_imports WHERE status = 'queued'")]
+            return [row[0] for row in db.execute(
+                "SELECT meeting_id FROM meeting_imports WHERE status = 'queued' AND stage != 'initializing'"
+            )]
 
     async def start(self):
         for meeting_id in await _disk(self._recover):
@@ -358,7 +382,7 @@ class AudioImportService:
         meeting = await _disk(self.store.get, meeting_id)
         config = replace(await _disk(self.models.require, "asr"), tokenizer=self.settings.asr_tokenizer)
         decoder = self.decoder_factory(config) if self.decoder_factory else RemoteDecoder(
-            config, send_chat_template=self.settings.asr_send_chat_template,
+            config, use_request_chat_template=self.system_settings.get()["asr_use_request_chat_template"],
             window_seconds=self.settings.asr_window_seconds, stride_seconds=self.settings.asr_stride_seconds)
         try:
             await decoder.prepare()

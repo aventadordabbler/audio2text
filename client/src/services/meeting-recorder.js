@@ -404,6 +404,7 @@ export class MeetingRecorder {
           if (this.meeting.status === "ended") void this.syncMinutes();
         } else if (payload.type === "transcript.update" || payload.type === "processing" || payload.type === "final") {
           await this.applyEvent(payload, socket);
+          if (payload.type === "final") this.onPreview?.("", { segment_id: payload.segment_id });
         } else if (payload.type === "minutes") {
           this.minutesVersion++;
           this.emitEvent(payload);
@@ -424,7 +425,12 @@ export class MeetingRecorder {
           }
         } else if (payload.type === "partial") {
           if (payload.segment_id !== this.nextSegment) return;
-          this.onPreview?.(payload.text || "");
+          this.onPreview?.(payload.text || "", {
+            segment_id: payload.segment_id,
+            window_id: payload.window_id,
+            start_ms: payload.start_ms,
+            end_ms: payload.end_ms,
+          });
         } else if (payload.type === "no_speech") {
           this.emitEvent({
             type: "status",

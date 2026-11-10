@@ -59,6 +59,20 @@ function speakerProcessingTone(status: string) {
   return "neutral"
 }
 
+function transcriptSpeakerLabel(
+  segment: { speaker_status: string; speaker_ids: string[]; speaker_turns?: { unknown?: boolean }[] },
+  speakers: Record<string, { name: string }>,
+) {
+  if (["unknown", "pending"].includes(segment.speaker_status)) return "说话人待确认"
+  const names = segment.speaker_ids.map((id) => speakers[id]?.name || "未知说话人")
+  const unresolved = segment.speaker_turns?.some((turn) => turn.unknown) ?? false
+  let label = names.join("、")
+  if (segment.speaker_status === "multiple" && unresolved) label += `${label ? "、" : ""}说话人待确认`
+  if (segment.speaker_status === "multiple") return label || "多位说话人"
+  if (segment.speaker_status === "overlap") return `多人同时讲话${label ? `：${label}` : ""}`
+  return label || "说话人待确认"
+}
+
 export function MeetingDetail({
   session,
   onError,
@@ -68,7 +82,7 @@ export function MeetingDetail({
   session: RecordingSession
   onError: (error: string) => void
   modelsVersion: number
-  onConfigure: () => void
+  onConfigure?: () => void
 }) {
   const state = useSyncExternalStore(session.subscribe, session.getSnapshot)
   const meeting = state.meeting!
@@ -95,7 +109,6 @@ export function MeetingDetail({
   const importJob = meeting.import_job
   const importBusy = ["queued", "running"].includes(importJob?.status || "")
   const recording = status === "recording" && state.localRecording && !state.finishing
-  const followLiveText = autoScroll && state.liveVersion > 0
   const textLength = Array.from(meeting.text).length
   const seconds =
     meeting.duration_seconds +
@@ -174,10 +187,10 @@ export function MeetingDetail({
   }
 
   useEffect(() => {
-    if (!autoScroll || !following.current || state.liveVersion === 0) return
+    if (!autoScroll || activeTab !== "transcript" || !following.current) return
     const frame = requestAnimationFrame(scrollToBottom)
     return () => cancelAnimationFrame(frame)
-  }, [meeting.text, state.partialText, state.liveVersion, autoScroll])
+  }, [meeting.text, meeting.segments, state.partialSegments, state.liveVersion, autoScroll, activeTab])
 
   useEffect(() => {
     const viewport = scrollRoot.current?.querySelector("[data-slot='scroll-area-viewport']")
@@ -188,10 +201,12 @@ export function MeetingDetail({
       setShowLatest(!atLatest)
     }
     viewport.addEventListener("scroll", track, { passive: true })
-    const observer = new ResizeObserver(() => { if (autoScroll && following.current && followLiveText) scrollToBottom() })
+    const observer = new ResizeObserver(() => {
+      if (autoScroll && activeTab === "transcript" && following.current) scrollToBottom()
+    })
     observer.observe(viewport)
     return () => { observer.disconnect(); viewport.removeEventListener("scroll", track) }
-  }, [followLiveText, autoScroll])
+  }, [activeTab, autoScroll])
 
   async function copyText() {
     try {
@@ -275,7 +290,7 @@ export function MeetingDetail({
           <p>{importBusy && <LoaderCircle className="size-4 animate-spin" />}{importStatusLabel(importJob)}</p>
           {importBusy && importJob?.stage === "transcribing" && <progress aria-label="音频转写进度" max={importJob.total_samples || 1} value={importJob.processed_samples} />}
           {importJob?.error && <p role="alert">{importJob.error}</p>}
-          {importJob?.status === "failed" && <Button variant="outline" disabled={state.busy} onClick={() => void session.retryImport()}>重试处理</Button>}
+          {importJob?.status === "failed" && importJob.stage !== "initializing" && <Button variant="outline" disabled={state.busy} onClick={() => void session.retryImport()}>重试处理</Button>}
           {importBusy && <small>可离开页面，后台会继续处理。</small>}
         </div>
       </Card>
@@ -460,22 +475,31 @@ export function MeetingDetail({
               <ScrollArea ref={scrollRoot} className="transcript-scroll">
                 <article
                   id="transcript"
-                  className={meeting.text || state.partialText ? "transcript-text" : "transcript-empty"}
+                  className={meeting.text || state.partialSegments.length ? "transcript-text" : "transcript-empty"}
                   aria-label="会议转写文本"
                   tabIndex={0}
                 >
-                  {meeting.text || state.partialText ? (
+                  {meeting.text || state.partialSegments.length ? (
                     <>
                       {meeting.segments?.length ? meeting.segments.map((segment) => (
                         <section className="transcript-segment" key={segment.segment_id} data-segment-id={segment.segment_id} data-start-ms={segment.start_ms}>
                           <div className="transcript-segment-meta">
-                            <span>{segment.speaker_status === "overlap" ? "多人同时讲话" : segment.speaker_status === "multiple" ? "多位说话人" : ["unknown", "pending"].includes(segment.speaker_status) ? "说话人待确认" : segment.speaker_ids.map((id) => meeting.speakers[id]?.name || "未知说话人").join("、") || "说话人待确认"}</span>
+                            <span>{transcriptSpeakerLabel(segment, meeting.speakers)}</span>
                             <time>{formatDuration(segment.start_ms / 1000)}</time>
                           </div>
                           <p>{segment.text}</p>
                         </section>
                       )) : meeting.text}
-                      <span className="text-muted-foreground transcript-partial" aria-label="正在识别">{state.partialText}</span>
+                      {state.partialSegments.map((partial) => (
+                        <div
+                          className="text-muted-foreground transcript-partial"
+                          key={`${partial.segment_id}:${partial.window_id}`}
+                          data-partial-window={partial.window_id}
+                          aria-label="正在识别"
+                        >
+                          {partial.text}
+                        </div>
+                      ))}
                     </>
                   ) : (
                     <div className="document-empty">

@@ -37,6 +37,7 @@ class SpeechSession:
         self.voiced_ms = 0
         self.silence_ms = 0
         self.last_text = ""
+        self.last_window = None
         self.continuing = False
         self._new_resampler()
 
@@ -86,6 +87,7 @@ class SpeechSession:
             self.state = self.engine.new_state(self.language, self.options.chunk_seconds)
             self.start = self.position - len(lead)
             self.segment_samples = 0
+            self.last_window = None
             self.silence_ms = 0
             frame = lead
         self.silence_ms = 0 if voiced else self.silence_ms + duration_ms
@@ -97,7 +99,14 @@ class SpeechSession:
             text = await self._push()
             if text != self.last_text:
                 self.last_text = text
-                events.append({"type": "partial", "segment_id": self.segment_id, "text": text})
+                window = self.last_window or {}
+                start_ms = window.get("start_ms", round(self.start / 16))
+                end_ms = window.get("end_ms", round(self.position / 16))
+                events.append({
+                    "type": "partial", "segment_id": self.segment_id, "text": text,
+                    "window_id": window.get("window_id") or f"{start_ms}:{end_ms}",
+                    "start_ms": start_ms, "end_ms": end_ms,
+                })
         at_limit = self.segment_samples >= self.options.max_utterance_seconds * self.sample_rate
         if self.silence_ms >= self.options.end_silence_ms or at_limit:
             events.append(await self._finish())
@@ -109,7 +118,11 @@ class SpeechSession:
         audio = np.concatenate(self.pending)
         self.pending.clear()
         self.pending_count = 0
-        return (await self.engine.feed(audio, self.state)).strip()
+        text = (await self.engine.feed(audio, self.state)).strip()
+        window = getattr(self.state, "last_window", None)
+        if window is not None:
+            self.last_window = window
+        return text
 
     async def _finish(self):
         if self.pending_count:
@@ -119,6 +132,7 @@ class SpeechSession:
                  "start_ms": round(self.start / 16), "end_ms": round(self.position / 16)}
         self.segment_id += 1
         self.state = None
+        self.last_window = None
         self.history.clear()
         self.voiced_ms = self.silence_ms = 0
         self.last_text = ""

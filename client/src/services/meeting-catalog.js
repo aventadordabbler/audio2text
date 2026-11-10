@@ -84,6 +84,7 @@ export function importStatusLabel(job) {
   if (!job) return "";
   if (job.status === "ready") return "导入处理完成";
   if (job.status === "failed") return "导入处理失败";
+  if (job.stage === "initializing") return "正在初始化";
   if (job.status === "queued") return "等待处理音频";
   return { transcribing: "正在转写音频", diarizing: "正在校正说话人", summarizing: "正在生成会议纪要" }[job.stage] || "正在处理音频";
 }

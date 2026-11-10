@@ -2527,8 +2527,8 @@ button:disabled {
   text-align: center;
 }
 .management-table .meeting-title-button {
-  justify-content: flex-start;
-  text-align: left;
+  justify-content: center;
+  text-align: center;
 }
 .management-table .department-name {
   justify-content: center;
@@ -2582,8 +2582,61 @@ button:disabled {
   font: inherit;
   line-height: 1.6;
 }
+.system-settings-card {
+  padding: 24px;
+}
+.system-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+.system-settings-grid .form-field {
+  display: grid;
+  gap: 7px;
+}
+.system-settings-grid small {
+  color: #8c8c8c;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.system-settings-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0;
+  border-top: 1px solid #eee;
+}
+.system-settings-toggle > span {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.system-settings-toggle strong {
+  color: #525252;
+  font-size: 12px;
+  font-weight: 500;
+}
+.system-settings-toggle small {
+  color: #8c8c8c;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.system-settings-actions {
+  justify-content: flex-end;
+}
+.management-success {
+  color: #357a4a;
+  font-size: 12px;
+}
+@media (max-width: 720px) {
+  .system-settings-grid {
+    grid-template-columns: 1fr;
+  }
+}
 .management-dialog {
   max-height: calc(100vh - 60px);
+  overflow-x: hidden;
   overflow-y: auto;
 }
 .minutes-format-table {
@@ -2688,6 +2741,43 @@ button:disabled {
   }
 }
 
+.meeting-management-table {
+  overflow-x: hidden;
+}
+.meeting-management-table [data-slot="table-container"] {
+  overflow-x: hidden;
+}
+.meeting-management-table table {
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+}
+.meeting-management-table th:nth-child(1) { width: 27%; }
+.meeting-management-table th:nth-child(2) { width: 15%; }
+.meeting-management-table th:nth-child(3) { width: 13%; }
+.meeting-management-table th:nth-child(4) { width: 17%; }
+.meeting-management-table th:nth-child(5) { width: 11%; }
+.meeting-management-table th:nth-child(6) { width: 10%; }
+.meeting-management-table th:nth-child(7),
+.meeting-management-table .operation-column {
+  width: 7%;
+  min-width: 48px;
+  padding-left: 4px;
+  padding-right: 4px;
+  text-align: center;
+}
+.meeting-management-table .operation-column [data-slot="button"] {
+  margin: 0 auto;
+}
+.meeting-management-table .department-name,
+.meeting-management-table .table-cell-value {
+  min-width: 0;
+  max-width: 100%;
+}
+.meeting-management-table .table-cell-value.inline-flex {
+  max-width: 100%;
+}
+
 /* Imported meetings show file processing in the existing control card. */
 .import-progress {
   grid-area: controls;
@@ -2733,9 +2823,17 @@ button:disabled {
 
 .meeting-workspace--import { grid-template-columns: minmax(0, 1fr); }
 
+.system-settings-slogan { display: grid; gap: 7px; }
+.system-settings-slogan > span { color: #525252; font-size: 12px; font-weight: 500; }
+.system-settings-slogan small { color: #8c8c8c; font-size: 11px; line-height: 1.5; }
 .voiceprint-grid { display: grid; grid-template-columns: minmax(280px, .85fr) minmax(320px, 1.15fr); gap: 16px; max-width: 980px; }
 .voiceprint-form { display: grid; gap: 12px; }
 .voiceprint-source-tabs { display: flex; gap: 6px; }
+.voiceprint-source-selected { background: #e5e5e5; border-color: #d4d4d4; color: #262626; }
+.voiceprint-recording-area { display: grid; gap: 12px; }
+.voiceprint-sample { padding: 11px 13px; border: 1px solid #e5e5e5; border-radius: 8px; background: #fafafa; color: #737373; font-size: 12px; line-height: 1.7; }
+.voiceprint-sample span { display: block; margin-bottom: 3px; font-size: 11px; }
+.voiceprint-sample p { margin: 0; color: #262626; }
 .voiceprint-recorder { display: flex; align-items: center; gap: 10px; min-height: 36px; color: #737373; }
 .voiceprint-recorder span, .voiceprint-file { margin: 0; color: #737373; font-size: 12px; overflow-wrap: anywhere; }
 .voiceprint-list { display: grid; gap: 2px; }
@@ -2800,7 +2898,9 @@ button:disabled {
   font-size: 12px;
   line-height: 1.8;
 }
-.voiceprint-person { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.voiceprint-table-card [data-slot="table-cell"]:first-child { text-align: center; }
+.voiceprint-table-card [data-slot="table-head"]:first-child { text-align: center; }
+.voiceprint-person { display: flex; align-items: center; justify-content: center; gap: 8px; min-width: 0; }
 .voiceprint-person strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .voiceprint-upload-button { display: inline-flex; align-items: center; gap: 7px; width: fit-content; min-height: 36px; padding: 8px 13px; border: 1px solid #e5e5e5; border-radius: 6px; background: #fff; color: #404040; font-size: 12px; cursor: pointer; }
 .voiceprint-upload-button:hover { background: #fafafa; border-color: #a3a3a3; }

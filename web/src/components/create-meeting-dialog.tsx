@@ -66,7 +66,7 @@ export function CreateMeetingDialog({
     setSubmitting(true)
     setError("")
     try {
-      const meeting = source === "wav"
+      const result = source === "wav"
         ? await importWav(files, title.trim(), language, minutesFormatId, (completed, total) => setUploadProgress({ completed, total }), keySpeakerIds)
         : await api<Meeting>("/api/meetings", {
         method: "POST",
@@ -78,8 +78,10 @@ export function CreateMeetingDialog({
           key_speaker_ids: keySpeakerIds,
         }),
       })
+      const meeting = "meeting" in result ? result.meeting : result
       onCreated(meeting)
       onOpenChange(false)
+      if ("upload" in result) void result.upload.catch(() => {})
     } catch (error) {
       setError(errorMessage(error))
     } finally {
@@ -227,7 +229,7 @@ export function CreateMeetingDialog({
             )}
             <div className="mt-6 flex items-start gap-2.5 rounded-lg bg-muted/60 px-3.5 py-3 text-xs leading-5 text-muted-foreground">
               <Mic className="mt-0.5 size-3.5 shrink-0" />
-              <p>{source === "wav" ? "上传后自动转写、标注说话人并生成纪要，时长按音频计算。上传完成后可离开页面。" : "创建后进入会议，点击「开始录音」才会开启麦克风。"}</p>
+              <p>{source === "wav" ? "创建后会在后台上传、转写、标注说话人并生成纪要，可直接离开此页面。" : "创建后进入会议，点击「开始录音」才会开启麦克风。"}</p>
             </div>
           </div>
           <DialogFooter className="m-0 border-t bg-muted/30 px-7 py-5 sm:justify-between">

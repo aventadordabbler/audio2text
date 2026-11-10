@@ -77,7 +77,7 @@ ASR 配置在页面“模型配置”中保存，包括 API 地址、模型名�
 
 两种模式都不会提交不断增长的整段会议音频。默认窗口为 5 秒、步长为 2 秒，模型单次请求大小受到窗口上限约束。窗口和步长由 `ASR_WINDOW_SECONDS`、`ASR_STRIDE_SECONDS` 控制。
 
-Qwen 前缀续写要求服务支持 `input_audio`、assistant 前缀、`continue_final_message=true` 和 `add_generation_prompt=false`。仅支持普通 OpenAI 兼容接口的服务应选择 `transcription` 模式。`ASR_SEND_CHAT_TEMPLATE=true` 时，应用会随请求发送内置模板；对应的 vLLM 服务必须允许请求级模板。
+Qwen 前缀续写要求服务支持 `input_audio`、assistant 前缀、`continue_final_message=true` 和 `add_generation_prompt=false`。仅支持普通 OpenAI 兼容接口的服务应选择 `transcription` 模式。管理员可在“系统管理”中开启请求级模板；开启后应用会随请求发送内置模板，对应的 vLLM 服务必须允许请求级模板。
 
 应用进程不加载 Qwen 权重，也不依赖 `qwen_asr`。Qwen 权重由 vLLM 或其他 OpenAI 兼容 ASR 服务加载。Qwen 前缀回退需要本地 tokenizer 文件，但 tokenizer 只用于文本 token 边界处理，不是模型权重。
 
@@ -87,9 +87,9 @@ Qwen 前缀续写要求服务支持 `input_audio`、assistant 前缀、`continue
 
 ### 纪要模型
 
-纪要使用独立的大语言模型配置，通过 `/chat/completions` 调用。长会议先按 `LLM_CHUNK_CHARS` 分段提取要点，再合并生成包含结论、决策、待办、风险和下一步安排的 Markdown 纪要。
+纪要使用独立的大语言模型配置，通过 `/chat/completions` 调用。长会议按“系统管理”中保存的分段字符数先提取要点，再合并生成包含结论、决策、待办、风险和下一步安排的 Markdown 纪要。
 
-阶段总结复用同一个大语言模型配置，但任务和连接均与录音链路隔离。默认每 300 秒实际归档录音形成一个窗口；窗口只读取已经定稿的文字，暂停或结束时会封口不足一个完整窗口的尾段。窗口长度和单次最大输出分别由 `STAGE_SUMMARY_WINDOW_SECONDS`、`STAGE_SUMMARY_MAX_TOKENS` 控制。
+阶段总结复用同一个大语言模型配置，但任务和连接均与录音链路隔离。窗口只读取已经定稿的文字，暂停或结束时会封口不足一个完整窗口的尾段。窗口长度和单次最大输出由管理员在“系统管理”中保存。
 
 ## 实时处理设计
 
@@ -194,7 +194,7 @@ docker compose --profile gpu up -d vllm
 docker compose --profile gpu --profile app up -d --build
 ```
 
-使用 Qwen 前缀续写时，将 `ASR_SEND_CHAT_TEMPLATE=true`，并确保 vLLM 启动参数允许 `--trust-request-chat-template`。如果服务模板已经支持 assistant 前缀，也可以保持该开关为 `false`。
+使用 Qwen 前缀续写时，在“系统管理”中按 ASR 服务能力设置“请求级 Qwen Chat Template”，并确保需要该模板的 vLLM 服务启动参数允许 `--trust-request-chat-template`。
 
 ### 方案 C：宿主机开发运行
 
@@ -235,9 +235,7 @@ Windows 标准版（Electron 35.7.5）安装包和便携版使用 `npm run dist:
 | --- | --- | --- |
 | `DATA_DIR` | `data/archives` | 会议数据库和文件归档目录 |
 | `DATABASE_PATH` | 数据目录下的 `meetings.sqlite3` | 可选的 SQLite 路径 |
-| `SLOGAN` | 空 | Web 和 Client 顶部显示的系统标语 |
 | `ASR_TOKENIZER` | `data/tokenizers/qwen` | Qwen 前缀回退所需的本地 tokenizer |
-| `ASR_SEND_CHAT_TEMPLATE` | `false` | 是否发送内置 Qwen chat template |
 | `ASR_WINDOW_SECONDS` | `5` | ASR 固定窗口长度 |
 | `ASR_STRIDE_SECONDS` | `2` | ASR 窗口推进步长 |
 | `DIARIZATION_MODEL_DIR` | `models/diarization` | CAM++、FSMN-VAD 权重目录 |
@@ -248,10 +246,17 @@ Windows 标准版（Electron 35.7.5）安装包和便携版使用 `npm run dist:
 | `AUDIO_IMPORT_MAX_SECONDS` | `28800` | 导入音频时长上限（8 小时） |
 | `AUDIO_IMPORT_WORKERS` | `1` | 同时处理的导入任务数 |
 | `AUDIO_IMPORT_DECODE_TIMEOUT_SECONDS` | `600` | 上传后音频校验和归档的超时秒数 |
-| `LLM_MAX_TOKENS` | `16384` | 纪要模型最大输出 token |
-| `LLM_CHUNK_CHARS` | `12000` | 长会议纪要分段字符数 |
-| `STAGE_SUMMARY_WINDOW_SECONDS` | `300` | 阶段总结的归档录音窗口长度 |
-| `STAGE_SUMMARY_MAX_TOKENS` | `1200` | 单个阶段总结最大输出 token |
+
+以下设置由管理员在“系统管理”页面维护，不再通过环境变量配置：
+
+| 设置项 | 默认值 | 用途 |
+| --- | --- | --- |
+| 系统管理：请求级 Qwen Chat Template | 关闭 | 是否发送应用内置的 ASR 请求模板 |
+| 系统管理：系统标语 | 空 | Web 和 Client 顶部显示的系统标语 |
+| 系统管理：LLM 最大输出 Token | `16384` | 纪要和长文本压缩的输出上限 |
+| 系统管理：长会议分段字符数 | `12000` | 长会议纪要的预处理分段大小 |
+| 系统管理：阶段总结窗口 | `120` 秒 | 阶段总结的归档录音窗口长度 |
+| 系统管理：阶段总结最大输出 Token | `1200` | 单个阶段总结最大输出 token |
 
 Compose 会将 `data/`、说话人模型目录和 tokenizer 目录挂载到应用容器。模型文件缺失时应用直接报告未就绪，不尝试联网下载。
 

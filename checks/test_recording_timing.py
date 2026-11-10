@@ -2,9 +2,11 @@ import asyncio
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from app.asr import StreamingTranscriber
-from app.meetings import MeetingStore
+from app.audio import SpeechSession, StreamOptions
+from app.meetings import MeetingError, MeetingStore
 from app.model_configs import ModelConfig
 from app.qwen_streaming import RemoteDecoder
 from app.recordings import AudioArchive
@@ -19,6 +21,24 @@ def test_meeting_duration_uses_archived_audio_samples(tmp_path):
     archive.end()
 
     assert store.get(meeting["id"])["duration_seconds"] == 2.0
+
+
+def test_meeting_delete_only_allows_unstarted_or_ended(tmp_path):
+    store = MeetingStore(tmp_path / "meetings.sqlite3")
+    created = store.create("unstarted")
+    store.delete(created["id"])
+    assert store.get(created["id"]) is None
+
+    paused = store.create("paused")
+    store.transition(paused["id"], "start")
+    store.transition(paused["id"], "pause")
+    with pytest.raises(MeetingError, match="只能删除未开始或已结束的会议"):
+        store.delete(paused["id"])
+
+    ended = store.create("ended")
+    store.transition(ended["id"], "end")
+    store.delete(ended["id"])
+    assert store.get(ended["id"]) is None
 
 
 class FakeTranscriptions:
@@ -43,12 +63,55 @@ async def test_decoder_diagnostics_summarize_request_latency():
     await decoder.feed(np.zeros(32000, dtype=np.float32), state)
     await decoder.finish(state)
 
+    assert state.last_window == {
+        "window_id": "0:2000",
+        "start_ms": 0,
+        "end_ms": 2000,
+    }
+
     diagnostics = decoder.diagnostics()
 
     assert diagnostics["request_count"] == 1
     assert diagnostics["last_request_ms"] >= 0
     assert diagnostics["average_request_ms"] >= 0
     assert diagnostics["max_request_ms"] >= diagnostics["last_request_ms"]
+
+
+class WindowMetadataEngine:
+    def new_state(self, _language, _chunk_seconds):
+        return SimpleNamespace(last_window=None, calls=0)
+
+    async def feed(self, audio, state):
+        state.calls += 1
+        state.last_window = {
+            "window_id": f"window-{state.calls}",
+            "start_ms": (state.calls - 1) * 500,
+            "end_ms": state.calls * 500,
+        }
+        return f"partial-{state.calls}"
+
+    async def finish(self, _state):
+        return "final"
+
+
+def test_partial_events_keep_decoder_window_metadata_until_final():
+    session = SpeechSession(
+        WindowMetadataEngine(), "zh",
+        options=StreamOptions(chunk_seconds=0.5, end_silence_ms=600),
+    )
+
+    async def run():
+        events = await session.feed_samples(np.full(16000, 0.2, dtype=np.float32))
+        events.extend(await session.flush())
+        return events
+
+    events = asyncio.run(run())
+    partials = [event for event in events if event["type"] == "partial"]
+    assert [(event["window_id"], event["start_ms"], event["end_ms"]) for event in partials] == [
+        ("window-1", 0, 500),
+        ("window-2", 500, 1000),
+    ]
+    assert events[-1]["type"] == "final"
 
 
 class SlowDecoder:

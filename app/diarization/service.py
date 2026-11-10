@@ -20,9 +20,9 @@ FINAL_TIMEOUT_SECONDS_PER_AUDIO_SECOND = 2
 
 
 class DiarizationService:
-    def __init__(self, store, models, minutes, settings, events, worker_factory=None, stage_summaries=None):
+    def __init__(self, store, models, minutes, settings, events, worker_factory=None, stage_summaries=None, system_settings=None):
         self.store, self.models, self.minutes = store, models, minutes
-        self.settings, self.events = settings, events
+        self.settings, self.events, self.system_settings = settings, events, system_settings
         self.stage_summaries = stage_summaries
         self.workers = [worker_factory() if worker_factory else ModelWorker(settings)
                         for _ in range(settings.diarization_workers)]
@@ -38,6 +38,21 @@ class DiarizationService:
         self.final_slots = asyncio.Semaphore(settings.diarization_workers)
         self.timers = {}
         self.next_run = {}
+
+    def _voiceprint_candidates(self, meeting):
+        configured = {
+            item.get("voiceprint_id") for item in meeting.get("key_speakers", [])
+            if isinstance(item, dict) and item.get("voiceprint_id")
+        }
+        if configured:
+            return [row for row in self.store.list_voiceprints() if row["id"] in configured]
+        if meeting.get("department_id"):
+            scoped = self.store.list_voiceprints(department_id=meeting["department_id"])
+        elif meeting.get("user_id"):
+            scoped = self.store.list_voiceprints(user_id=meeting["user_id"])
+        else:
+            scoped = []
+        return scoped or self.store.list_voiceprints()
 
     async def request(self, payload):
         worker = await self.available_workers.get()
@@ -128,7 +143,9 @@ class DiarizationService:
                 await self._status(meeting_id, "unavailable", error)
                 return
             directory = self.store.directory(meeting_id)
-            state = await asyncio.to_thread(SpeakerState, directory, self.store.list_voiceprints())
+            meeting = await asyncio.to_thread(self.store.get, meeting_id)
+            candidates = await asyncio.to_thread(self._voiceprint_candidates, meeting)
+            state = await asyncio.to_thread(SpeakerState, directory, candidates)
             await self._status(meeting_id, "pending")
             while meeting_id in self.dirty:
                 self.dirty.discard(meeting_id)
@@ -232,7 +249,8 @@ class DiarizationService:
     async def _correct(self, meeting_id):
         directory = self.store.directory(meeting_id)
         meeting = await asyncio.to_thread(self.store.get, meeting_id)
-        state = await asyncio.to_thread(SpeakerState, directory, self.store.list_voiceprints())
+        candidates = await asyncio.to_thread(self._voiceprint_candidates, meeting)
+        state = await asyncio.to_thread(SpeakerState, directory, candidates)
         while payload := await asyncio.to_thread(self._window, directory, state.value["processed"], True):
             result = await self.request(payload)
             await asyncio.to_thread(state.accept, result)
@@ -244,7 +262,7 @@ class DiarizationService:
         result = await self.request({"type": "cluster", "path": str(state.log.resolve())})
         names = await asyncio.to_thread(global_timeline, directory, result["centroids"], state)
         segments = await asyncio.to_thread(lambda: list(label_document(directory, document, state.value["processed"] / 16)))
-        corrector = SegmentCorrector(directory, self.models, self.settings, meeting["language"])
+        corrector = SegmentCorrector(directory, self.models, self.settings, self.system_settings, meeting["language"])
         changed, removed, number = [], [], document["next_segment_id"]
         original = {s["segment_id"]: s for s in document["segments"]}
         try:
