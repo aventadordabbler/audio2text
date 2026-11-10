@@ -6,8 +6,8 @@ module.exports = {
   extends: null,
   electronVersion: "22.3.27",
   appId: "com.quantitative.desktop.win7",
-  productName: "Meeting Assistant Desktop",
-  extraMetadata: { ...build.extraMetadata, productName: "Meeting Assistant Desktop" },
+  productName: "Meeting Assistant",
+  extraMetadata: { ...build.extraMetadata, productName: "Meeting Assistant" },
   directories: { output: "release/win7" },
   files: [
     { from: "dist-win7", to: "dist" },
@@ -21,14 +21,14 @@ module.exports = {
       { target: "nsis", arch: ["x64"] },
       { target: "portable", arch: ["x64"] },
     ],
-    artifactName: "meeting-assistan-desktop-${version}-win7-${arch}-${target}.${ext}",
+    artifactName: "meeting-assistant-${version}-win7-${arch}-${target}.${ext}",
   },
   nsis: {
     ...build.nsis,
-    artifactName: "meeting-assistan-desktop-${version}-win7-${arch}-setup.${ext}",
+    artifactName: "meeting-assistant-${version}-win7-${arch}-setup.${ext}",
   },
   portable: {
     ...build.portable,
-    artifactName: "meeting-assistan-desktop-${version}-win7-${arch}-portable.${ext}",
+    artifactName: "meeting-assistant-${version}-win7-${arch}-portable.${ext}",
   },
 };
