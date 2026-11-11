@@ -13,7 +13,7 @@ const fields = [
   { key: "stage_summary_max_tokens", label: "阶段总结最大输出 Token", min: 128, max: 8192, hint: "限制单个阶段总结的输出长度。" },
 ];
 
-export function SystemSettingsManagement({ api }) {
+export function SystemSettingsManagement({ api, onSaved }) {
   const [draft, setDraft] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -63,6 +63,7 @@ export function SystemSettingsManagement({ api }) {
     try {
       const result = await api.saveSystemSettings(draft);
       setDraft(result);
+      onSaved?.(result);
       setSaved(true);
     } catch (reason) {
       setError(reason.message);

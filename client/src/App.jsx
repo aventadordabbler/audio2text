@@ -2134,7 +2134,11 @@ export function App() {
             <MinutesFormatManagement key={config.stt.baseUrl} api={meetingApi} formats={minutesFormats} onChanged={refreshCatalog} />
           )}
           {activeView === "systemSettings" && authUser?.is_admin && (
-            <SystemSettingsManagement key={config.stt.baseUrl} api={meetingApi} />
+            <SystemSettingsManagement
+              key={config.stt.baseUrl}
+              api={meetingApi}
+              onSaved={(settings) => setSlogan(String(settings?.slogan || "").trim())}
+            />
           )}
         </main>
       </div>

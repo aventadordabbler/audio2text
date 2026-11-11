@@ -316,7 +316,7 @@ export default function App() {
           ) : page === "minutes-formats" && authUser.is_admin ? (
             <MinutesFormatManagement formats={minutesFormats} onChanged={refresh} />
           ) : page === "system-settings" && authUser.is_admin ? (
-            <SystemSettingsManagement />
+            <SystemSettingsManagement onSaved={(settings) => setSlogan(settings.slogan.trim())} />
           ) : state.meeting ? (
             <MeetingDetail
               key={state.meeting.id}
