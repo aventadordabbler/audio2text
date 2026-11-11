@@ -338,6 +338,20 @@ export function App() {
     setCatalogRevision((value) => value + 1);
   }
 
+  function handleMeetingDeleted(id) {
+    sessionLoadRef.current++;
+    if (sessionRef.current?.remoteMeetingId === id) {
+      recorder.disconnect();
+      setSession(null);
+      sessionRef.current = null;
+      setActiveView("history");
+      setLivePreviews([]);
+    }
+    setSessions((rows) => rows.filter((row) => row.id !== id));
+    refreshCatalog();
+    setStatusLine("会议记录已删除");
+  }
+
   useEffect(() => {
     if (
       !authUser ||
@@ -591,8 +605,12 @@ export function App() {
     setSessions([]);
     setSession(null);
     sessionRef.current = null;
-    void reloadSessions();
   }, [ready, authUser, config.stt.baseUrl]);
+
+  useEffect(() => {
+    if (!ready || !authUser || authUser.must_change_password || activeView !== "history") return;
+    void reloadSessions();
+  }, [ready, authUser, config.stt.baseUrl, activeView]);
 
   async function reloadSessions() {
     try {
@@ -1194,8 +1212,12 @@ export function App() {
       )
         showSession(next);
     } catch (error) {
-      if (loadId === sessionLoadRef.current)
-        setStatusLine(`会议加载失败：${error.message}`);
+      if (loadId !== sessionLoadRef.current) return;
+      if (error?.message === "会议不存在") {
+        handleMeetingDeleted(item.id);
+        return;
+      }
+      setStatusLine(`会议加载失败：${error.message}`);
     }
   }
 
@@ -2074,6 +2096,7 @@ export function App() {
               departments={departments}
               revision={catalogRevision}
               onOpen={openRemoteMeeting}
+              onDeleted={handleMeetingDeleted}
               onCreate={requestCreate}
               onCurrent={() => setActiveView("overview")}
               hasCurrent={!!session}

@@ -22,7 +22,7 @@ import { VoiceprintManagement } from "@/components/voiceprint-management"
 import { UserManagement } from "@/components/user-management"
 import { SystemSettingsManagement } from "@/components/system-settings-management"
 import { AuthScreen, PasswordChangeScreen } from "@/components/auth-screen"
-import { api, authToken, emptyMeetingFilters, errorMessage, setAuthToken, type Department, type Meeting, type MeetingFilters, type MinutesFormat, type UserAccount, type Voiceprint } from "@/lib/meetings"
+import { api, ApiError, authToken, emptyMeetingFilters, errorMessage, setAuthToken, type Department, type Meeting, type MeetingFilters, type MinutesFormat, type UserAccount, type Voiceprint } from "@/lib/meetings"
 import { RecordingSession } from "@/lib/recording-session"
 
 export default function App() {
@@ -127,6 +127,11 @@ export default function App() {
             }
             if (active) await refresh()
           } catch (error) {
+            if (active && match && error instanceof ApiError && error.status === 404) {
+              history.replaceState(null, "", `${location.pathname}${location.search}`)
+              await refresh()
+              return
+            }
             if (active) setError(errorMessage(error))
           } finally {
             if (active) setRouting(false)

@@ -245,6 +245,7 @@ export function MeetingManagement({
   departments,
   revision,
   onOpen,
+  onDeleted,
   onCreate,
   onCurrent,
   hasCurrent,
@@ -314,6 +315,7 @@ export function MeetingManagement({
     setDeleteError("");
     try {
       await api.deleteMeeting(deleting.id);
+      onDeleted?.(deleting.id);
       setDeleting(null);
       setRefresh((value) => value + 1);
     } catch (error) {
