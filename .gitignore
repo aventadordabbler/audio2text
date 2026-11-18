@@ -16,6 +16,7 @@ wheels/
 .agents
 data/archives/
 data/tokenizers/
+data/certs/
 audio2text-data-*.tar.gz
 data.before-restore-*/
 .audio2text-restore.*/

@@ -176,7 +176,7 @@ cp .env.example .env
 docker compose --profile app up -d --build app
 ```
 
-访问 `http://localhost:8000`。如果 ASR 服务运行在另一台机器，模型配置中填写其实际地址；容器内的 `localhost` 只指向应用容器自身。
+访问 `https://<主机>:9000`。证书的 SAN 必须包含实际访问的主机名或 IP。如果 ASR 服务运行在另一台机器，模型配置中填写其实际地址；容器内的 `localhost` 只指向应用容器自身。
 
 ### 方案 B：本机或同一 Compose 中运行 vLLM
 

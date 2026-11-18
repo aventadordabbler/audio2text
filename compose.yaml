@@ -4,6 +4,17 @@ services:
     profiles: [app]
     container_name: audio2text-server
     restart: unless-stopped
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --ssl-keyfile
+      - /app/data/certs/server.key
+      - --ssl-certfile
+      - /app/data/certs/server.crt
     environment:
       DATA_DIR: /app/data/archives
       ASR_TOKENIZER: ${ASR_TOKENIZER:-/app/data/tokenizers/qwen}
@@ -19,6 +30,7 @@ services:
       - "${APP_BIND_ADDRESS:-0.0.0.0}:${APP_PORT:-9000}:8000"
     volumes:
       - ./data:/app/data
+      - ./data/certs:/app/data/certs:ro
       - ${DIARIZATION_MODEL_DIR:-./models/diarization}:/app/models/diarization:ro
       - ${DIARIZATION_SEGMENTATION_DIR:-./models/pyannote/segmentation-3.0}:/app/models/pyannote/segmentation-3.0:ro
   asr:
