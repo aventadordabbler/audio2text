@@ -219,7 +219,7 @@ export class MeetingApi {
     return result;
   }
 
-  create(title, departmentId = null, minutesFormatId = null, keySpeakerIds = []) {
+  create(title, departmentId = null, minutesFormatId = null, keySpeakerIds = [], meetingLevel = "公开") {
     return this.request("/api/meetings", {
       method: "POST",
       body: JSON.stringify({
@@ -227,6 +227,7 @@ export class MeetingApi {
           .slice(0, 80)
           .join(""),
         department_id: departmentId || null,
+        meeting_level: meetingLevel,
         minutes_format_id: minutesFormatId || null,
         key_speaker_ids: keySpeakerIds,
         ...(this.config.language === "auto"
@@ -236,16 +237,16 @@ export class MeetingApi {
     });
   }
 
-  importWav(title, departmentId, file, language = this.config.language, onProgress, minutesFormatId = null, keySpeakerIds = []) {
+  importWav(title, departmentId, file, language = this.config.language, onProgress, minutesFormatId = null, keySpeakerIds = [], meetingLevel = "公开") {
     const files = Array.isArray(file) ? file : [file];
-    return this.importWavChunked(title, files, language, onProgress, minutesFormatId, keySpeakerIds);
+    return this.importWavChunked(title, files, language, onProgress, minutesFormatId, keySpeakerIds, meetingLevel);
   }
 
-  async importWavChunked(title, files, language = this.config.language, onProgress, minutesFormatId = null, keySpeakerIds = []) {
+  async importWavChunked(title, files, language = this.config.language, onProgress, minutesFormatId = null, keySpeakerIds = [], meetingLevel = "公开") {
     const totalChunks = files.reduce((total, file) => total + Math.ceil(file.size / CHUNK_SIZE), 0);
     const started = await this.request("/api/meetings/import/chunked", {
       method: "POST",
-      body: JSON.stringify({ title, language: language === "auto" ? null : language, minutes_format_id: minutesFormatId, key_speaker_ids: keySpeakerIds, files: files.map((file) => ({ filename: file.name, file_size: file.size, total_chunks: Math.ceil(file.size / CHUNK_SIZE), chunk_size: CHUNK_SIZE })) }),
+      body: JSON.stringify({ title, language: language === "auto" ? null : language, meeting_level: meetingLevel, minutes_format_id: minutesFormatId, key_speaker_ids: keySpeakerIds, files: files.map((file) => ({ filename: file.name, file_size: file.size, total_chunks: Math.ceil(file.size / CHUNK_SIZE), chunk_size: CHUNK_SIZE })) }),
       signal: AbortSignal.timeout(900000),
     });
     const upload = (async () => {

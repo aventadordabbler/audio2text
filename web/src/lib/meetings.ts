@@ -39,6 +39,7 @@ export interface Meeting {
   id: string
   title: string
   language: string | null
+  meeting_level: "公开" | "内部" | "涉密"
   department_id: string | null
   department_name: string | null
   minutes_format_id?: string | null
@@ -229,6 +230,7 @@ export async function importWav(
   minutesFormatId: string | null = null,
   onProgress?: (completed: number, total: number) => void,
   keySpeakerIds: string[] = [],
+  meetingLevel = "公开",
 ) {
   const files = Array.isArray(input) ? input : [input]
   const totalChunks = files.reduce((total, file) => total + Math.ceil(file.size / CHUNK_SIZE), 0)
@@ -238,6 +240,7 @@ export async function importWav(
     body: JSON.stringify({
       title,
       language: language === "auto" ? null : language,
+      meeting_level: meetingLevel,
       minutes_format_id: minutesFormatId,
       key_speaker_ids: keySpeakerIds,
       files: files.map((file) => ({

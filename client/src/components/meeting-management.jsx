@@ -71,6 +71,7 @@ export function CreateMeetingDialog({
   const [source, setSource] = useState("recording");
   const [files, setFiles] = useState([]);
   const [language, setLanguage] = useState(initialLanguage);
+  const [meetingLevel, setMeetingLevel] = useState("公开");
   const [minutesFormatId, setMinutesFormatId] = useState("default");
   const [keySpeakerIds, setKeySpeakerIds] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -81,6 +82,7 @@ export function CreateMeetingDialog({
       setSource("recording");
       setFiles([]);
       setLanguage(initialLanguage);
+      setMeetingLevel("公开");
       setMinutesFormatId(minutesFormats.find((item) => item.is_default)?.id || minutesFormats[0]?.id || "default");
       setKeySpeakerIds([]);
       setError("");
@@ -99,6 +101,7 @@ export function CreateMeetingDialog({
         language,
         minutesFormatId,
         keySpeakerIds,
+        meetingLevel,
       );
       onOpenChange(false);
     } catch (error) {
@@ -177,6 +180,17 @@ export function CreateMeetingDialog({
               <p className="management-help">创建后会在后台上传、转写、标注说话人并生成纪要，可直接离开此页面。</p>
             </>
           )}
+          <Label className="form-field">
+            <span>会议等级</span>
+            <Select value={meetingLevel} onValueChange={setMeetingLevel} disabled={busy}>
+              <SelectTrigger aria-label="会议等级"><SelectValue /></SelectTrigger>
+              <SelectContent position="popper" side="bottom" align="start" sideOffset={4} avoidCollisions={false} className="meeting-filter-menu">
+                <SelectItem value="公开">公开</SelectItem>
+                <SelectItem value="内部">内部</SelectItem>
+                <SelectItem value="涉密">涉密</SelectItem>
+              </SelectContent>
+            </Select>
+          </Label>
           <Label className="form-field">
             <span>纪要格式</span>
             <Select value={minutesFormatId} onValueChange={setMinutesFormatId} disabled={busy}>

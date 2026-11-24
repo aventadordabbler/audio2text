@@ -38,6 +38,7 @@ export function CreateMeetingDialog({
   const [source, setSource] = useState("recording")
   const [files, setFiles] = useState<File[]>([])
   const [language, setLanguage] = useState("auto")
+  const [meetingLevel, setMeetingLevel] = useState("公开")
   const [minutesFormatId, setMinutesFormatId] = useState("default")
   const [keySpeakerIds, setKeySpeakerIds] = useState<string[]>([])
   const [submitting, setSubmitting] = useState(false)
@@ -49,6 +50,7 @@ export function CreateMeetingDialog({
       setSource("recording")
       setFiles([])
       setLanguage("auto")
+      setMeetingLevel("公开")
       setMinutesFormatId(minutesFormats.find((item) => item.is_default)?.id || minutesFormats[0]?.id || "default")
       setKeySpeakerIds([])
       setUploadProgress(null)
@@ -67,13 +69,14 @@ export function CreateMeetingDialog({
     setError("")
     try {
       const result = source === "wav"
-        ? await importWav(files, title.trim(), language, minutesFormatId, (completed, total) => setUploadProgress({ completed, total }), keySpeakerIds)
+        ? await importWav(files, title.trim(), language, minutesFormatId, (completed, total) => setUploadProgress({ completed, total }), keySpeakerIds, meetingLevel)
         : await api<Meeting>("/api/meetings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: title.trim(),
           language: language === "auto" ? null : language,
+          meeting_level: meetingLevel,
           minutes_format_id: minutesFormatId,
           key_speaker_ids: keySpeakerIds,
         }),
@@ -136,6 +139,17 @@ export function CreateMeetingDialog({
                   >
                     <SelectItem value="recording">实时录音</SelectItem>
                     <SelectItem value="wav">导入音频（WAV/MP3）</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2.5">
+                <Label htmlFor="meeting-level-input">会议等级</Label>
+                <Select value={meetingLevel} onValueChange={setMeetingLevel} disabled={submitting}>
+                  <SelectTrigger id="meeting-level-input" className="h-11 w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent position="popper" side="bottom" align="start" sideOffset={4} avoidCollisions={false} className="meeting-filter-menu">
+                    <SelectItem value="公开">公开</SelectItem>
+                    <SelectItem value="内部">内部</SelectItem>
+                    <SelectItem value="涉密">涉密</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

@@ -1152,7 +1152,7 @@ export function App() {
     setCreateOpen(true);
   }
 
-  async function createMeeting(title, departmentId, files = [], language, minutesFormatId = null, keySpeakerIds = []) {
+  async function createMeeting(title, departmentId, files = [], language, minutesFormatId = null, keySpeakerIds = [], meetingLevel = "公开") {
     if (startingRef.current || recordingRef.current || controllingRef.current)
       throw new Error("请先结束当前会议");
     setUploadProgress(null);
@@ -1162,11 +1162,11 @@ export function App() {
       if (meetingApi) {
         let remote;
         if (files.length) {
-          const started = await meetingApi.importWav(title, departmentId, files, language, (completed, total) => setUploadProgress({ completed, total }), minutesFormatId, keySpeakerIds);
+          const started = await meetingApi.importWav(title, departmentId, files, language, (completed, total) => setUploadProgress({ completed, total }), minutesFormatId, keySpeakerIds, meetingLevel);
           remote = started.meeting;
           void started.upload.catch(() => { refreshCatalog(); });
         } else {
-          remote = await meetingApi.create(title, departmentId, minutesFormatId, keySpeakerIds);
+          remote = await meetingApi.create(title, departmentId, minutesFormatId, keySpeakerIds, meetingLevel);
         }
         next = sessionFromMeeting(remote, meetingApi.config.baseUrl);
       } else throw new Error("请先配置有效的会议服务地址");

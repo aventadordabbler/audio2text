@@ -19,6 +19,7 @@ from .minutes_formats import DEFAULT_MINUTES_FORMAT_ID, DEFAULT_MINUTES_FORMAT_N
 
 logger = logging.getLogger(__name__)
 MEETING_ID = re.compile(r"^[0-9a-f]{32}$")
+MEETING_LEVELS = frozenset(("公开", "内部", "涉密"))
 MEETING_SELECT = """SELECT meetings.*, departments.name AS department_name,
     minutes_formats.name AS minutes_format_name, minutes_formats.prompt AS minutes_format_prompt,
     users.account AS creator_account, users.employee_id AS creator_employee_id,
@@ -92,6 +93,7 @@ class MeetingStore:
                     department_id TEXT REFERENCES departments(id),
                     minutes_format_id TEXT REFERENCES minutes_formats(id),
                     key_speakers TEXT NOT NULL DEFAULT '[]',
+                    meeting_level TEXT NOT NULL DEFAULT '公开',
                     user_id TEXT REFERENCES users(id)
                 )
             """)
@@ -103,6 +105,8 @@ class MeetingStore:
                 db.execute("ALTER TABLE meetings ADD COLUMN minutes_format_id TEXT REFERENCES minutes_formats(id)")
             if "key_speakers" not in {row["name"] for row in db.execute("PRAGMA table_info(meetings)")}:
                 db.execute("ALTER TABLE meetings ADD COLUMN key_speakers TEXT NOT NULL DEFAULT '[]'")
+            if "meeting_level" not in {row["name"] for row in db.execute("PRAGMA table_info(meetings)")}:
+                db.execute("ALTER TABLE meetings ADD COLUMN meeting_level TEXT NOT NULL DEFAULT '公开'")
             db.execute("CREATE INDEX IF NOT EXISTS meetings_created ON meetings(created_at DESC, id DESC)")
             db.execute("CREATE INDEX IF NOT EXISTS meetings_department ON meetings(department_id, created_at DESC)")
             db.execute("CREATE INDEX IF NOT EXISTS meetings_user ON meetings(user_id, created_at DESC)")
@@ -264,11 +268,13 @@ class MeetingStore:
     def create(self, title: str, language: str | None = None, department_id: str | None = None,
                minutes_format_id: str | None = None, key_speaker_ids: list[str] | None = None,
                *, imported_audio: Path | None = None, filename: str = "", user_id: str | None = None,
-               import_pending: bool = False) -> dict[str, Any]:
+               import_pending: bool = False, meeting_level: str = "公开") -> dict[str, Any]:
         meeting_id, now = uuid4().hex, _timestamp()
         text_path = f"meetings/{meeting_id}/transcript.txt"
         with self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
+            if meeting_level not in MEETING_LEVELS:
+                raise MeetingError("会议等级无效", 422)
             if user_id:
                 user = db.execute("SELECT department_id FROM users WHERE id = ?", (user_id,)).fetchone()
                 if user is None:
@@ -291,9 +297,9 @@ class MeetingStore:
                 self.transcript(meeting_id).read()
                 db.execute(
                     """INSERT INTO meetings (id, title, language, status, text_path, created_at, updated_at,
-                       department_id, minutes_format_id, key_speakers, ended_at, duration_seconds, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       department_id, minutes_format_id, key_speakers, meeting_level, ended_at, duration_seconds, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (meeting_id, title.strip(), language or None, "ended" if audio or import_pending else "created", text_path,
-                     now, now, department_id, minutes_format_id, key_speakers,
+                     now, now, department_id, minutes_format_id, key_speakers, meeting_level,
                      now if audio or import_pending else None, audio.duration_seconds if audio else 0, user_id),
                 )
                 if audio:

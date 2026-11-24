@@ -23,6 +23,15 @@ def test_meeting_duration_uses_archived_audio_samples(tmp_path):
     assert store.get(meeting["id"])["duration_seconds"] == 2.0
 
 
+def test_meeting_level_defaults_and_accepts_only_supported_values(tmp_path):
+    store = MeetingStore(tmp_path / "meetings.sqlite3")
+    assert store.create("公开会议")["meeting_level"] == "公开"
+    assert store.create("内部会议", meeting_level="内部")["meeting_level"] == "内部"
+    assert store.create("涉密会议", meeting_level="涉密")["meeting_level"] == "涉密"
+    with pytest.raises(MeetingError, match="会议等级无效"):
+        store.create("非法会议", meeting_level="未知")
+
+
 def test_meeting_delete_only_allows_unstarted_or_ended(tmp_path):
     store = MeetingStore(tmp_path / "meetings.sqlite3")
     created = store.create("unstarted")

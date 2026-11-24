@@ -47,6 +47,7 @@ class MeetingCreate(BaseModel):
     department_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
     minutes_format_id: str | None = Field(default=None, pattern=r"^(?:[a-f0-9]{32}|default)$")
     key_speaker_ids: list[str] = Field(default_factory=list, max_length=20)
+    meeting_level: Literal["公开", "内部", "涉密"] = "公开"
 
     @field_validator("title")
     @classmethod
@@ -139,6 +140,7 @@ class ChunkedImportStart(BaseModel):
     chunk_size: int = Field(default=DEFAULT_CHUNK_SIZE, ge=1024 * 1024, le=32 * 1024 * 1024)
     minutes_format_id: str | None = Field(default=None, pattern=r"^(?:[a-f0-9]{32}|default)$")
     key_speaker_ids: list[str] = Field(default_factory=list, max_length=20)
+    meeting_level: Literal["公开", "内部", "涉密"] = "公开"
 
     @field_validator("title")
     @classmethod
@@ -339,7 +341,8 @@ def create_app(
     @app.post("/api/meetings", status_code=201)
     def create_meeting(payload: MeetingCreate, request: Request) -> dict[str, Any]:
         return store.create(payload.title, payload.language, payload.department_id,
-                            payload.minutes_format_id, payload.key_speaker_ids, user_id=request.state.user["id"])
+                            payload.minutes_format_id, payload.key_speaker_ids,
+                            user_id=request.state.user["id"], meeting_level=payload.meeting_level)
 
     @app.post("/api/meetings/import", status_code=202)
     async def import_meeting(
@@ -350,13 +353,14 @@ def create_app(
         department_id: str | None = Form(default=None, pattern=r"^[a-f0-9]{32}$"),
         minutes_format_id: str | None = Form(default=None, pattern=r"^(?:[a-f0-9]{32}|default)$"),
         key_speaker_ids: str = Form(default="[]"),
+        meeting_level: Literal["公开", "内部", "涉密"] = Form(default="公开"),
     ) -> dict[str, Any]:
         try:
             if not title.strip():
                 raise MeetingError("请输入会议名称", 422)
             return await audio_imports.create(file, title.strip(), language, department_id,
                                               request.state.user["id"], minutes_format_id,
-                                              parse_key_speaker_ids(key_speaker_ids))
+                                              parse_key_speaker_ids(key_speaker_ids), meeting_level)
         finally:
             for item in file:
                 await item.close()
@@ -371,7 +375,7 @@ def create_app(
         }]
         return await audio_imports.start_chunked(
             payload.title, payload.language, files, request.state.user["id"], payload.minutes_format_id,
-            payload.key_speaker_ids,
+            payload.key_speaker_ids, payload.meeting_level,
         )
 
     @app.put("/api/meetings/import/chunked/{upload_id}/{index}")
